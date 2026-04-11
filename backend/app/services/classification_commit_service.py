@@ -2,6 +2,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from ..models.classification import RecurrencePattern
 from ..models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType
 from ..routers.suggestions import category_suggestion_service
 from .statistics_service import StatisticsService
@@ -37,6 +38,24 @@ def commit_category_change(
         category=category,
         amount=transaction.amount,
     )
+
+    if (
+        classification_source == "manual"
+        and recurrence_pattern_id is not None
+        and transaction.recurrence_pattern_id == recurrence_pattern_id
+    ):
+        recurrence_pattern = (
+            db.query(RecurrencePattern)
+            .filter(RecurrencePattern.id == recurrence_pattern_id, RecurrencePattern.active.is_(True))
+            .first()
+        )
+        if recurrence_pattern and recurrence_pattern.category != normalized_category:
+            logger.warning(
+                "Manual category %s contradicts active recurrence pattern %s for transaction %s; keeping pattern active",
+                normalized_category,
+                recurrence_pattern_id,
+                transaction.id,
+            )
 
     transaction.transaction_type = transaction_type
     transaction.classification_source = classification_source

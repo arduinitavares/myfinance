@@ -125,6 +125,25 @@ class CategorySuggestionService:
         logger.info(f"Creating transaction text: {transaction_text}")
         return transaction_text
 
+    def similarity_score(self, source_description: str, candidate_description: str) -> float:
+        source_text = self._preprocess_description(source_description)
+        candidate_text = self._preprocess_description(candidate_description)
+        if not source_text or not candidate_text:
+            return 0.0
+
+        source_embedding = self.model.encode(source_text)
+        candidate_embedding = self.model.encode(candidate_text)
+
+        source_norm = float(np.linalg.norm(source_embedding))
+        candidate_norm = float(np.linalg.norm(candidate_embedding))
+        if source_norm == 0.0 or candidate_norm == 0.0:
+            return 0.0
+
+        score = float(np.dot(source_embedding, candidate_embedding) / (source_norm * candidate_norm))
+        if np.isnan(score):
+            return 0.0
+        return score
+
     def _get_collection_name(self, transaction_type: TransactionType) -> str:
         return "expense_embeddings" if transaction_type == TransactionType.EXPENSE else "income_embeddings"
 

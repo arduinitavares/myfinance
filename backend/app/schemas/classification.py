@@ -70,3 +70,23 @@ class AcceptClassificationResponse(BaseModel):
     session: ClassificationSessionResponse
     transaction: TransactionSchema
     recurrence_pattern_id: Optional[int] = None
+
+
+class SimilarTransactionMatchResponse(BaseModel):
+    transaction_id: int
+    description: str
+    amount: float
+    currency: str
+    score: float
+
+
+class SimilarPreviewResponse(BaseModel):
+    session: ClassificationSessionResponse
+    seed_transaction_id: int
+    matches: list[SimilarTransactionMatchResponse]
+
+
+class ApplyBatchResponse(BaseModel):
+    session: ClassificationSessionResponse
+    applied_transaction_ids: list[int]
+    skipped_transaction_ids: list[int]

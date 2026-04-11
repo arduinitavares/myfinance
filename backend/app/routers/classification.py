@@ -3,11 +3,14 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..schemas.classification import (
+    ApplyBatchRequest,
+    ApplyBatchResponse,
     AcceptClassificationRequest,
     AcceptClassificationResponse,
     ClassificationProposalResponse,
     ClassificationSessionResponse,
     CreateClassificationSessionRequest,
+    SimilarPreviewResponse,
     SubmitFeedbackRequest,
 )
 from ..services.classification_session_service import ClassificationSessionService
@@ -45,3 +48,17 @@ def accept_classification(
     db: Session = Depends(get_db),
 ):
     return ClassificationSessionService.accept(db, session_id, request)
+
+
+@router.post("/sessions/{session_id}/similar-preview", response_model=SimilarPreviewResponse)
+def preview_similar_transactions(session_id: int, db: Session = Depends(get_db)):
+    return ClassificationSessionService.preview_similar(db, session_id)
+
+
+@router.post("/sessions/{session_id}/apply-batch", response_model=ApplyBatchResponse)
+def apply_batch_classification(
+    session_id: int,
+    request: ApplyBatchRequest,
+    db: Session = Depends(get_db),
+):
+    return ClassificationSessionService.apply_batch(db, session_id, request)

@@ -10,12 +10,15 @@ import time
 
 from ..database import get_db
 from ..models.transaction import Transaction, ExpenseCategory, IncomeCategory, TransactionType
+from ..models.classification import RecurrencePattern
 from ..models.anomaly import TransactionAnomaly
 from ..schemas import transaction as schemas
 from ..services.csv_parser import CSVParser
 from ..services.statistics_service import StatisticsService
 from ..services.anomaly_detection_service import AnomalyDetectionService
+from ..services.classification_commit_service import commit_category_change
 from ..routers.suggestions import category_suggestion_service
+from ..utils.text_normalization import normalize_for_matching
 from datetime import date, datetime
 
 # Set up logging
@@ -65,6 +68,55 @@ SORT_FIELD_MAPPING = {
     'amount': 'amount',
     'type': 'transaction_type'
 }
+
+
+def _find_recurrence_pattern(db: Session, transaction: Transaction) -> RecurrencePattern | None:
+    normalized_description_key = normalize_for_matching(transaction.description)
+    base_query = db.query(RecurrencePattern).filter(
+        RecurrencePattern.active.is_(True),
+        RecurrencePattern.normalized_description_key == normalized_description_key,
+        RecurrencePattern.currency == transaction.currency,
+        RecurrencePattern.transaction_type == transaction.transaction_type,
+    )
+
+    exact_bank_match = (
+        base_query.filter(RecurrencePattern.source_bank == transaction.source_bank)
+        .order_by(RecurrencePattern.id.asc())
+        .first()
+    )
+    if exact_bank_match:
+        return exact_bank_match
+
+    wildcard_match = (
+        base_query.filter(RecurrencePattern.source_bank.is_(None))
+        .order_by(RecurrencePattern.id.asc())
+        .first()
+    )
+    return wildcard_match
+
+
+def _apply_category_to_transaction(
+    transaction: Transaction,
+    category: str | None,
+    classification_source: str,
+    recurrence_pattern_id: int | None = None,
+) -> None:
+    transaction.classification_source = classification_source
+    transaction.recurrence_pattern_id = recurrence_pattern_id
+
+    if transaction.transaction_type == TransactionType.EXPENSE and category is not None:
+        transaction.expense_category = ExpenseCategory(category)
+        transaction.income_category = None
+    elif transaction.transaction_type == TransactionType.INCOME and category is not None:
+        transaction.income_category = IncomeCategory(category)
+        transaction.expense_category = None
+    elif transaction.transaction_type == TransactionType.TRANSFER:
+        if transaction.amount < 0:
+            transaction.expense_category = ExpenseCategory.INTERNAL_TRANSFER
+            transaction.income_category = None
+        else:
+            transaction.income_category = IncomeCategory.INTERNAL_TRANSFER
+            transaction.expense_category = None
 
 @router.post("/upload/", response_model=List[schemas.Transaction])
 async def upload_csv(
@@ -127,22 +179,32 @@ async def upload_csv(
                     skipped_count += 1
                     continue
                 
-                # Get category suggestions before creating the transaction
-                suggestions = category_suggestion_service.suggest_category(
-                    trans.description,
-                    trans.amount,
-                    trans.transaction_type
-                )
-                
-                # If we have suggestions with high confidence, set the category
-                if suggestions and suggestions[0][1] > 0.5:  # Check if confidence > 0.5
-                    best_category, confidence = suggestions[0]
-                    logger.info(f"Setting category {best_category} with confidence {confidence} for transaction: {trans.description}")
-                    
-                    if trans.transaction_type == TransactionType.EXPENSE:
-                        trans.expense_category = ExpenseCategory(best_category)
-                    else:
-                        trans.income_category = IncomeCategory(best_category)
+                recurrence_pattern = _find_recurrence_pattern(db, trans)
+                if recurrence_pattern is not None:
+                    logger.info(
+                        "Applying recurrence pattern %s to transaction %s",
+                        recurrence_pattern.id,
+                        trans.description,
+                    )
+                    _apply_category_to_transaction(
+                        trans,
+                        recurrence_pattern.category,
+                        "recurrence_pattern",
+                        recurrence_pattern.id,
+                    )
+                else:
+                    # Get category suggestions only after recurrence patterns are ruled out
+                    suggestions = category_suggestion_service.suggest_category(
+                        trans.description,
+                        trans.amount,
+                        trans.transaction_type
+                    )
+
+                    # If we have suggestions with high confidence, set the category
+                    if suggestions and suggestions[0][1] > 0.5:  # Check if confidence > 0.5
+                        best_category, confidence = suggestions[0]
+                        logger.info(f"Setting category {best_category} with confidence {confidence} for transaction: {trans.description}")
+                        _apply_category_to_transaction(trans, best_category, "upload_suggester")
                 
                 # Create and save the transaction
                 db_trans = Transaction(**trans.dict())
@@ -327,27 +389,19 @@ def update_transaction_category(
     
     if not transaction:
         raise HTTPException(404, detail="Transaction not found")
-    
-    transaction_date = transaction.transaction_date
-    
-    if transaction_type == TransactionType.EXPENSE:
-        transaction.expense_category = ExpenseCategory(category)
-        transaction.income_category = None
-    else:
-        transaction.income_category = IncomeCategory(category)
-        transaction.expense_category = None
-    
-    # Update statistics for the affected period
-    StatisticsService.update_statistics(db, transaction_date)
-    
-    db.commit()
-    db.refresh(transaction)
-    # Update suggestion index to learn from manual category edits
+
     try:
-        category_suggestion_service.add_transaction(transaction)
-    except Exception as e:
-        logger.warning(f"Failed to update suggestion index for transaction {transaction.id}: {str(e)}")
-    return transaction
+        return commit_category_change(
+            db=db,
+            transaction=transaction,
+            transaction_type=transaction_type,
+            category=category,
+            classification_source="manual",
+            recurrence_pattern_id=transaction.recurrence_pattern_id,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.post("/restore", response_model=schemas.Transaction)
 def restore_transaction(

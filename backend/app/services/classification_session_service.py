@@ -16,13 +16,18 @@ from ..models.classification import (
 )
 from ..models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType
 from ..schemas.classification import (
+    ApplyBatchRequest,
+    ApplyBatchResponse,
     AcceptClassificationRequest,
     AcceptClassificationResponse,
     ClassificationSessionResponse,
     ClassificationProposalResponse,
+    SimilarPreviewResponse,
+    SimilarTransactionMatchResponse,
     SubmitFeedbackRequest,
 )
 from ..schemas.transaction import Transaction as TransactionSchema
+from ..routers.suggestions import category_suggestion_service
 from ..services.classifier_providers import StubClassifierProvider
 from ..utils.text_normalization import normalize_for_matching
 from .classification_commit_service import commit_category_change, normalized_category_for
@@ -31,6 +36,8 @@ from .classification_commit_service import commit_category_change, normalized_ca
 logger = logging.getLogger(__name__)
 
 SESSION_TTL = timedelta(hours=24)
+SIMILARITY_THRESHOLD = 0.5
+SIMILARITY_PREVIEW_LIMIT = 8
 
 
 class ClassificationSessionService:
@@ -204,6 +211,71 @@ class ClassificationSessionService:
             recurrence_pattern_id=recurrence_pattern.id if recurrence_pattern else None,
         )
 
+    @classmethod
+    def preview_similar(cls, db: Session, session_id: int) -> SimilarPreviewResponse:
+        session = cls._require_accepted_session(db, session_id)
+        seed_transaction = cls._require_transaction(db, session.transaction_id)
+        candidates = cls._similar_candidates(db, seed_transaction)
+        matches = [
+            SimilarTransactionMatchResponse(
+                transaction_id=transaction.id,
+                description=transaction.description,
+                amount=transaction.amount,
+                currency=transaction.currency,
+                score=score,
+            )
+            for transaction, score in candidates
+        ]
+        return SimilarPreviewResponse(
+            session=ClassificationSessionResponse.model_validate(session, from_attributes=True),
+            seed_transaction_id=seed_transaction.id,
+            matches=matches,
+        )
+
+    @classmethod
+    def apply_batch(cls, db: Session, session_id: int, request: ApplyBatchRequest) -> ApplyBatchResponse:
+        session = cls._require_accepted_session(db, session_id)
+
+        if session.final_transaction_type is None or session.final_category is None:
+            raise HTTPException(status_code=409, detail="Session has no accepted classification")
+
+        requested_ids = list(dict.fromkeys(request.transaction_ids))
+        candidates = {
+            candidate.id: candidate
+            for candidate in db.query(Transaction).filter(Transaction.id.in_(requested_ids)).all()
+        }
+        applied_transaction_ids: list[int] = []
+        skipped_transaction_ids: list[int] = []
+
+        for transaction_id in requested_ids:
+            candidate = candidates.get(transaction_id)
+            if candidate is None:
+                skipped_transaction_ids.append(transaction_id)
+                continue
+            if candidate.expense_category is not None or candidate.income_category is not None:
+                skipped_transaction_ids.append(transaction_id)
+                continue
+
+            try:
+                updated_transaction = commit_category_change(
+                    db=db,
+                    transaction=candidate,
+                    transaction_type=session.final_transaction_type,
+                    category=session.final_category,
+                    classification_source="assistant_batch",
+                    recurrence_pattern_id=None,
+                )
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            applied_transaction_ids.append(updated_transaction.id)
+
+        return ApplyBatchResponse(
+            session=ClassificationSessionResponse.model_validate(session, from_attributes=True),
+            applied_transaction_ids=applied_transaction_ids,
+            skipped_transaction_ids=skipped_transaction_ids,
+        )
+
     @staticmethod
     def _require_transaction(db: Session, transaction_id: int) -> Transaction:
         transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
@@ -221,6 +293,17 @@ class ClassificationSessionService:
             if session.status == ClassificationSessionStatus.EXPIRED:
                 raise HTTPException(status_code=409, detail="Session expired")
             raise HTTPException(status_code=409, detail="Session is not open")
+        return session
+
+    @classmethod
+    def _require_accepted_session(cls, db: Session, session_id: int) -> ClassificationSession:
+        session = db.query(ClassificationSession).filter(ClassificationSession.id == session_id).first()
+        if session is None:
+            raise HTTPException(status_code=404, detail="Classification session not found")
+        if session.status == ClassificationSessionStatus.EXPIRED:
+            raise HTTPException(status_code=409, detail="Session expired")
+        if session.status != ClassificationSessionStatus.ACCEPTED:
+            raise HTTPException(status_code=409, detail="Session is not accepted")
         return session
 
     @staticmethod
@@ -286,6 +369,37 @@ class ClassificationSessionService:
             return None
         latest_turn = session.turns[-1]
         return latest_turn.proposal_recurrence_frequency
+
+    @classmethod
+    def _similar_candidates(cls, db: Session, seed_transaction: Transaction) -> list[tuple[Transaction, float]]:
+        if seed_transaction.amount == 0:
+            return []
+
+        query = (
+            db.query(Transaction)
+            .filter(
+                Transaction.id != seed_transaction.id,
+                Transaction.currency == seed_transaction.currency,
+                Transaction.expense_category.is_(None),
+                Transaction.income_category.is_(None),
+            )
+        )
+        if seed_transaction.amount < 0:
+            query = query.filter(Transaction.amount < 0)
+        else:
+            query = query.filter(Transaction.amount > 0)
+
+        candidates: list[tuple[Transaction, float]] = []
+        for transaction in query.all():
+            score = category_suggestion_service.similarity_score(
+                seed_transaction.description.lower(),
+                transaction.description.lower(),
+            )
+            if score >= SIMILARITY_THRESHOLD:
+                candidates.append((transaction, score))
+
+        candidates.sort(key=lambda item: (-item[1], item[0].id))
+        return candidates[:SIMILARITY_PREVIEW_LIMIT]
 
     @classmethod
     def _build_provider(cls, provider_name: str | None = None, model_name: str | None = None):
