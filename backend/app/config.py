@@ -24,6 +24,7 @@ def load_settings() -> Settings:
     imports_dir.mkdir(parents=True, exist_ok=True)
 
     database_path = Path(os.environ.get("MYFINANCE_DB_PATH", data_dir / "myfinance.db")).resolve()
+    database_path.parent.mkdir(parents=True, exist_ok=True)
     provider_config_path = Path(
         os.environ.get("MYFINANCE_PROVIDER_CONFIG", BACKEND_DIR / "config.local.yaml")
     ).resolve()
