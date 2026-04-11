@@ -1,7 +1,7 @@
 # AI Classification Assistant Design
 
 Date: 2026-04-11
-Status: Draft for review
+Status: Accepted
 Scope: AI-assisted transaction classification with human review, optional recurrence tagging, and safe batch application to similar uncategorized transactions
 
 ## Goals
@@ -75,6 +75,14 @@ The user can:
 - retry the assistant
 - save
 - save and move to the next uncategorized transaction in the current table view
+
+Allowed transaction types for the assistant in v1:
+
+- `Income`
+- `Expense`
+- `Transfer`
+
+`Transfer` is included because the user explicitly wants help with internal transfers and own-account movements. Any assistant-proposed type change, including a change to `Transfer`, still requires explicit confirmation before saving.
 
 ### Feedback input
 
@@ -168,7 +176,7 @@ The backend returns a proposal, not a mutation.
 - `follow_up_question` nullable
 - `recurrence_suggestion`
   - `is_recurrent`
-  - `frequency` (`weekly | monthly | yearly | unknown`)
+  - `frequency` (`weekly | monthly | quarterly | yearly | unknown`)
   - `reason`
 
 The assistant exposes a short rationale suitable for the user. It must not expose raw chain-of-thought.
@@ -197,6 +205,8 @@ Rules:
 - at most one `open` session per transaction
 - if an open session already exists for the transaction, resume it
 - if the open session is older than the configured timeout, mark it `expired` and create a new session
+
+V1 default session timeout is `24h`.
 
 ### `classification_turns`
 
@@ -254,6 +264,8 @@ Existing rows remain `NULL`, which means legacy provenance unknown.
 ## Provider Model
 
 The assistant provider must be provider-agnostic from day one.
+
+This assistant should use its own provider family name, `classification_assistant`, rather than reusing the import pipeline's `category_inference` family. The two systems can share provider protocol ideas, but they should not overload the same config family because the assistant needs session-oriented settings such as timeout and max turns.
 
 ### `ClassifierProvider`
 
@@ -523,6 +535,36 @@ V1 does not include:
 - due-date popups
 - a dedicated AI queue page
 - fuzzy recurrence matching
+
+## Suggested PR Slices
+
+One reasonable implementation sequence:
+
+1. classification foundation
+   - migrations
+   - models
+   - shared text normalization
+   - provenance fields
+2. provider interface and stub provider
+   - provider protocol
+   - assistant provider config family
+   - deterministic test provider
+3. backend session API
+   - session lifecycle
+   - propose / feedback / accept
+   - shared commit helper
+4. frontend modal flow
+   - transaction table entry point
+   - modal states
+   - feedback loop
+   - save and save-next
+5. similar preview and batch apply
+   - preview endpoint
+   - uncategorized-only batch apply
+   - provenance updates
+6. upload trust-order change
+   - recurrence pattern match before embedding suggester
+   - integration coverage
 
 ## Future Follow-Ups
 
