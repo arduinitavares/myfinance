@@ -73,33 +73,27 @@ SORT_FIELD_MAPPING = {
 
 def _find_recurrence_pattern(db: Session, transaction: Transaction) -> RecurrencePattern | None:
     normalized_description_key = normalize_for_matching(transaction.description)
-    exact_bank_match = (
+    candidates = (
         db.query(RecurrencePattern)
         .filter(
             RecurrencePattern.active.is_(True),
             RecurrencePattern.normalized_description_key == normalized_description_key,
             RecurrencePattern.currency == transaction.currency,
-            RecurrencePattern.source_bank == transaction.source_bank,
         )
         .order_by(RecurrencePattern.id.asc())
-        .first()
+        .all()
     )
-    if exact_bank_match and recurrence_pattern_matches_transaction(exact_bank_match, transaction):
-        return exact_bank_match
 
-    wildcard_match = (
-        db.query(RecurrencePattern)
-        .filter(
-            RecurrencePattern.active.is_(True),
-            RecurrencePattern.normalized_description_key == normalized_description_key,
-            RecurrencePattern.currency == transaction.currency,
-            RecurrencePattern.source_bank.is_(None),
-        )
-        .order_by(RecurrencePattern.id.asc())
-        .first()
-    )
-    if wildcard_match and recurrence_pattern_matches_transaction(wildcard_match, transaction):
-        return wildcard_match
+    def _priority(pattern: RecurrencePattern) -> tuple[int, int]:
+        if pattern.source_bank == transaction.source_bank:
+            return (0, pattern.id)
+        if pattern.source_bank is None:
+            return (1, pattern.id)
+        return (2, pattern.id)
+
+    for candidate in sorted(candidates, key=_priority):
+        if recurrence_pattern_matches_transaction(candidate, transaction):
+            return candidate
     return None
 
 @router.post("/upload/", response_model=List[schemas.Transaction])
@@ -177,10 +171,11 @@ async def upload_csv(
                     db_trans = commit_category_change(
                         db=db,
                         transaction=db_trans,
-                        transaction_type=db_trans.transaction_type,
+                        transaction_type=recurrence_pattern.transaction_type,
                         category=recurrence_pattern.category,
                         classification_source="recurrence_pattern",
                         recurrence_pattern_id=recurrence_pattern.id,
+                        commit=False,
                     )
                 else:
                     # Get category suggestions only after recurrence patterns are ruled out
@@ -201,6 +196,7 @@ async def upload_csv(
                             category=best_category,
                             classification_source="upload_suggester",
                             recurrence_pattern_id=None,
+                            commit=False,
                         )
                 
                 db_transactions.append(db_trans)
@@ -220,12 +216,31 @@ async def upload_csv(
                 return []
                 
             db.commit()
-            
-            # Refresh to get IDs and add to suggestion service
+
+            affected_dates = sorted({transaction.transaction_date for transaction in db_transactions})
+            for transaction_date in affected_dates:
+                try:
+                    StatisticsService.update_statistics(db, transaction_date)
+                except Exception as exc:
+                    db.rollback()
+                    logger.warning("Failed to update statistics for %s: %s", transaction_date, exc)
+
+            # Refresh to get IDs for the response payload and update the learner
+            # only after the upload transaction is safely committed.
             for trans in db_transactions:
                 db.refresh(trans)
-                if trans.expense_category or trans.income_category:
-                    category_suggestion_service.add_transaction(trans)
+                if (
+                    trans.transaction_type in {TransactionType.EXPENSE, TransactionType.INCOME}
+                    and (trans.expense_category or trans.income_category)
+                ):
+                    try:
+                        category_suggestion_service.add_transaction(trans)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to update suggestion index for transaction %s: %s",
+                            trans.id,
+                            exc,
+                        )
             
             # Run anomaly detection on newly imported transactions
             if db_transactions:
@@ -245,8 +260,10 @@ async def upload_csv(
         except HTTPException as e:  # Preserve intended error codes like 400/415
             raise e
         except ValueError as e:  # CSV format/parse errors
+            db.rollback()
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
+            db.rollback()
             logger.error(f"Error processing CSV upload: {str(e)}")
             raise HTTPException(status_code=500, detail="Error processing CSV upload")
         finally:

@@ -61,8 +61,6 @@ def recurrence_pattern_matches_transaction(pattern: RecurrencePattern, transacti
         return False
     if not _same_sign(pattern.seed_transaction, transaction):
         return False
-    if pattern.source_bank is not None and pattern.source_bank != transaction.source_bank:
-        return False
 
     if pattern.transaction_type == TransactionType.TRANSFER:
         return True
@@ -264,10 +262,14 @@ class ClassificationSessionService:
     @classmethod
     def apply_batch(cls, db: Session, session_id: int, request: ApplyBatchRequest) -> ApplyBatchResponse:
         session = cls._require_accepted_session(db, session_id)
+        seed_transaction = cls._require_transaction(db, session.transaction_id)
 
         if session.final_transaction_type is None or session.final_category is None:
             raise HTTPException(status_code=409, detail="Session has no accepted classification")
 
+        allowed_transaction_ids = {
+            transaction.id for transaction, _ in cls._similar_candidates(db, seed_transaction)
+        }
         requested_ids = list(dict.fromkeys(request.transaction_ids))
         candidates = {
             candidate.id: candidate
@@ -279,6 +281,9 @@ class ClassificationSessionService:
         for transaction_id in requested_ids:
             candidate = candidates.get(transaction_id)
             if candidate is None:
+                skipped_transaction_ids.append(transaction_id)
+                continue
+            if transaction_id not in allowed_transaction_ids:
                 skipped_transaction_ids.append(transaction_id)
                 continue
             if candidate.expense_category is not None or candidate.income_category is not None:

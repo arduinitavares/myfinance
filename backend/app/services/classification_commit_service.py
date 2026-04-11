@@ -32,6 +32,7 @@ def commit_category_change(
     category: str,
     classification_source: str | None,
     recurrence_pattern_id: int | None,
+    commit: bool = True,
 ) -> Transaction:
     normalized_category = normalized_category_for(
         transaction_type=transaction_type,
@@ -77,18 +78,19 @@ def commit_category_change(
 
     db.add(transaction)
     db.flush()
-    StatisticsService.update_statistics(db, transaction.transaction_date)
-    db.commit()
-    db.refresh(transaction)
+    if commit:
+        StatisticsService.update_statistics(db, transaction.transaction_date)
+        db.commit()
+        db.refresh(transaction)
 
-    if transaction.transaction_type in {TransactionType.EXPENSE, TransactionType.INCOME}:
-        try:
-            category_suggestion_service.add_transaction(transaction)
-        except Exception as exc:
-            logger.warning(
-                "Failed to update suggestion index for transaction %s: %s",
-                transaction.id,
-                exc,
-            )
+        if transaction.transaction_type in {TransactionType.EXPENSE, TransactionType.INCOME}:
+            try:
+                category_suggestion_service.add_transaction(transaction)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to update suggestion index for transaction %s: %s",
+                    transaction.id,
+                    exc,
+                )
 
     return transaction
