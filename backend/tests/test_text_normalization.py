@@ -6,9 +6,19 @@ def test_normalize_for_matching_strips_dates_refs_cards_and_iban():
     assert normalize_for_matching(raw) == "sepa proximus"
 
 
+def test_normalize_for_matching_strips_bare_card_label():
+    raw = "CARD 4976 1234 5678 9012"
+    assert normalize_for_matching(raw) == ""
+
+
 def test_normalize_for_matching_preserves_word_order():
     raw = "LOYER appartement centre ville 31-03-2026 REF ABC987"
     assert normalize_for_matching(raw) == "loyer appartement centre ville"
+
+
+def test_normalize_for_matching_preserves_text_after_partial_iban_prefix():
+    raw = "PAYMENT BE68 groceries at store"
+    assert normalize_for_matching(raw) == "payment be68 groceries at store"
 
 
 def test_normalize_for_matching_collapses_whitespace():

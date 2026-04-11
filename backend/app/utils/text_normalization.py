@@ -7,6 +7,7 @@ TRANSACTION_DATE_PATTERNS = [
 ]
 
 CARD_NUMBER_PATTERNS = [
+    r"\bcard(?: number)?\s+\d{4}(?:\s+\d{4}){3}\b",
     r"card number \d*x*\s*\d*x*\s*\d*x*\s*\d*",
     r"\b\d{4}\s\d{4}\s\d{4}\s\d{4}\b",
     r"with \w+ (?:debit|credit) card \d{4}\s*\d*x*\s*\d*x*\s*\d*",
@@ -20,7 +21,7 @@ REFERENCE_PATTERNS = [
 ]
 
 IBAN_BIC_PATTERNS = [
-    r"[A-Z]{2}\d{2}\s*[A-Z0-9\s]{10,30}",
+    r"\b[A-Z]{2}\d{2}(?=[A-Z0-9 ]{10,30}\b)(?=[A-Z0-9 ]*\d)[A-Z0-9 ]{10,30}\b",
     r"(?:bic|swift|bank)\s*[: ]\s*[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?",
 ]
 
