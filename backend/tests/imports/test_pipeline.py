@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 
@@ -30,6 +31,8 @@ def test_pipeline_creates_session_persists_upload_and_records_detection(db_sessi
     assert meta["attempt_count"] == 1
     assert meta["detection"]["strategy_key"] == "pdf_statement"
     assert meta["detection"]["password_protected"] is False
+    assert isinstance(meta["stage_timestamps"]["uploaded"], str)
+    datetime.fromisoformat(meta["stage_timestamps"]["uploaded"])
 
 
 def test_pipeline_marks_session_failed_when_artifact_write_rejects_filename(db_session):
@@ -50,7 +53,8 @@ def test_pipeline_marks_session_failed_when_artifact_write_rejects_filename(db_s
     session_dir = settings.imports_dir / str(session.id)
     meta = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["state"] == ImportSessionStatus.FAILED.value
-    assert meta["stage_timestamps"] == {"uploaded": True}
+    assert isinstance(meta["stage_timestamps"]["uploaded"], str)
+    datetime.fromisoformat(meta["stage_timestamps"]["uploaded"])
 
 
 def test_pipeline_marks_session_failed_when_manifest_write_fails_late(db_session):
@@ -83,7 +87,10 @@ def test_pipeline_marks_session_failed_when_manifest_write_fails_late(db_session
     meta = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["state"] == ImportSessionStatus.FAILED.value
     assert meta["detection"]["strategy_key"] == "pdf_statement"
-    assert meta["stage_timestamps"] == {"uploaded": True, "detected": True}
+    assert isinstance(meta["stage_timestamps"]["uploaded"], str)
+    assert isinstance(meta["stage_timestamps"]["detected"], str)
+    datetime.fromisoformat(meta["stage_timestamps"]["uploaded"])
+    datetime.fromisoformat(meta["stage_timestamps"]["detected"])
 
 
 def test_pipeline_rolls_back_and_marks_failed_when_detected_commit_fails(db_session, monkeypatch):
@@ -115,4 +122,7 @@ def test_pipeline_rolls_back_and_marks_failed_when_detected_commit_fails(db_sess
     meta = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["state"] == ImportSessionStatus.FAILED.value
     assert meta["detection"]["strategy_key"] == "pdf_statement"
-    assert meta["stage_timestamps"] == {"uploaded": True, "detected": True}
+    assert isinstance(meta["stage_timestamps"]["uploaded"], str)
+    assert isinstance(meta["stage_timestamps"]["detected"], str)
+    datetime.fromisoformat(meta["stage_timestamps"]["uploaded"])
+    datetime.fromisoformat(meta["stage_timestamps"]["detected"])

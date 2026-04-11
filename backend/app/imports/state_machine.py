@@ -34,8 +34,8 @@ ALLOWED_STATUS_TRANSITIONS = {
         ImportSessionStatus.PARTIALLY_COMMITTED,
         ImportSessionStatus.FAILED,
     },
-    ImportSessionStatus.REJECTED: {ImportSessionStatus.SUPERSEDED},
-    ImportSessionStatus.FAILED: {ImportSessionStatus.SUPERSEDED},
+    ImportSessionStatus.REJECTED: {ImportSessionStatus.DETECTED, ImportSessionStatus.SUPERSEDED},
+    ImportSessionStatus.FAILED: {ImportSessionStatus.DETECTED, ImportSessionStatus.SUPERSEDED},
 }
 
 

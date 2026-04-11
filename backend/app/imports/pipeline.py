@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -32,7 +33,7 @@ class ImportPipelineService:
 
         session_id = str(session.id)
         stage = "artifact_write"
-        stage_timestamps = {"uploaded": True}
+        stage_timestamps = {"uploaded": self._stage_timestamp()}
         detection = None
         try:
             self.artifacts.init_session(session_id)
@@ -58,7 +59,7 @@ class ImportPipelineService:
             session.provider_hint = detection.provider_hint
             session.language_hint = detection.language_hint
             session.charset_hint = detection.charset_hint
-            stage_timestamps["detected"] = True
+            stage_timestamps["detected"] = self._stage_timestamp()
             stage = "manifest_write"
             self.artifacts.write_detection(session_id, detection)
             self.artifacts.write_meta(
@@ -96,7 +97,7 @@ class ImportPipelineService:
             raise
 
     @staticmethod
-    def _build_meta_payload(*, state: str, stage_timestamps: dict[str, bool], detection=None) -> dict:
+    def _build_meta_payload(*, state: str, stage_timestamps: dict[str, str], detection=None) -> dict:
         payload = {
             "state": state,
             "attempt_count": 1,
@@ -105,3 +106,7 @@ class ImportPipelineService:
         if detection is not None:
             payload["detection"] = detection.model_dump(mode="json")
         return payload
+
+    @staticmethod
+    def _stage_timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")

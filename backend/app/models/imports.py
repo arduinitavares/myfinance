@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 
 from ..database import Base
 
@@ -20,6 +22,8 @@ class ImportSession(Base):
     error_stage = Column(String(50), nullable=True)
     error_message = Column(Text, nullable=True)
     approved_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ImportStatementDraft(Base):
@@ -28,6 +32,15 @@ class ImportStatementDraft(Base):
     id = Column(Integer, primary_key=True, index=True)
     import_session_id = Column(Integer, ForeignKey("import_sessions.id"), nullable=False, index=True)
     attempt_number = Column(Integer, nullable=False, default=1)
+    statement_period_start = Column(Date, nullable=True)
+    statement_period_end = Column(Date, nullable=True)
+    summary_text = Column(Text, nullable=True)
+    opening_balance = Column(Float, nullable=True)
+    closing_balance = Column(Float, nullable=True)
+    available_balance = Column(Float, nullable=True)
+    total_debit = Column(Float, nullable=True)
+    total_credit = Column(Float, nullable=True)
+    transaction_count = Column(Integer, nullable=True)
     account_number_hint = Column(String(100), nullable=True)
     card_number_hint = Column(String(100), nullable=True)
     currency = Column(String(10), nullable=True)
@@ -45,13 +58,18 @@ class ImportTransactionDraft(Base):
         nullable=False,
         index=True,
     )
+    transaction_date = Column(Date, nullable=True)
     source_description = Column(Text, nullable=False)
     canonical_description_en = Column(Text, nullable=True)
     signed_amount = Column(Float, nullable=False)
     currency = Column(String(10), nullable=False)
+    debit_credit = Column(String(10), nullable=True)
     source_locator = Column(String(255), nullable=False)
     inferred_category = Column(String(100), nullable=True)
     category_source = Column(String(50), nullable=True)
+    confidence = Column(Float, nullable=True)
+    field_confidence = Column(Text, nullable=True)
+    raw_fields = Column(Text, nullable=True)
     edit_source = Column(String(50), nullable=False, default="ai_extracted")
 
 
