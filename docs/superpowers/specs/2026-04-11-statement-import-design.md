@@ -1,7 +1,7 @@
 # Statement Import Design
 
 Date: 2026-04-11
-Status: Draft for review
+Status: Accepted
 Scope: shared import foundation for Belfius CSV, Beobank CSV, Belfius PDF, and Beobank PDF, with room for future providers such as Nubank
 
 ## Goals
@@ -98,7 +98,10 @@ Every extractor returns the same canonical object:
   - per-field confidence
   - `source_locator`
 - `issues[]`
-- `warnings[]`
+  - issue message
+  - issue code
+  - `blocking`
+  - optional transaction reference
 - overall confidence
 
 ### RawEvidence
@@ -110,6 +113,8 @@ Serializable intermediate evidence gathered before structured extraction:
 - OCR output
 - page snippets
 - coordinates / citations / bounding boxes when available
+
+`RawEvidence` must be serializable to JSON and stored as `evidence/raw.json` for each import attempt.
 
 ## Data Model and Audit
 
@@ -177,6 +182,8 @@ Artifacts are stored locally on disk and never committed to git.
 - `category_source`
 - confidence fields
 - `edit_source`
+
+`edit_source` allowed values are `ai_extracted` and `user_edited`.
 
 #### `import_issues`
 
@@ -338,6 +345,13 @@ Provider implementations own:
 
 Each provider should expose `describe()` for audit logging of model, schema, and prompt version.
 
+`describe()` must return at minimum:
+
+- provider name
+- model name
+- schema version
+- prompt fingerprint or prompt version tag
+
 ## Testing and CI
 
 Default test suites must not require live provider calls.
@@ -370,7 +384,7 @@ Fixture sanitization checklist:
 - shifted or randomized date ranges
 - non-traceable file hashes
 
-The repo should include a sanitizer helper script early in the importer effort.
+The repo should include a sanitizer helper script in PR 1 or PR 2 at the latest, before any fixture file enters the repository.
 
 ## PR Roadmap
 
