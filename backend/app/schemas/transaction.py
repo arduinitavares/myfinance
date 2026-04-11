@@ -15,6 +15,8 @@ class TransactionBase(BaseModel):
     transaction_type: Optional[TransactionType] = None
     expense_category: Optional[ExpenseCategory] = None
     income_category: Optional[IncomeCategory] = None
+    classification_source: Optional[str] = None
+    recurrence_pattern_id: Optional[int] = None
     source_bank: str
 
     @validator('transaction_type', pre=True, always=True)

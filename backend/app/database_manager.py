@@ -1,6 +1,7 @@
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 import logging
 from .database import engine, Base
+from .models.classification import ClassificationSession, ClassificationTurn, RecurrencePattern
 from .models.transaction import Transaction
 from .models.statistics import FinancialStatistics, CategoryStatistics
 from .models.financial_health import FinancialHealth, FinancialRecommendation
@@ -15,6 +16,25 @@ from sqlalchemy.orm import Session
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _ensure_classification_transaction_columns() -> None:
+    inspector = inspect(engine)
+    if "transactions" not in inspector.get_table_names():
+        return
+
+    transaction_columns = {column["name"] for column in inspector.get_columns("transactions")}
+    with engine.begin() as conn:
+        if "classification_source" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN classification_source VARCHAR(50)"))
+        if "recurrence_pattern_id" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN recurrence_pattern_id INTEGER"))
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_transactions_recurrence_pattern_id "
+                "ON transactions (recurrence_pattern_id)"
+            )
+        )
+
 def init_database():
     """Initialize the database and create all tables"""
     logger.info("Initializing database...")
@@ -24,7 +44,28 @@ def init_database():
     existing_tables = inspector.get_table_names()
     logger.info(f"Existing tables: {existing_tables}")
 
-    tables_to_check = ["transactions", "financial_statistics", "category_statistics", "financial_health", "financial_recommendations", "projection_scenarios", "projection_parameters", "projection_results", "transaction_anomalies", "anomaly_patterns", "anomaly_rules", "import_sessions", "import_statement_drafts", "import_transaction_drafts", "import_issues"]
+    _ensure_classification_transaction_columns()
+
+    tables_to_check = [
+        "transactions",
+        "classification_sessions",
+        "classification_turns",
+        "recurrence_patterns",
+        "financial_statistics",
+        "category_statistics",
+        "financial_health",
+        "financial_recommendations",
+        "projection_scenarios",
+        "projection_parameters",
+        "projection_results",
+        "transaction_anomalies",
+        "anomaly_patterns",
+        "anomaly_rules",
+        "import_sessions",
+        "import_statement_drafts",
+        "import_transaction_drafts",
+        "import_issues",
+    ]
     missing_tables = [table for table in tables_to_check if table not in existing_tables]
 
     if missing_tables:
@@ -108,6 +149,32 @@ def reset_database(reset_type: str = "all"):
         elif reset_type == "imports":
             Base.metadata.drop_all(bind=engine, tables=[ImportIssue.__table__, ImportTransactionDraft.__table__, ImportStatementDraft.__table__, ImportSession.__table__])
             Base.metadata.create_all(bind=engine, tables=[ImportSession.__table__, ImportStatementDraft.__table__, ImportTransactionDraft.__table__, ImportIssue.__table__])
+        elif reset_type == "classification":
+            with Session(engine) as db:
+                db.query(Transaction).update(
+                    {
+                        Transaction.classification_source: None,
+                        Transaction.recurrence_pattern_id: None,
+                    },
+                    synchronize_session=False,
+                )
+                db.commit()
+            Base.metadata.drop_all(
+                bind=engine,
+                tables=[
+                    ClassificationTurn.__table__,
+                    ClassificationSession.__table__,
+                    RecurrencePattern.__table__,
+                ],
+            )
+            Base.metadata.create_all(
+                bind=engine,
+                tables=[
+                    ClassificationSession.__table__,
+                    ClassificationTurn.__table__,
+                    RecurrencePattern.__table__,
+                ],
+            )
         logger.info("Database reset successfully!")
     except Exception as e:
         logger.error(f"Error resetting database: {str(e)}")

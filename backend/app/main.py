@@ -16,6 +16,7 @@ init_database()
 
 # Import routers
 from .routers import transactions, statistics, suggestions, financial_health, projections, anomalies
+from .routers.classification import router as classification_router
 
 app = FastAPI(title="MyFinance API")
 
@@ -36,6 +37,7 @@ app.include_router(statistics.router)
 app.include_router(financial_health.router)
 app.include_router(projections.router)
 app.include_router(anomalies.router)
+app.include_router(classification_router)
 
 # Add a debug endpoint to reset the database
 # pass statistics or transactions to reset only statistics or transactions  

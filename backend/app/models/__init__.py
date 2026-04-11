@@ -1,4 +1,10 @@
 from ..database import Base
+from .classification import (
+    ClassificationSession,
+    ClassificationSessionStatus,
+    ClassificationTurn,
+    RecurrencePattern,
+)
 from .transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory
 from .statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
 from .financial_health import FinancialHealth, FinancialRecommendation
@@ -12,6 +18,10 @@ __all__ = [
     'FinancialStatistics',
     'CategoryStatistics',
     'StatisticsPeriod',
+    'ClassificationSession',
+    'ClassificationSessionStatus',
+    'ClassificationTurn',
+    'RecurrencePattern',
     'Transaction',
     'TransactionType',
     'ExpenseCategory',

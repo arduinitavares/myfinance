@@ -1,0 +1,47 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..schemas.classification import (
+    AcceptClassificationRequest,
+    AcceptClassificationResponse,
+    ClassificationProposalResponse,
+    ClassificationSessionResponse,
+    CreateClassificationSessionRequest,
+    SubmitFeedbackRequest,
+)
+from ..services.classification_session_service import ClassificationSessionService
+
+
+router = APIRouter(prefix="/classification", tags=["classification"])
+
+
+@router.post("/sessions", response_model=ClassificationSessionResponse)
+def create_classification_session(
+    request: CreateClassificationSessionRequest,
+    db: Session = Depends(get_db),
+):
+    return ClassificationSessionService.create_or_resume_session(db, request.transaction_id)
+
+
+@router.post("/sessions/{session_id}/propose", response_model=ClassificationProposalResponse)
+def propose_classification(session_id: int, db: Session = Depends(get_db)):
+    return ClassificationSessionService.propose(db, session_id)
+
+
+@router.post("/sessions/{session_id}/feedback", response_model=ClassificationProposalResponse)
+def submit_feedback(
+    session_id: int,
+    request: SubmitFeedbackRequest,
+    db: Session = Depends(get_db),
+):
+    return ClassificationSessionService.record_feedback(db, session_id, request)
+
+
+@router.post("/sessions/{session_id}/accept", response_model=AcceptClassificationResponse)
+def accept_classification(
+    session_id: int,
+    request: AcceptClassificationRequest,
+    db: Session = Depends(get_db),
+):
+    return ClassificationSessionService.accept(db, session_id, request)

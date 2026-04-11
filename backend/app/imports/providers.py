@@ -45,6 +45,7 @@ class ProviderRegistry(BaseModel):
     translation_normalization: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
     category_inference: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
     duplicate_detection: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
+    classification_assistant: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
 
     @classmethod
     def from_path(cls, path: Path) -> "ProviderRegistry":
@@ -63,6 +64,7 @@ class ProviderRegistry(BaseModel):
             "translation_normalization",
             "category_inference",
             "duplicate_detection",
+            "classification_assistant",
         ):
             family = getattr(self, family_name)
             report[family_name] = {}

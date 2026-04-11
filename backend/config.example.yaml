@@ -77,3 +77,19 @@ duplicate_detection:
       supports_json_schema: false
       cost_tier: free
       requires_confirmation: false
+
+classification_assistant:
+  order: [stub]
+  fallback_on: []
+  providers:
+    stub:
+      enabled: true
+      kind: stub
+      model: stub-classifier-v1
+      timeout_seconds: 5
+      max_retries: 1
+      supports_pdf: false
+      supports_images: false
+      supports_json_schema: true
+      cost_tier: free
+      requires_confirmation: false
