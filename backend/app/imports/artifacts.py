@@ -36,6 +36,7 @@ class ArtifactStore:
         self._write_json(attempt_dir / "evidence" / "raw.json", evidence.model_dump(mode="json"))
 
     def write_original_file(self, session_id: str, filename: str, file_bytes: bytes) -> Path:
+        self._validate_original_filename(filename)
         target = self.session_dir(session_id) / "original" / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(file_bytes)
@@ -45,3 +46,9 @@ class ArtifactStore:
     def _write_json(path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    @staticmethod
+    def _validate_original_filename(filename: str) -> None:
+        path = Path(filename)
+        if not filename or path.is_absolute() or any(part == ".." for part in path.parts) or "/" in filename or "\\" in filename:
+            raise ValueError(f"unsafe filename: {filename!r}")
