@@ -4,7 +4,6 @@ from app.imports.contracts import (
     ExtractedTransaction,
     ImportIssue,
     ImportStrategyKey,
-    ProviderDescription,
     RawEvidence,
 )
 
@@ -67,4 +66,3 @@ def test_detection_result_exposes_strategy_enum():
         notes=[],
     )
     assert detected.strategy_key == ImportStrategyKey.PDF_STATEMENT
-
