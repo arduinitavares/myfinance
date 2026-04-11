@@ -32,12 +32,17 @@ class ImportPipelineService:
 
         session_id = str(session.id)
         stage = "artifact_write"
+        stage_timestamps = {"uploaded": True}
+        detection = None
         try:
             self.artifacts.init_session(session_id)
             self.artifacts.write_original_file(session_id, filename, file_bytes)
             self.artifacts.write_meta(
                 session_id,
-                {"state": session.status, "attempt_count": 1, "stage_timestamps": {"uploaded": True}},
+                self._build_meta_payload(
+                    state=session.status,
+                    stage_timestamps=stage_timestamps,
+                ),
             )
 
             stage = "detection"
@@ -53,24 +58,50 @@ class ImportPipelineService:
             session.provider_hint = detection.provider_hint
             session.language_hint = detection.language_hint
             session.charset_hint = detection.charset_hint
+            stage_timestamps["detected"] = True
             stage = "manifest_write"
             self.artifacts.write_detection(session_id, detection)
             self.artifacts.write_meta(
                 session_id,
-                {
-                    "state": session.status,
-                    "attempt_count": 1,
-                    "stage_timestamps": {"uploaded": True, "detected": True},
-                    "detection": detection.model_dump(mode="json"),
-                },
+                self._build_meta_payload(
+                    state=session.status,
+                    detection=detection,
+                    stage_timestamps=stage_timestamps,
+                ),
             )
+            stage = "db_commit"
             self.db.commit()
             self.db.refresh(session)
             return session, detection
         except Exception as exc:
-            session.status = ImportSessionStatus.FAILED.value
-            session.error_stage = stage
-            session.error_message = str(exc)
+            self.db.rollback()
+            persisted_session = self.db.get(ImportSession, session.id)
+            if persisted_session is None:
+                raise
+
+            persisted_session.status = ImportSessionStatus.FAILED.value
+            persisted_session.error_stage = stage
+            persisted_session.error_message = str(exc)
             self.db.commit()
-            self.db.refresh(session)
+            self.db.refresh(persisted_session)
+
+            self.artifacts.write_meta(
+                session_id,
+                self._build_meta_payload(
+                    state=persisted_session.status,
+                    detection=detection,
+                    stage_timestamps=stage_timestamps,
+                ),
+            )
             raise
+
+    @staticmethod
+    def _build_meta_payload(*, state: str, stage_timestamps: dict[str, bool], detection=None) -> dict:
+        payload = {
+            "state": state,
+            "attempt_count": 1,
+            "stage_timestamps": stage_timestamps,
+        }
+        if detection is not None:
+            payload["detection"] = detection.model_dump(mode="json")
+        return payload
