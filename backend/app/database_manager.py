@@ -6,6 +6,7 @@ from .models.statistics import FinancialStatistics, CategoryStatistics
 from .models.financial_health import FinancialHealth, FinancialRecommendation
 from .models.financial_projection import ProjectionScenario, ProjectionParameter, ProjectionResult
 from .models.anomaly import TransactionAnomaly, AnomalyPattern, AnomalyRule
+from .models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
 from .services.statistics_service import StatisticsService
 from .services.financial_health_service import FinancialHealthService
 from .services.projection_service import ProjectionService
@@ -23,7 +24,7 @@ def init_database():
     existing_tables = inspector.get_table_names()
     logger.info(f"Existing tables: {existing_tables}")
 
-    tables_to_check = ["transactions", "financial_statistics", "category_statistics", "financial_health", "financial_recommendations", "projection_scenarios", "projection_parameters", "projection_results", "transaction_anomalies", "anomaly_patterns", "anomaly_rules"]
+    tables_to_check = ["transactions", "financial_statistics", "category_statistics", "financial_health", "financial_recommendations", "projection_scenarios", "projection_parameters", "projection_results", "transaction_anomalies", "anomaly_patterns", "anomaly_rules", "import_sessions", "import_statement_drafts", "import_transaction_drafts", "import_issues"]
     missing_tables = [table for table in tables_to_check if table not in existing_tables]
 
     if missing_tables:
@@ -104,7 +105,10 @@ def reset_database(reset_type: str = "all"):
         elif reset_type == "anomalies":
             Base.metadata.drop_all(bind=engine, tables=[TransactionAnomaly.__table__, AnomalyPattern.__table__, AnomalyRule.__table__])
             Base.metadata.create_all(bind=engine, tables=[TransactionAnomaly.__table__, AnomalyPattern.__table__, AnomalyRule.__table__])
+        elif reset_type == "imports":
+            Base.metadata.drop_all(bind=engine, tables=[ImportIssue.__table__, ImportTransactionDraft.__table__, ImportStatementDraft.__table__, ImportSession.__table__])
+            Base.metadata.create_all(bind=engine, tables=[ImportSession.__table__, ImportStatementDraft.__table__, ImportTransactionDraft.__table__, ImportIssue.__table__])
         logger.info("Database reset successfully!")
     except Exception as e:
         logger.error(f"Error resetting database: {str(e)}")
-        raise 
+        raise
