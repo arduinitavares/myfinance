@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { Transaction, TransactionType, ExpenseCategory, IncomeCategory, SortParams } from '../types/transaction';
 import { format } from 'date-fns';
-import { TrashIcon } from '@heroicons/react/24/outline';
+import { SparklesIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { Pagination } from './common/Pagination';
+import { ClassificationAssistantModal } from './transactions/ClassificationAssistantModal';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -20,6 +21,7 @@ interface TransactionListProps {
     transactionType: TransactionType
   ) => Promise<void>;
   onTransactionDelete: (transactionId: number) => Promise<void>;
+  onTransactionsRefresh: () => Promise<void>;
 }
 
 type SortField = 'date' | 'description' | 'amount' | 'type';
@@ -35,7 +37,10 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onSortChange,
   onTransactionUpdate,
   onTransactionDelete,
+  onTransactionsRefresh,
 }) => {
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+
   const handleSort = (field: SortField) => {
     if (field === sortParams.field) {
       onSortChange({
@@ -68,6 +73,24 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       </div>
     </th>
   );
+
+  const getNextTransaction = (currentId: number): Transaction | null => {
+    const uncategorized = transactions.filter(
+      (item) => !item.expense_category && !item.income_category
+    );
+    const currentIndex = uncategorized.findIndex((item) => item.id === currentId);
+    if (currentIndex === -1) {
+      return null;
+    }
+    return uncategorized[currentIndex + 1] ?? null;
+  };
+
+  const handleAssistantSaved = async (nextTransaction: Transaction | null) => {
+    await onTransactionsRefresh();
+    if (nextTransaction) {
+      setSelectedTransaction(nextTransaction);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -155,12 +178,24 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                   </Select.Root>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <button
-                    onClick={() => onTransactionDelete(transaction.id)}
-                    className="text-red-600 hover:text-red-900 dark:text-red-500 dark:hover:text-red-400 p-2 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {!transaction.expense_category && !transaction.income_category && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTransaction(transaction)}
+                        className="inline-flex items-center gap-1 rounded-md border border-blue-500 px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                      >
+                        <SparklesIcon className="h-3.5 w-3.5" />
+                        <span>Ask AI</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onTransactionDelete(transaction.id)}
+                      className="text-red-600 hover:text-red-900 dark:text-red-500 dark:hover:text-red-400 p-2 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -171,6 +206,17 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         currentPage={currentPage}
         totalPages={totalPages}
         onPageChange={onPageChange}
+      />
+      <ClassificationAssistantModal
+        open={selectedTransaction !== null}
+        transaction={selectedTransaction}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setSelectedTransaction(null);
+          }
+        }}
+        onSaved={handleAssistantSaved}
+        getNextTransaction={getNextTransaction}
       />
     </div>
   );

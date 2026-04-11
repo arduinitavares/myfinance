@@ -72,6 +72,14 @@ export interface Transaction {
   transaction_type: TransactionType;
   expense_category?: ExpenseCategory;
   income_category?: IncomeCategory;
+  classification_source?:
+    | 'manual'
+    | 'assistant'
+    | 'assistant_batch'
+    | 'upload_suggester'
+    | 'recurrence_pattern'
+    | null;
+  recurrence_pattern_id?: number | null;
   source_bank: string;
 }
 

@@ -54,6 +54,7 @@ const TransactionsView = () => {
     transactions,
     loading,
     error,
+    refreshData,
     setSearchTerm,
     setCategoryFilter,
     setDateRange,
@@ -132,6 +133,7 @@ const TransactionsView = () => {
           onSortChange={setSortParams}
           onTransactionUpdate={handleCategoryUpdate}
           onTransactionDelete={handleDeleteTransaction}
+          onTransactionsRefresh={refreshData}
         />
       </div>
     </div>
