@@ -2,10 +2,12 @@ import textwrap
 from datetime import date
 import sqlite3
 
-from sqlalchemy import create_engine
+import pytest
+from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
 
-from app.database import SessionLocal
+from app.database import SessionLocal, enable_sqlite_foreign_keys
 from app.database_manager import init_database, reset_database
 from app.imports.providers import ProviderRegistry
 from app.migrations import migrate_classification_assistant as migration_module
@@ -196,3 +198,62 @@ def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
     assert session.provider_name == "stub"
     assert session.model_name == "stub-classifier-v1"
     db_session.close()
+
+
+def test_session_layer_enforces_recurrence_pattern_foreign_key():
+    temp_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    event.listen(temp_engine, "connect", enable_sqlite_foreign_keys)
+    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=temp_engine)
+
+    original_engine = migration_module.engine
+    migration_module.engine = temp_engine
+    try:
+        raw_conn = temp_engine.raw_connection()
+        try:
+            cursor = raw_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.execute(
+                """
+                CREATE TABLE transactions (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    account_number VARCHAR(50),
+                    transaction_date DATE,
+                    amount FLOAT,
+                    currency VARCHAR(3),
+                    description VARCHAR(500),
+                    counterparty_name VARCHAR(200),
+                    counterparty_account VARCHAR(50),
+                    transaction_type VARCHAR(8),
+                    expense_category VARCHAR(20),
+                    income_category VARCHAR(20),
+                    source_bank VARCHAR(10)
+                )
+                """
+            )
+            raw_conn.commit()
+        finally:
+            raw_conn.close()
+
+        migration_module.migrate_classification_assistant()
+
+        db_session = session_factory()
+        transaction = Transaction(
+            account_number="BE10000000000001",
+            transaction_date=date(2025, 1, 1),
+            amount=-42.50,
+            currency="EUR",
+            description="PROXIMUS telecom invoice",
+            transaction_type=TransactionType.EXPENSE,
+            source_bank="ing",
+            recurrence_pattern_id=999999,
+        )
+        db_session.add(transaction)
+
+        with pytest.raises(IntegrityError):
+            db_session.commit()
+
+        db_session.rollback()
+        db_session.close()
+    finally:
+        migration_module.engine = original_engine
+        temp_engine.dispose()

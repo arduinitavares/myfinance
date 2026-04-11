@@ -124,13 +124,30 @@ def init_database():
     else:
         logger.info("All required database tables already exist")
 
+
+def _set_sqlite_foreign_keys(enabled: bool) -> None:
+    raw_connection = engine.raw_connection()
+    try:
+        cursor = raw_connection.cursor()
+        try:
+            cursor.execute(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}")
+        finally:
+            cursor.close()
+        raw_connection.commit()
+    finally:
+        raw_connection.close()
+
 def reset_database(reset_type: str = "all"):
     """Drop all tables and recreate them"""
     logger.info("Resetting database...")
     try:
         if reset_type == "all":
-            Base.metadata.drop_all(bind=engine)
-            Base.metadata.create_all(bind=engine)
+            _set_sqlite_foreign_keys(False)
+            try:
+                Base.metadata.drop_all(bind=engine)
+                Base.metadata.create_all(bind=engine)
+            finally:
+                _set_sqlite_foreign_keys(True)
         elif reset_type == "transactions":
             Base.metadata.drop_all(bind=engine, tables=[Transaction.__table__])
             Base.metadata.create_all(bind=engine, tables=[Transaction.__table__])
