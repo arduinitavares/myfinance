@@ -27,6 +27,20 @@ def test_conftest_bootstrap_overrides_preset_database_path(monkeypatch):
     assert os.environ["MYFINANCE_DB_PATH"] == str(TEST_ROOT / "data" / "myfinance.db")
 
 
+def test_conftest_bootstrap_is_idempotent():
+    sentinel = TEST_ROOT / "data" / "keep-me.txt"
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("present", encoding="utf-8")
+
+    conftest_path = Path(__file__).resolve().parents[1] / "conftest.py"
+    spec = importlib.util.spec_from_file_location("runtime_config_conftest_idempotent", conftest_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    assert sentinel.read_text(encoding="utf-8") == "present"
+
+
 def test_load_settings_creates_parent_for_custom_database_path(monkeypatch):
     custom_db_path = TEST_ROOT / "custom-db" / "nested" / "myfinance.sqlite3"
     monkeypatch.setenv("MYFINANCE_DATA_DIR", str(TEST_ROOT / "data"))
