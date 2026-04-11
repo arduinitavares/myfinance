@@ -11,6 +11,18 @@ logger = logging.getLogger(__name__)
 
 from ..models.transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory
 from sqlalchemy.orm import Session
+from ..utils import (
+    CARD_NUMBER_PATTERNS,
+    IBAN_BIC_PATTERNS,
+    REFERENCE_PATTERNS,
+    TRANSACTION_DATE_PATTERNS,
+)
+
+
+def _strip_patterns(text: str, patterns: list[str]) -> str:
+    for pattern in patterns:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    return text
 
 class CategorySuggestionService:
     def __init__(self):
@@ -62,36 +74,18 @@ class CategorySuggestionService:
             text = re.sub(prefix, '', text, flags=re.IGNORECASE)
         
         # Remove dates in various formats
-        date_patterns = [
-            r'\d{2}[-/]\d{2}[-/]\d{2,4}',  # DD-MM-YYYY or DD/MM/YYYY
-            r'\d{2}[-/]\d{2}',              # DD-MM or DD/MM
-            r'\d{1,2}[:.]\d{2}\s*(?:am|pm)?',  # HH:MM or HH.MM with optional AM/PM
-        ]
-        for pattern in date_patterns:
-            text = re.sub(pattern, '', text)
-        
+        text = _strip_patterns(text, TRANSACTION_DATE_PATTERNS)
+
         # Remove card information
-        card_patterns = [
-            r'card number \d*x*\s*\d*x*\s*\d*x*\s*\d*',
-            r'with \w+ (?:debit|credit) card \d{4}\s*\d*x*\s*\d*x*\s*\d*',
-            r'cardholder:\s*[^\n]+',
-        ]
-        for pattern in card_patterns:
-            text = re.sub(pattern, '', text)
-        
+        text = _strip_patterns(text, CARD_NUMBER_PATTERNS)
+        text = re.sub(r'cardholder:\s*[^\n]+', '', text, flags=re.IGNORECASE)
+
         # Remove transaction references and IDs
-        ref_patterns = [
-            r'creditor ref\.\s*:\s*[\w\s]+',
-            r'mandate ref\.\s*:\s*[\w\s]+',
-            r'reference\s*:\s*[\w\s/]+',
-            r'ordering bank\s*:\s*[\w\s]+',
-        ]
-        for pattern in ref_patterns:
-            text = re.sub(pattern, '', text)
-        
+        text = _strip_patterns(text, REFERENCE_PATTERNS)
+        text = re.sub(r'ordering bank\s*:\s*[\w\s]+', '', text, flags=re.IGNORECASE)
+
         # Remove account numbers and BIC codes
-        text = re.sub(r'[A-Z]{2}\d{2}\s*[A-Z0-9\s]{10,30}', '', text)  # IBAN
-        text = re.sub(r'[A-Z]{6}[A-Z0-9]{2,5}', '', text)  # BIC/SWIFT
+        text = _strip_patterns(text, IBAN_BIC_PATTERNS)
         
         # Remove postal codes and addresses
         text = re.sub(r'\d{4,5}\s*[-\s]*[a-z]{2,3}', '', text)
@@ -213,4 +207,4 @@ class CategorySuggestionService:
                     payload={"category": category.value}
                 )
             ]
-        ) 
+        )
