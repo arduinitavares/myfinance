@@ -11,11 +11,13 @@ def _load_sanitizer_module():
     return module
 
 
-def test_sanitize_fixture_masks_iban_and_card_shapes():
+def test_sanitize_fixture_masks_name_iban_card_and_amount_shapes():
     sanitizer = _load_sanitizer_module()
     cleaned = sanitizer.sanitize_fixture_text(
-        "Naam;BE68539007547034;4976 1234 5678 9012;1234,56"
+        "Naam;John Doe;BE68539007547034;4976 1234 5678 9012;1234,56"
     )
+    assert cleaned == "Fixture Name;Fixture Person;BE00SANITIZED00000000;0000 0000 0000 0000;99,99"
+    assert "John Doe" not in cleaned
     assert "BE68539007547034" not in cleaned
     assert "4976 1234 5678 9012" not in cleaned
     assert "1234,56" not in cleaned
