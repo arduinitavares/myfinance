@@ -16,6 +16,16 @@ def test_normalize_for_matching_keeps_reference_trailing_merchant_text():
     assert normalize_for_matching(raw) == "proximus"
 
 
+def test_normalize_for_matching_strips_dotted_reference_values():
+    raw = "Reference: INV.2026 PROXIMUS"
+    assert normalize_for_matching(raw) == "proximus"
+
+
+def test_normalize_for_matching_strips_multi_token_reference_values():
+    raw = "Reference: ABC 123 PROXIMUS"
+    assert normalize_for_matching(raw) == "proximus"
+
+
 def test_normalize_for_matching_preserves_word_order():
     raw = "LOYER appartement centre ville 31-03-2026 REF ABC987"
     assert normalize_for_matching(raw) == "loyer appartement centre ville"
@@ -51,6 +61,7 @@ def test_preprocess_description_keeps_merchant_prepend():
 
     service = CategorySuggestionService.__new__(CategorySuggestionService)
 
-    result = service._preprocess_description("creditor: PROXIMUS. 15/03/2026 REF 12345")
+    result = service._preprocess_description("creditor: PROXIMUS 07.11 15/03/2026 REF 12345")
 
     assert result.startswith("proximus ")
+    assert "07.11" not in result

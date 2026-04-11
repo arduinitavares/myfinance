@@ -24,6 +24,9 @@ def _strip_patterns(text: str, patterns: list[str]) -> str:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
     return text
 
+
+SERVICE_DOT_TIME_PATTERN = r"\b(?:[01]?\d|2[0-3])\.[0-5]\d(?:\s?(?:am|pm))?\b"
+
 class CategorySuggestionService:
     def __init__(self):
         # Initialize the sentence transformer model
@@ -75,6 +78,7 @@ class CategorySuggestionService:
         
         # Remove dates in various formats
         text = _strip_patterns(text, TRANSACTION_DATE_PATTERNS)
+        text = re.sub(SERVICE_DOT_TIME_PATTERN, "", text, flags=re.IGNORECASE)
 
         # Remove card information
         text = _strip_patterns(text, CARD_NUMBER_PATTERNS)
