@@ -1,9 +1,26 @@
+from dataclasses import replace
+
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings as app_settings
+from app.database import SessionLocal
+from app.models.classification import ClassificationSession, ClassificationSessionStatus, RecurrencePattern
+from app.models.transaction import Transaction
 from app.main import app
+from app.services import classification_session_service
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _enable_runtime_stub_provider(monkeypatch):
+    monkeypatch.setattr(
+        classification_session_service,
+        "settings",
+        replace(app_settings, provider_config_path=app_settings.provider_example_path),
+    )
 
 
 def _reset_database():
@@ -138,3 +155,80 @@ def test_accept_commits_transaction_sets_classification_source_and_marks_session
     assert payload["transaction"]["expense_category"] == "Utilities"
     assert payload["transaction"]["classification_source"] == "assistant"
     assert payload["transaction"]["recurrence_pattern_id"] is not None
+
+
+def test_propose_returns_503_when_runtime_provider_config_is_missing(tmp_path, monkeypatch):
+    _reset_database()
+    transaction = _restore_transaction(description="PROXIMUS telecom invoice")
+
+    db = SessionLocal()
+    try:
+        session = ClassificationSession(
+            transaction_id=transaction["id"],
+            status=ClassificationSessionStatus.OPEN,
+            provider_name="stub",
+            model_name="stub-classifier-v1",
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        session_id = session.id
+    finally:
+        db.close()
+
+    missing_config = tmp_path / "missing-runtime-config.yaml"
+    monkeypatch.setattr(
+        classification_session_service,
+        "settings",
+        replace(app_settings, provider_config_path=missing_config),
+    )
+
+    response = client.post(f"/classification/sessions/{session_id}/propose")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "No classification assistant provider configured"
+
+
+def test_accept_transfer_normalizes_internal_transfer_category_everywhere():
+    _reset_database()
+    transaction = _restore_transaction(description="Move to savings account", amount=-200.00)
+    session = client.post("/classification/sessions", json={"transaction_id": transaction["id"]}).json()
+
+    response = client.post(
+        f"/classification/sessions/{session['id']}/accept",
+        json={
+            "transaction_type": "Transfer",
+            "category": "Salary",
+            "classification_source": "assistant",
+            "confirm_type_change": True,
+            "recurrence": {"is_recurrent": True, "frequency": "monthly"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session"]["status"] == "accepted"
+    assert payload["session"]["final_transaction_type"] == "Transfer"
+    assert payload["session"]["final_category"] == "Internal Transfer"
+    assert payload["transaction"]["transaction_type"] == "Transfer"
+    assert payload["transaction"]["expense_category"] == "Internal Transfer"
+    assert payload["transaction"]["income_category"] is None
+
+    db = SessionLocal()
+    try:
+        stored_session = db.query(ClassificationSession).filter(ClassificationSession.id == session["id"]).first()
+        stored_pattern = (
+            db.query(RecurrencePattern)
+            .filter(RecurrencePattern.id == payload["recurrence_pattern_id"])
+            .first()
+        )
+        stored_transaction = db.query(Transaction).filter(Transaction.id == transaction["id"]).first()
+    finally:
+        db.close()
+
+    assert stored_session is not None
+    assert stored_session.final_category == "Internal Transfer"
+    assert stored_pattern is not None
+    assert stored_pattern.category == "Internal Transfer"
+    assert stored_transaction is not None
+    assert stored_transaction.recurrence_pattern_id == payload["recurrence_pattern_id"]

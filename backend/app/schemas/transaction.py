@@ -34,6 +34,11 @@ class TransactionBase(BaseModel):
                 return v
             if values['transaction_type'] == TransactionType.INCOME and isinstance(v, IncomeCategory):
                 return v
+            if values['transaction_type'] == TransactionType.TRANSFER:
+                if isinstance(v, ExpenseCategory) and v == ExpenseCategory.INTERNAL_TRANSFER:
+                    return v
+                if isinstance(v, IncomeCategory) and v == IncomeCategory.INTERNAL_TRANSFER:
+                    return v
             return None
         return v
 
@@ -48,6 +53,11 @@ class TransactionCreate(TransactionBase):
                 return ExpenseCategory(v) if isinstance(v, (str, ExpenseCategory)) else None
             if values['transaction_type'] == TransactionType.INCOME:
                 return IncomeCategory(v) if isinstance(v, (str, IncomeCategory)) else None
+            if values['transaction_type'] == TransactionType.TRANSFER:
+                if isinstance(v, (str, ExpenseCategory)) and ExpenseCategory(v) == ExpenseCategory.INTERNAL_TRANSFER:
+                    return ExpenseCategory.INTERNAL_TRANSFER
+                if isinstance(v, (str, IncomeCategory)) and IncomeCategory(v) == IncomeCategory.INTERNAL_TRANSFER:
+                    return IncomeCategory.INTERNAL_TRANSFER
         return None
 
 class Transaction(TransactionBase):

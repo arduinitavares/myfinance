@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, Enum
+from sqlalchemy import Column, Integer, String, Float, Date, Enum, ForeignKey
 from sqlalchemy.orm import relationship
 from ..database import Base
 import enum
@@ -134,11 +134,21 @@ class Transaction(Base):
     expense_category = Column(Enum(ExpenseCategory), nullable=True)
     income_category = Column(Enum(IncomeCategory), nullable=True)
     classification_source = Column(String(50), nullable=True)
-    recurrence_pattern_id = Column(Integer, nullable=True, index=True)
+    recurrence_pattern_id = Column(
+        Integer,
+        ForeignKey(
+            "recurrence_patterns.id",
+            name="fk_transactions_recurrence_pattern_id",
+            use_alter=True,
+        ),
+        nullable=True,
+        index=True,
+    )
     
     source_bank = Column(String(10))
 
     classification_sessions = relationship("ClassificationSession", back_populates="transaction")
+    recurrence_pattern = relationship("RecurrencePattern", foreign_keys=[recurrence_pattern_id], post_update=True)
     seeded_recurrence_patterns = relationship(
         "RecurrencePattern",
         foreign_keys="RecurrencePattern.seed_transaction_id",

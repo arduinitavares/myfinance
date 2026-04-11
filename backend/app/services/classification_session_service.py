@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
-from pathlib import Path
 import logging
 
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -25,7 +25,7 @@ from ..schemas.classification import (
 from ..schemas.transaction import Transaction as TransactionSchema
 from ..services.classifier_providers import StubClassifierProvider
 from ..utils.text_normalization import normalize_for_matching
-from .classification_commit_service import commit_category_change
+from .classification_commit_service import commit_category_change, normalized_category_for
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,21 @@ class ClassificationSessionService:
             model_name=provider.model_name,
         )
         db.add(session)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = (
+                db.query(ClassificationSession)
+                .filter(
+                    ClassificationSession.transaction_id == transaction.id,
+                    ClassificationSession.status == ClassificationSessionStatus.OPEN,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+            raise
         db.refresh(session)
         return session
 
@@ -139,6 +153,11 @@ class ClassificationSessionService:
         if request.transaction_type != transaction.transaction_type and not request.confirm_type_change:
             raise HTTPException(status_code=400, detail="Type change requires confirmation")
 
+        normalized_category = normalized_category_for(
+            transaction_type=request.transaction_type,
+            category=request.category,
+            amount=transaction.amount,
+        )
         recurrence_pattern = None
         recurrence_frequency = None
         if request.recurrence.is_recurrent:
@@ -152,7 +171,7 @@ class ClassificationSessionService:
                 source_bank=transaction.source_bank,
                 currency=transaction.currency,
                 transaction_type=request.transaction_type,
-                category=request.category,
+                category=normalized_category,
                 frequency=recurrence_frequency,
                 active=True,
             )
@@ -161,7 +180,7 @@ class ClassificationSessionService:
 
         session.status = ClassificationSessionStatus.ACCEPTED
         session.final_transaction_type = request.transaction_type
-        session.final_category = request.category
+        session.final_category = normalized_category
         session.final_recurrence_frequency = recurrence_frequency
         session.updated_at = datetime.utcnow()
 
@@ -170,7 +189,7 @@ class ClassificationSessionService:
                 db=db,
                 transaction=transaction,
                 transaction_type=request.transaction_type,
-                category=request.category,
+                category=normalized_category,
                 classification_source=request.classification_source,
                 recurrence_pattern_id=recurrence_pattern.id if recurrence_pattern else None,
             )
@@ -284,23 +303,20 @@ class ClassificationSessionService:
         provider_name: str | None = None,
         model_name: str | None = None,
     ) -> tuple[str, str]:
-        if provider_name and model_name:
-            return provider_name, model_name
+        registry = ProviderRegistry.from_path(settings.provider_config_path)
+        report = registry.validate().get("classification_assistant", {})
 
-        for path in cls._provider_config_paths():
-            registry = ProviderRegistry.from_path(path)
-            report = registry.validate().get("classification_assistant", {})
-            family_report = report.get("__family__", {})
-            if family_report.get("chain_available"):
-                selected_provider_name = family_report["selected_provider"]
-                provider_config = registry.family("classification_assistant").providers[selected_provider_name]
-                return selected_provider_name, provider_config.model or selected_provider_name
+        if provider_name:
+            provider_report = report.get(provider_name)
+            provider_config = registry.family("classification_assistant").providers.get(provider_name)
+            if provider_report and provider_report.get("available") and provider_config:
+                return provider_name, model_name or provider_config.model or provider_name
+            raise HTTPException(status_code=503, detail="No classification assistant provider configured")
+
+        family_report = report.get("__family__", {})
+        if family_report.get("chain_available"):
+            selected_provider_name = family_report["selected_provider"]
+            provider_config = registry.family("classification_assistant").providers[selected_provider_name]
+            return selected_provider_name, provider_config.model or selected_provider_name
 
         raise HTTPException(status_code=503, detail="No classification assistant provider configured")
-
-    @staticmethod
-    def _provider_config_paths() -> list[Path]:
-        paths = [settings.provider_config_path]
-        if settings.provider_example_path not in paths:
-            paths.append(settings.provider_example_path)
-        return paths

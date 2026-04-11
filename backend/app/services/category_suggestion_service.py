@@ -135,12 +135,16 @@ class CategorySuggestionService:
         for transaction in transactions:
             if not transaction.expense_category and not transaction.income_category:
                 continue
+            if transaction.transaction_type not in {TransactionType.EXPENSE, TransactionType.INCOME}:
+                continue
                 
             text = self._create_transaction_text(transaction)
             embedding = self.model.encode(text)
             
             collection_name = self._get_collection_name(transaction.transaction_type)
             category = transaction.expense_category if transaction.transaction_type == TransactionType.EXPENSE else transaction.income_category
+            if category is None:
+                continue
             
             self.client.upsert(
                 collection_name=collection_name,
