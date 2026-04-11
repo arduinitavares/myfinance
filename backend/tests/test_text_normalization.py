@@ -11,9 +11,29 @@ def test_normalize_for_matching_strips_bare_card_label():
     assert normalize_for_matching(raw) == ""
 
 
+def test_normalize_for_matching_keeps_reference_trailing_merchant_text():
+    raw = "REF 12345 PROXIMUS"
+    assert normalize_for_matching(raw) == "proximus"
+
+
 def test_normalize_for_matching_preserves_word_order():
     raw = "LOYER appartement centre ville 31-03-2026 REF ABC987"
     assert normalize_for_matching(raw) == "loyer appartement centre ville"
+
+
+def test_normalize_for_matching_preserves_short_numeric_tokens():
+    raw = "SHOP 12/34 MARKET"
+    assert normalize_for_matching(raw) == "shop 12/34 market"
+
+
+def test_normalize_for_matching_preserves_dash_separated_tokens():
+    raw = "BUS LINE 10-20 EXPRESS"
+    assert normalize_for_matching(raw) == "bus line 10-20 express"
+
+
+def test_normalize_for_matching_preserves_dot_separated_tokens():
+    raw = "MEETING 07.11 NOTES"
+    assert normalize_for_matching(raw) == "meeting 07.11 notes"
 
 
 def test_normalize_for_matching_preserves_text_after_partial_iban_prefix():
@@ -24,3 +44,13 @@ def test_normalize_for_matching_preserves_text_after_partial_iban_prefix():
 def test_normalize_for_matching_collapses_whitespace():
     raw = "  EUROPEAN   DIRECT   DEBIT   PROXIMUS   "
     assert normalize_for_matching(raw) == "european direct debit proximus"
+
+
+def test_preprocess_description_keeps_merchant_prepend():
+    from app.services.category_suggestion_service import CategorySuggestionService
+
+    service = CategorySuggestionService.__new__(CategorySuggestionService)
+
+    result = service._preprocess_description("creditor: PROXIMUS. 15/03/2026 REF 12345")
+
+    assert result.startswith("proximus ")

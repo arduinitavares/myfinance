@@ -1,9 +1,8 @@
 import re
 
 TRANSACTION_DATE_PATTERNS = [
-    r"\d{2}[-/]\d{2}[-/]\d{2,4}",
-    r"\d{2}[-/]\d{2}",
-    r"\d{1,2}[:.]\d{2}\s*(?:am|pm)?",
+    r"\b(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/](?:\d{2}|\d{4})\b",
+    r"\b(?:[01]?\d|2[0-3]):[0-5]\d(?:\s?(?:am|pm))?\b",
 ]
 
 CARD_NUMBER_PATTERNS = [
@@ -14,10 +13,10 @@ CARD_NUMBER_PATTERNS = [
 ]
 
 REFERENCE_PATTERNS = [
-    r"creditor ref\.\s*:\s*[\w\s/.-]+",
-    r"mandate ref\.\s*:\s*[\w\s/.-]+",
-    r"ref(?:erence)?\.?\s*[: ]\s*[\w\s/.-]+",
-    r"reference\s*:\s*[\w\s/.-]+",
+    r"\bcreditor ref\.\s*:\s*[\w/-]+\b",
+    r"\bmandate ref\.\s*:\s*[\w/-]+\b",
+    r"\bref(?:erence)?\.?\s*[: ]\s*[\w/-]+\b",
+    r"\breference\s*:\s*[\w/-]+\b",
 ]
 
 IBAN_BIC_PATTERNS = [
