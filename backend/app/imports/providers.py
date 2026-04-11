@@ -3,15 +3,19 @@ import os
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FallbackRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     condition: str
     threshold: float | None = None
 
 
 class ProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = False
     kind: str
     model: str | None = None
@@ -27,12 +31,16 @@ class ProviderConfig(BaseModel):
 
 
 class ProviderFamilyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     order: list[str] = Field(default_factory=list)
     fallback_on: list[FallbackRule] = Field(default_factory=list)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
 
 class ProviderRegistry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     document_extraction: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
     translation_normalization: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
     category_inference: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)

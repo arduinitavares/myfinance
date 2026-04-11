@@ -1,5 +1,8 @@
 import textwrap
 
+import pytest
+from pydantic import ValidationError
+
 from app.imports.providers import ProviderRegistry
 
 
@@ -116,3 +119,26 @@ def test_provider_registry_marks_invalid_order_reference(tmp_path):
     assert report["document_extraction"]["__family__"]["chain_available"] is False
     assert report["document_extraction"]["__family__"]["reason"] == "invalid_order"
     assert report["document_extraction"]["__family__"]["invalid_references"] == ["missing_provider"]
+
+
+def test_provider_registry_rejects_unknown_provider_keys(tmp_path):
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            document_extraction:
+              order: [openai]
+              fallback_on: []
+              providers:
+                openai:
+                  enabled: true
+                  kind: openai
+                  model: gpt-4o-mini
+                  api_keyenv: OPENAI_API_KEY
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError):
+        ProviderRegistry.from_path(config_path)
