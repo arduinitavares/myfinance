@@ -4,7 +4,7 @@ from app.imports.contracts import DetectionResult, ImportStrategyKey
 class ImportDetector:
     def detect(self, *, filename: str, content_type: str, sample: bytes) -> DetectionResult:
         lower_name = filename.lower()
-        if lower_name.endswith(".pdf") or content_type == "application/pdf":
+        if sample.startswith(b"%PDF-") or lower_name.endswith(".pdf") or content_type == "application/pdf":
             return DetectionResult(
                 strategy_key=ImportStrategyKey.PDF_STATEMENT,
                 provider_hint=None,
