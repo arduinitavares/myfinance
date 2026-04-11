@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 
 class ImportStrategyKey(str, Enum):
@@ -30,9 +30,9 @@ class DetectionResult(BaseModel):
 
 
 class RawEvidence(BaseModel):
-    text_blocks: list[dict[str, Any]] = Field(default_factory=list)
-    ocr_blocks: list[dict[str, Any]] = Field(default_factory=list)
-    snippets: list[dict[str, Any]] = Field(default_factory=list)
+    text_blocks: list[JsonValue] = Field(default_factory=list)
+    ocr_blocks: list[JsonValue] = Field(default_factory=list)
+    snippets: list[JsonValue] = Field(default_factory=list)
 
 
 class ExtractedTransaction(BaseModel):
@@ -46,7 +46,7 @@ class ExtractedTransaction(BaseModel):
     category_source: str | None = None
     confidence: dict[str, float] = Field(default_factory=dict)
     source_locator: str
-    edit_source: str = "ai_extracted"
+    edit_source: Literal["ai_extracted", "user_edited"] = "ai_extracted"
 
 
 class ExtractionResult(BaseModel):

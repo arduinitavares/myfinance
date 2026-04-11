@@ -1,3 +1,7 @@
+import pytest
+from pydantic import ValidationError
+
+from app.imports import ProviderDescription
 from app.imports.contracts import (
     DetectionResult,
     ExtractionResult,
@@ -66,3 +70,50 @@ def test_detection_result_exposes_strategy_enum():
         notes=[],
     )
     assert detected.strategy_key == ImportStrategyKey.PDF_STATEMENT
+
+
+def test_raw_evidence_rejects_non_json_safe_content():
+    with pytest.raises(ValidationError):
+        RawEvidence(text_blocks=[{"page": 1, "text": object()}])
+
+
+def test_extracted_transaction_limits_edit_source_values():
+    valid = ExtractedTransaction(
+        transaction_date="2026-04-11",
+        source_description="Bancontact betaling",
+        canonical_description_en=None,
+        signed_amount=-10.0,
+        currency="EUR",
+        debit_credit="debit",
+        inferred_category=None,
+        category_source=None,
+        confidence={},
+        source_locator="csv:row:2",
+        edit_source="user_edited",
+    )
+    assert valid.edit_source == "user_edited"
+
+    with pytest.raises(ValidationError):
+        ExtractedTransaction(
+            transaction_date="2026-04-11",
+            source_description="Bancontact betaling",
+            canonical_description_en=None,
+            signed_amount=-10.0,
+            currency="EUR",
+            debit_credit="debit",
+            inferred_category=None,
+            category_source=None,
+            confidence={},
+            source_locator="csv:row:2",
+            edit_source="manual",
+        )
+
+
+def test_provider_description_is_exported_from_package_surface():
+    provider = ProviderDescription(
+        provider_name="belfius",
+        model_name="gpt-4.1-mini",
+        schema_version="v1",
+        prompt_fingerprint="abc123",
+    )
+    assert provider.model_name == "gpt-4.1-mini"
