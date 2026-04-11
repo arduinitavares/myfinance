@@ -16,11 +16,17 @@ class ImportDetector:
                 notes=[],
             )
 
+        charset_hint = "utf-8"
+        try:
+            sample.decode("utf-8")
+        except UnicodeDecodeError:
+            charset_hint = "latin-1"
+
         return DetectionResult(
             strategy_key=ImportStrategyKey.UNKNOWN,
             provider_hint=None,
             language_hint=None,
-            charset_hint="latin-1",
+            charset_hint=charset_hint,
             confidence=0.0,
             page_count=None,
             password_protected=False,
