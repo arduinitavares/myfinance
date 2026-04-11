@@ -1,0 +1,19 @@
+document_extraction:
+  order: []
+  fallback_on: []
+  providers: {}
+
+translation_normalization:
+  order: []
+  fallback_on: []
+  providers: {}
+
+category_inference:
+  order: []
+  fallback_on: []
+  providers: {}
+
+duplicate_detection:
+  order: []
+  fallback_on: []
+  providers: {}
