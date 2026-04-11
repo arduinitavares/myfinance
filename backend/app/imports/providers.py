@@ -69,14 +69,7 @@ class ProviderRegistry(BaseModel):
             available_in_order: list[str] = []
             skipped_in_order: list[str] = []
             for provider_name, provider in family.providers.items():
-                available = True
-                reason = "enabled"
-                if not provider.enabled:
-                    available = False
-                    reason = "disabled"
-                elif provider.api_key_env and not os.environ.get(provider.api_key_env):
-                    available = False
-                    reason = "missing_env"
+                available, reason = self._provider_availability(family_name, provider)
                 report[family_name][provider_name] = {
                     "available": available,
                     "reason": reason,
@@ -118,3 +111,13 @@ class ProviderRegistry(BaseModel):
                     "skipped_providers": [],
                 }
         return report
+
+    @staticmethod
+    def _provider_availability(family_name: str, provider: ProviderConfig) -> tuple[bool, str]:
+        if not provider.enabled:
+            return False, "disabled"
+        if family_name == "document_extraction" and not provider.supports_pdf:
+            return False, "unsupported_pdf"
+        if provider.api_key_env and not os.environ.get(provider.api_key_env):
+            return False, "missing_env"
+        return True, "enabled"

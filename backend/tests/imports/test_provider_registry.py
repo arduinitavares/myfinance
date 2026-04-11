@@ -93,10 +93,13 @@ def test_provider_registry_selects_first_available_provider_in_order(tmp_path, m
     registry = ProviderRegistry.from_path(config_path)
     report = registry.validate()
 
-    assert report["document_extraction"]["ollama"]["available"] is True
-    assert report["document_extraction"]["__family__"]["chain_available"] is True
-    assert report["document_extraction"]["__family__"]["selected_provider"] == "ollama"
-    assert report["document_extraction"]["__family__"]["skipped_providers"] == ["openai"]
+    assert report["document_extraction"]["openai"]["available"] is False
+    assert report["document_extraction"]["openai"]["reason"] == "missing_env"
+    assert report["document_extraction"]["ollama"]["available"] is False
+    assert report["document_extraction"]["ollama"]["reason"] == "unsupported_pdf"
+    assert report["document_extraction"]["__family__"]["chain_available"] is False
+    assert report["document_extraction"]["__family__"]["reason"] == "no_available_provider"
+    assert report["document_extraction"]["__family__"]["skipped_providers"] == ["openai", "ollama"]
 
 
 def test_provider_registry_marks_invalid_order_reference(tmp_path):
