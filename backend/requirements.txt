@@ -8,3 +8,5 @@ python-dotenv==1.0.0
 sentence-transformers>=2.5.0
 qdrant-client>=1.7.0
 black
+pytest==8.3.5
+PyYAML==6.0.2

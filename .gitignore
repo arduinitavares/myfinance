@@ -39,3 +39,6 @@ PRD*.md
 # Add workspace files
 *.code-workspace
 /.worktrees
+/backend/app/data/
+/backend/config.local.yaml
+/backend/tests/.tmp/
