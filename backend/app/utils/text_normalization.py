@@ -12,13 +12,13 @@ CARD_NUMBER_PATTERNS = [
     r"with \w+ (?:debit|credit) card \d{4}\s*\d*x*\s*\d*x*\s*\d*",
 ]
 
-REFERENCE_VALUE_PATTERN = r"(?:[A-Z]{2,6}\.?\s*)?(?:[A-Z0-9.]*\d[A-Z0-9.]*)"
+REFERENCE_VALUE_PATTERN = r"(?:[A-Z]{2,6}\.?\s+)?(?:[\w.-]*\d[\w.-]*)"
 
 REFERENCE_PATTERNS = [
-    rf"\bcreditor ref\.\s*:\s*{REFERENCE_VALUE_PATTERN}(?:\s+{REFERENCE_VALUE_PATTERN})*",
-    rf"\bmandate ref\.\s*:\s*{REFERENCE_VALUE_PATTERN}(?:\s+{REFERENCE_VALUE_PATTERN})*",
-    rf"\bref(?:erence)?\.?\s*[: ]\s*{REFERENCE_VALUE_PATTERN}(?:\s+{REFERENCE_VALUE_PATTERN})*",
-    rf"\breference\s*:\s*{REFERENCE_VALUE_PATTERN}(?:\s+{REFERENCE_VALUE_PATTERN})*",
+    rf"\bcreditor ref\.\s*:\s*{REFERENCE_VALUE_PATTERN}\b",
+    rf"\bmandate ref\.\s*:\s*{REFERENCE_VALUE_PATTERN}\b",
+    rf"\bref(?:erence)?\.?\s*[: ]\s*{REFERENCE_VALUE_PATTERN}\b",
+    rf"\breference\s*:\s*{REFERENCE_VALUE_PATTERN}\b",
 ]
 
 IBAN_BIC_PATTERNS = [

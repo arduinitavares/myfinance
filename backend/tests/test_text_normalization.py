@@ -26,6 +26,16 @@ def test_normalize_for_matching_strips_multi_token_reference_values():
     assert normalize_for_matching(raw) == "proximus"
 
 
+def test_normalize_for_matching_keeps_digit_bearing_merchant_tokens_after_reference():
+    raw = "Reference: ABC 123 7ELEVEN"
+    assert normalize_for_matching(raw) == "7eleven"
+
+
+def test_normalize_for_matching_keeps_dotted_digit_bearing_merchant_tokens_after_reference():
+    raw = "Reference: INV.2026 SHOP24"
+    assert normalize_for_matching(raw) == "shop24"
+
+
 def test_normalize_for_matching_preserves_word_order():
     raw = "LOYER appartement centre ville 31-03-2026 REF ABC987"
     assert normalize_for_matching(raw) == "loyer appartement centre ville"
