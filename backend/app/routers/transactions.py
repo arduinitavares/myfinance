@@ -103,7 +103,7 @@ async def upload_csv(
         
         try:
             # Parse based on detected format
-            transactions = CSVParser.parse_csv(temp_file.name)
+            transactions = CSVParser.parse_csv(temp_file.name, file.filename)
             # Guardrail: hard cap on number of rows parsed
             if len(transactions) > MAX_ROWS_PER_UPLOAD:
                 raise HTTPException(status_code=400, detail=f"CSV contains {len(transactions)} rows. The maximum allowed per upload is {MAX_ROWS_PER_UPLOAD}.")

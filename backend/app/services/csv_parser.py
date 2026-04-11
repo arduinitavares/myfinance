@@ -1,6 +1,7 @@
 import logging
+from pathlib import Path
 import pandas as pd
-from typing import List, Callable, Dict, Set
+from typing import List, Callable, Dict, Optional, Set
 from ..schemas.transaction import TransactionCreate
 from ..models.transaction import TransactionType
 
@@ -18,7 +19,7 @@ class CSVParser:
         cls,
         name: str,
         headers: Set[str],
-        parser_func: Callable[[str], List[TransactionCreate]],
+        parser_func: Callable[[str, Optional[str]], List[TransactionCreate]],
     ) -> None:
         """Register a new CSV parser for a specific bank.
 
@@ -74,7 +75,7 @@ class CSVParser:
             return date_str  # Return as-is if already in correct format
 
     @staticmethod
-    def parse_ing_csv(file_path: str) -> List[TransactionCreate]:
+    def parse_ing_csv(file_path: str, source_filename: Optional[str] = None) -> List[TransactionCreate]:
         df = CSVParser.read_csv_with_fallback(file_path)
         transactions = []
         
@@ -96,7 +97,7 @@ class CSVParser:
         return transactions
 
     @staticmethod
-    def parse_kbc_csv(file_path: str) -> List[TransactionCreate]:
+    def parse_kbc_csv(file_path: str, source_filename: Optional[str] = None) -> List[TransactionCreate]:
         df = CSVParser.read_csv_with_fallback(file_path)
         transactions = []
         
@@ -120,7 +121,7 @@ class CSVParser:
         return transactions
 
     @staticmethod
-    def parse_beobank_csv(file_path: str) -> List[TransactionCreate]:
+    def parse_beobank_csv(file_path: str, source_filename: Optional[str] = None) -> List[TransactionCreate]:
         logger.info(f"Starting Beobank CSV parsing for file: {file_path}")
         df = CSVParser.read_csv_with_fallback(file_path)
         logger.info(f"CSV loaded successfully. Columns: {df.columns.tolist()}")
@@ -168,6 +169,49 @@ class CSVParser:
         return transactions
 
     @staticmethod
+    def infer_account_number_from_filename(source_filename: Optional[str]) -> str:
+        if not source_filename:
+            return ""
+
+        stem = Path(source_filename).stem
+        return stem if stem.isdigit() else ""
+
+    @staticmethod
+    def parse_belfius_csv(file_path: str, source_filename: Optional[str] = None) -> List[TransactionCreate]:
+        df = CSVParser.read_csv_with_fallback(file_path)
+        transactions = []
+        account_number = CSVParser.infer_account_number_from_filename(source_filename)
+
+        for _, row in df.iterrows():
+            debit = row.get("Debet", "")
+            credit = row.get("Krediet", "")
+
+            if pd.notna(debit) and str(debit).strip():
+                amount = CSVParser.convert_amount(debit)
+                if amount > 0:
+                    amount = -amount
+                transaction_type = TransactionType.EXPENSE
+            elif pd.notna(credit) and str(credit).strip():
+                amount = CSVParser.convert_amount(credit)
+                transaction_type = TransactionType.INCOME
+            else:
+                continue
+
+            transaction = TransactionCreate(
+                account_number=account_number,
+                transaction_date=CSVParser.convert_date(row["Datum"]),
+                amount=amount,
+                currency="EUR",
+                description=row["Omschrijving"],
+                counterparty_account=None,
+                transaction_type=transaction_type,
+                source_bank="Belfius",
+            )
+            transactions.append(transaction)
+
+        return transactions
+
+    @staticmethod
     def read_csv_with_fallback(file_path: str) -> pd.DataFrame:
         logger.info(f"Reading CSV file: {file_path}")
         encodings = ['utf-8', 'latin1', 'iso-8859-1']
@@ -186,7 +230,7 @@ class CSVParser:
     # Generic parsing entry-point
     # ------------------------------------------------------------------------------
     @staticmethod
-    def parse_csv(file_path: str) -> List[TransactionCreate]:
+    def parse_csv(file_path: str, source_filename: Optional[str] = None) -> List[TransactionCreate]:
         """Parse a CSV file exported from any supported bank.
 
         This is a convenience wrapper that reads the file once to inspect its
@@ -201,7 +245,7 @@ class CSVParser:
             bank_name = CSVParser.detect_bank_format(df.columns.tolist())
             logger.info(f"Using parser for bank: {bank_name}")
             parser_func = CSVParser._bank_parsers[bank_name]["parser"]
-            result = parser_func(file_path)
+            result = parser_func(file_path, source_filename)
             logger.info(f"CSV parsing completed successfully. Total transactions: {len(result)}")
             return result
         except Exception as e:
@@ -228,4 +272,10 @@ CSVParser.register_bank_parser(
     "Beobank",
     {"Date", "Debit", "Credit", "Message", "Balance"},
     CSVParser.parse_beobank_csv,
+)
+
+CSVParser.register_bank_parser(
+    "Belfius",
+    {"Datum", "Waardedatum", "Debet", "Krediet", "Omschrijving", "Saldo"},
+    CSVParser.parse_belfius_csv,
 )

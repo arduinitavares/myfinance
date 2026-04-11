@@ -43,6 +43,28 @@ def _make_minimal_ing_csv(rows: int = 1) -> bytes:
     return output.getvalue().encode('utf-8')
 
 
+def _make_minimal_belfius_csv() -> bytes:
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';')
+    writer.writerow([
+        'Datum',
+        'Waardedatum',
+        'Debet',
+        'Krediet',
+        'Omschrijving',
+        'Saldo',
+    ])
+    writer.writerow([
+        '03/01/2026',
+        '03/01/2026',
+        '-10,00',
+        '',
+        'Bancontact betaling Nationale Loterij',
+        '375,53',
+    ])
+    return output.getvalue().encode('latin-1')
+
+
 def test_rejects_non_csv_extension():
     _reset_rate_limiter()
     files = {
@@ -88,3 +110,21 @@ def test_row_cap_returns_400():
     resp = client.post('/transactions/upload/', files=files)
     assert resp.status_code == 400
     assert 'maximum allowed per upload' in resp.text
+
+
+def test_accepts_belfius_csv_export():
+    _reset_rate_limiter()
+    files = {
+        'file': ('50212984548.csv', _make_minimal_belfius_csv(), 'text/csv')
+    }
+
+    resp = client.post('/transactions/upload/', files=files)
+
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 1
+    assert items[0]['source_bank'] == 'Belfius'
+    assert items[0]['account_number'] == '50212984548'
+    assert items[0]['transaction_date'] == '2026-01-03'
+    assert items[0]['amount'] == -10.0
+    assert items[0]['description'] == 'Bancontact betaling Nationale Loterij'
