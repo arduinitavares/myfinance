@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -232,3 +233,22 @@ def test_accept_transfer_normalizes_internal_transfer_category_everywhere():
     assert stored_pattern.category == "Internal Transfer"
     assert stored_transaction is not None
     assert stored_transaction.recurrence_pattern_id == payload["recurrence_pattern_id"]
+
+
+def test_propose_returns_409_for_expired_session():
+    _reset_database()
+    transaction = _restore_transaction(description="PROXIMUS telecom invoice")
+    session = client.post("/classification/sessions", json={"transaction_id": transaction["id"]}).json()
+
+    db = SessionLocal()
+    try:
+        stored_session = db.query(ClassificationSession).filter(ClassificationSession.id == session["id"]).first()
+        stored_session.updated_at = datetime.utcnow() - timedelta(hours=25)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(f"/classification/sessions/{session['id']}/propose")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Session expired"

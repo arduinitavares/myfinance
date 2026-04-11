@@ -1,11 +1,14 @@
 import textwrap
 from datetime import date
+import sqlite3
 
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
 from app.database_manager import init_database, reset_database
 from app.imports.providers import ProviderRegistry
+from app.migrations import migrate_classification_assistant as migration_module
 from app.models.classification import ClassificationSession, ClassificationSessionStatus
 from app.models.transaction import Transaction, TransactionType
 from app.services.classifier_providers import StubClassifierProvider
@@ -76,6 +79,69 @@ def test_transaction_model_declares_recurrence_pattern_foreign_key():
     foreign_keys = {fk.target_fullname for fk in Transaction.__table__.c.recurrence_pattern_id.foreign_keys}
 
     assert foreign_keys == {"recurrence_patterns.id"}
+
+
+def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key(tmp_path, monkeypatch):
+    db_path = tmp_path / "classification-migration.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute(
+            """
+            CREATE TABLE transactions (
+                id INTEGER NOT NULL PRIMARY KEY,
+                account_number VARCHAR(50),
+                transaction_date DATE,
+                amount FLOAT,
+                currency VARCHAR(3),
+                description VARCHAR(500),
+                counterparty_name VARCHAR(200),
+                counterparty_account VARCHAR(50),
+                transaction_type VARCHAR(8),
+                expense_category VARCHAR(20),
+                income_category VARCHAR(20),
+                source_bank VARCHAR(10)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO transactions (
+                id, account_number, transaction_date, amount, currency, description,
+                counterparty_name, counterparty_account, transaction_type, expense_category,
+                income_category, source_bank
+            ) VALUES (1, 'BE10000000000001', '2025-01-01', -42.5, 'EUR', 'PROXIMUS telecom invoice',
+                      'Counterparty', 'BE20000000000002', 'EXPENSE', 'UTILITIES', NULL, 'ing')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(migration_module, "engine", temp_engine)
+
+    migration_module.migrate_classification_assistant()
+    migration_module.migrate_classification_assistant()
+
+    verify_conn = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1]: row
+            for row in verify_conn.execute("PRAGMA table_info(transactions)").fetchall()
+        }
+        foreign_keys = verify_conn.execute("PRAGMA foreign_key_list(transactions)").fetchall()
+        rows = verify_conn.execute(
+            "SELECT id, classification_source, recurrence_pattern_id, description FROM transactions"
+        ).fetchall()
+    finally:
+        verify_conn.close()
+        temp_engine.dispose()
+
+    assert "classification_source" in columns
+    assert "recurrence_pattern_id" in columns
+    assert any(fk[3] == "recurrence_pattern_id" and fk[2] == "recurrence_patterns" and fk[4] == "id" for fk in foreign_keys)
+    assert rows == [(1, None, None, "PROXIMUS telecom invoice")]
 
 
 def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
