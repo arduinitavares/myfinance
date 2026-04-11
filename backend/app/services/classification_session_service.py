@@ -40,6 +40,35 @@ SIMILARITY_THRESHOLD = 0.5
 SIMILARITY_PREVIEW_LIMIT = 8
 
 
+def _same_sign(left: Transaction, right: Transaction) -> bool:
+    return (left.amount < 0) == (right.amount < 0)
+
+
+def _compatible_candidate_family(seed: Transaction, candidate: Transaction) -> bool:
+    if seed.transaction_type == TransactionType.TRANSFER:
+        return candidate.transaction_type in {
+            TransactionType.EXPENSE,
+            TransactionType.INCOME,
+            TransactionType.TRANSFER,
+        }
+    return candidate.transaction_type == seed.transaction_type
+
+
+def recurrence_pattern_matches_transaction(pattern: RecurrencePattern, transaction: Transaction) -> bool:
+    if pattern.normalized_description_key != normalize_for_matching(transaction.description):
+        return False
+    if pattern.currency != transaction.currency:
+        return False
+    if not _same_sign(pattern.seed_transaction, transaction):
+        return False
+    if pattern.source_bank is not None and pattern.source_bank != transaction.source_bank:
+        return False
+
+    if pattern.transaction_type == TransactionType.TRANSFER:
+        return True
+    return transaction.transaction_type == pattern.transaction_type
+
+
 class ClassificationSessionService:
     @classmethod
     def create_or_resume_session(cls, db: Session, transaction_id: int) -> ClassificationSession:
@@ -391,6 +420,8 @@ class ClassificationSessionService:
 
         candidates: list[tuple[Transaction, float]] = []
         for transaction in query.all():
+            if not _compatible_candidate_family(seed_transaction, transaction):
+                continue
             score = category_suggestion_service.similarity_score(
                 seed_transaction.description.lower(),
                 transaction.description.lower(),

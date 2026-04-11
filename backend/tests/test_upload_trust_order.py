@@ -56,6 +56,7 @@ def _restore_transaction(
     description: str,
     tx_date: str,
     amount: float = -45.99,
+    transaction_type: str = "Expense",
     expense_category: str | None = None,
 ):
     payload = {
@@ -66,7 +67,7 @@ def _restore_transaction(
         "description": description,
         "counterparty_name": "Counterparty",
         "counterparty_account": "BE99000000000002",
-        "transaction_type": "Expense",
+        "transaction_type": transaction_type,
         "source_bank": "Belfius",
     }
     if expense_category is not None:
@@ -77,7 +78,14 @@ def _restore_transaction(
     return response.json()
 
 
-def _accept_utilities_session(transaction_id: int):
+def _accept_session(
+    transaction_id: int,
+    *,
+    transaction_type: str,
+    category: str,
+    recurrence: dict | None = None,
+    confirm_type_change: bool = False,
+):
     session = client.post("/classification/sessions", json={"transaction_id": transaction_id}).json()
     propose_response = client.post(f"/classification/sessions/{session['id']}/propose")
     assert propose_response.status_code == 200
@@ -85,15 +93,23 @@ def _accept_utilities_session(transaction_id: int):
     accept_response = client.post(
         f"/classification/sessions/{session['id']}/accept",
         json={
-            "transaction_type": "Expense",
-            "category": "Utilities",
+            "transaction_type": transaction_type,
+            "category": category,
             "classification_source": "assistant",
-            "confirm_type_change": False,
-            "recurrence": {"is_recurrent": False},
+            "confirm_type_change": confirm_type_change,
+            "recurrence": recurrence or {"is_recurrent": False},
         },
     )
     assert accept_response.status_code == 200
     return accept_response.json()
+
+
+def _accept_utilities_session(transaction_id: int):
+    return _accept_session(
+        transaction_id,
+        transaction_type="Expense",
+        category="Utilities",
+    )
 
 
 def _make_minimal_belfius_export_csv(*, booking_date: str, description: str) -> bytes:
@@ -165,6 +181,11 @@ def test_similar_preview_only_returns_uncategorized_rows(monkeypatch):
         expense_category="Utilities",
     )
     _restore_transaction(description="LOCAL bakery card purchase", tx_date="2026-04-13")
+    transfer_candidate = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice transfer",
+        tx_date="2026-04-14",
+        transaction_type="Transfer",
+    )
 
     accepted = _accept_utilities_session(seed["id"])
 
@@ -182,6 +203,7 @@ def test_similar_preview_only_returns_uncategorized_rows(monkeypatch):
     assert preview.status_code == 200
     payload = preview.json()
     assert [match["transaction_id"] for match in payload["matches"]] == [expected_match["id"]]
+    assert transfer_candidate["id"] not in [match["transaction_id"] for match in payload["matches"]]
 
 
 def test_apply_batch_skips_rows_that_are_already_categorized():
@@ -304,3 +326,47 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
 
     assert stored_pattern is not None
     assert stored_pattern.active is True
+
+
+def test_transfer_recurrence_pattern_matches_expense_upload_rows(monkeypatch):
+    _reset_rate_limiter()
+    _reset_database()
+    _clear_vector_collections()
+
+    seed = _restore_transaction(
+        description="BANK TRANSFER to savings",
+        tx_date="2026-04-10",
+        transaction_type="Transfer",
+    )
+    accepted = _accept_session(
+        seed["id"],
+        transaction_type="Transfer",
+        category="Salary",
+        recurrence={"is_recurrent": True, "frequency": "monthly"},
+    )
+    pattern_id = accepted["recurrence_pattern_id"]
+
+    def _unexpected_suggester(*args, **kwargs):
+        raise AssertionError("upload suggester should not run when a transfer recurrence pattern matches")
+
+    monkeypatch.setattr(tx_router.category_suggestion_service, "suggest_category", _unexpected_suggester)
+
+    second_upload = client.post(
+        "/transactions/upload/",
+        files={
+            "file": (
+                "BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
+                _make_minimal_belfius_export_csv(
+                    booking_date="11/05/2026",
+                    description="BANK TRANSFER to savings",
+                ),
+                "text/csv",
+            )
+        },
+    )
+    assert second_upload.status_code == 200
+
+    imported_transaction = second_upload.json()[0]
+    assert imported_transaction["expense_category"] == "Internal Transfer"
+    assert imported_transaction["classification_source"] == "recurrence_pattern"
+    assert imported_transaction["recurrence_pattern_id"] == pattern_id

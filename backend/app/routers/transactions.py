@@ -17,6 +17,7 @@ from ..services.csv_parser import CSVParser
 from ..services.statistics_service import StatisticsService
 from ..services.anomaly_detection_service import AnomalyDetectionService
 from ..services.classification_commit_service import commit_category_change
+from ..services.classification_session_service import recurrence_pattern_matches_transaction
 from ..routers.suggestions import category_suggestion_service
 from ..utils.text_normalization import normalize_for_matching
 from datetime import date, datetime
@@ -72,51 +73,34 @@ SORT_FIELD_MAPPING = {
 
 def _find_recurrence_pattern(db: Session, transaction: Transaction) -> RecurrencePattern | None:
     normalized_description_key = normalize_for_matching(transaction.description)
-    base_query = db.query(RecurrencePattern).filter(
-        RecurrencePattern.active.is_(True),
-        RecurrencePattern.normalized_description_key == normalized_description_key,
-        RecurrencePattern.currency == transaction.currency,
-        RecurrencePattern.transaction_type == transaction.transaction_type,
-    )
-
     exact_bank_match = (
-        base_query.filter(RecurrencePattern.source_bank == transaction.source_bank)
+        db.query(RecurrencePattern)
+        .filter(
+            RecurrencePattern.active.is_(True),
+            RecurrencePattern.normalized_description_key == normalized_description_key,
+            RecurrencePattern.currency == transaction.currency,
+            RecurrencePattern.source_bank == transaction.source_bank,
+        )
         .order_by(RecurrencePattern.id.asc())
         .first()
     )
-    if exact_bank_match:
+    if exact_bank_match and recurrence_pattern_matches_transaction(exact_bank_match, transaction):
         return exact_bank_match
 
     wildcard_match = (
-        base_query.filter(RecurrencePattern.source_bank.is_(None))
+        db.query(RecurrencePattern)
+        .filter(
+            RecurrencePattern.active.is_(True),
+            RecurrencePattern.normalized_description_key == normalized_description_key,
+            RecurrencePattern.currency == transaction.currency,
+            RecurrencePattern.source_bank.is_(None),
+        )
         .order_by(RecurrencePattern.id.asc())
         .first()
     )
-    return wildcard_match
-
-
-def _apply_category_to_transaction(
-    transaction: Transaction,
-    category: str | None,
-    classification_source: str,
-    recurrence_pattern_id: int | None = None,
-) -> None:
-    transaction.classification_source = classification_source
-    transaction.recurrence_pattern_id = recurrence_pattern_id
-
-    if transaction.transaction_type == TransactionType.EXPENSE and category is not None:
-        transaction.expense_category = ExpenseCategory(category)
-        transaction.income_category = None
-    elif transaction.transaction_type == TransactionType.INCOME and category is not None:
-        transaction.income_category = IncomeCategory(category)
-        transaction.expense_category = None
-    elif transaction.transaction_type == TransactionType.TRANSFER:
-        if transaction.amount < 0:
-            transaction.expense_category = ExpenseCategory.INTERNAL_TRANSFER
-            transaction.income_category = None
-        else:
-            transaction.income_category = IncomeCategory.INTERNAL_TRANSFER
-            transaction.expense_category = None
+    if wildcard_match and recurrence_pattern_matches_transaction(wildcard_match, transaction):
+        return wildcard_match
+    return None
 
 @router.post("/upload/", response_model=List[schemas.Transaction])
 async def upload_csv(
@@ -180,17 +164,23 @@ async def upload_csv(
                     continue
                 
                 recurrence_pattern = _find_recurrence_pattern(db, trans)
+                db_trans = Transaction(**trans.dict())
+                db.add(db_trans)
+                db.flush()
+
                 if recurrence_pattern is not None:
                     logger.info(
                         "Applying recurrence pattern %s to transaction %s",
                         recurrence_pattern.id,
                         trans.description,
                     )
-                    _apply_category_to_transaction(
-                        trans,
-                        recurrence_pattern.category,
-                        "recurrence_pattern",
-                        recurrence_pattern.id,
+                    db_trans = commit_category_change(
+                        db=db,
+                        transaction=db_trans,
+                        transaction_type=db_trans.transaction_type,
+                        category=recurrence_pattern.category,
+                        classification_source="recurrence_pattern",
+                        recurrence_pattern_id=recurrence_pattern.id,
                     )
                 else:
                     # Get category suggestions only after recurrence patterns are ruled out
@@ -204,11 +194,15 @@ async def upload_csv(
                     if suggestions and suggestions[0][1] > 0.5:  # Check if confidence > 0.5
                         best_category, confidence = suggestions[0]
                         logger.info(f"Setting category {best_category} with confidence {confidence} for transaction: {trans.description}")
-                        _apply_category_to_transaction(trans, best_category, "upload_suggester")
+                        db_trans = commit_category_change(
+                            db=db,
+                            transaction=db_trans,
+                            transaction_type=db_trans.transaction_type,
+                            category=best_category,
+                            classification_source="upload_suggester",
+                            recurrence_pattern_id=None,
+                        )
                 
-                # Create and save the transaction
-                db_trans = Transaction(**trans.dict())
-                db.add(db_trans)
                 db_transactions.append(db_trans)
 
                 # Guardrail: cap the number of new transactions created per upload
