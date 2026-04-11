@@ -1,19 +1,79 @@
 document_extraction:
-  order: []
-  fallback_on: []
-  providers: {}
+  order: [openai, ollama]
+  fallback_on:
+    - condition: low_confidence
+      threshold: 0.75
+  providers:
+    openai:
+      enabled: false
+      kind: openai
+      model: gpt-4o-mini
+      api_key_env: OPENAI_API_KEY
+      timeout_seconds: 30
+      max_retries: 2
+      supports_pdf: true
+      supports_images: true
+      supports_json_schema: true
+      cost_tier: metered
+      requires_confirmation: true
+    ollama:
+      enabled: false
+      kind: ollama
+      model: llama3.2-vision
+      base_url: http://localhost:11434
+      timeout_seconds: 30
+      max_retries: 1
+      supports_pdf: false
+      supports_images: true
+      supports_json_schema: false
+      cost_tier: free
+      requires_confirmation: false
 
 translation_normalization:
-  order: []
+  order: [openai]
   fallback_on: []
-  providers: {}
+  providers:
+    openai:
+      enabled: false
+      kind: openai
+      model: gpt-4o-mini
+      api_key_env: OPENAI_API_KEY
+      timeout_seconds: 30
+      max_retries: 2
+      supports_pdf: false
+      supports_images: false
+      supports_json_schema: true
+      cost_tier: metered
+      requires_confirmation: true
 
 category_inference:
-  order: []
+  order: [openai]
   fallback_on: []
-  providers: {}
+  providers:
+    openai:
+      enabled: false
+      kind: openai
+      model: gpt-4o-mini
+      api_key_env: OPENAI_API_KEY
+      timeout_seconds: 30
+      max_retries: 2
+      supports_pdf: false
+      supports_images: false
+      supports_json_schema: true
+      cost_tier: metered
+      requires_confirmation: true
 
 duplicate_detection:
-  order: []
+  order: [local_rules]
   fallback_on: []
-  providers: {}
+  providers:
+    local_rules:
+      enabled: false
+      kind: local_rules
+      timeout_seconds: 30
+      max_retries: 1
+      supports_pdf: false
+      supports_images: false
+      supports_json_schema: false
+      cost_tier: free
+      requires_confirmation: false
