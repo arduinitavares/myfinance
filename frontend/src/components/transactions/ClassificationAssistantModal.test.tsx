@@ -555,6 +555,53 @@ describe('ClassificationAssistantModal', () => {
     });
   });
 
+  test('defaults recurrence frequency options to monthly first', async () => {
+    mockedService.propose.mockResolvedValueOnce({
+      id: 10,
+      session_id: 10,
+      turn_index: 0,
+      transaction_type: 'Expense',
+      category: 'Utilities',
+      confidence: 0.5,
+      rationale: 'Telecom bill.',
+      follow_up_question: null,
+      recurrence_frequency: null,
+      feedback_tag: null,
+      feedback_note: null,
+      prompt_tokens: null,
+      completion_tokens: null,
+      created_at: '2026-04-12T11:00:00Z',
+    } as never);
+
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={{
+          id: 2,
+          description: 'SEPA PROXIMUS',
+          amount: -45.99,
+          currency: 'EUR',
+          transaction_type: 'Expense',
+        } as any}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    await screen.findByText(/utilities/i);
+    const recurrenceCheckbox = screen.getByRole('checkbox', {
+      name: /create recurrence rule/i,
+    });
+    expect(recurrenceCheckbox).not.toBeChecked();
+
+    fireEvent.click(recurrenceCheckbox);
+
+    const frequencySelect = screen.getByLabelText(/frequency/i) as HTMLSelectElement;
+    expect(frequencySelect.value).toBe('monthly');
+    expect(frequencySelect.options[0].value).toBe('monthly');
+  });
+
   test('resets feedback state when a different transaction is loaded', async () => {
     const { rerender } = render(
       <ClassificationAssistantModal

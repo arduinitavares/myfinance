@@ -5,6 +5,7 @@ import pytest
 
 from app.config import settings
 from app.imports.artifacts import ArtifactStore
+from app.imports.contracts import ExtractionResult
 from app.imports.pipeline import ImportPipelineService
 from app.imports.state_machine import ImportSessionStatus
 from app.models.imports import ImportSession
@@ -126,3 +127,30 @@ def test_pipeline_rolls_back_and_marks_failed_when_detected_commit_fails(db_sess
     assert isinstance(meta["stage_timestamps"]["detected"], str)
     datetime.fromisoformat(meta["stage_timestamps"]["uploaded"])
     datetime.fromisoformat(meta["stage_timestamps"]["detected"])
+
+
+def test_artifact_store_writes_normalized_extraction_result_json(db_session):
+    store = ArtifactStore()
+    session_id = "42"
+    store.init_session(session_id)
+
+    result = ExtractionResult(
+        extractor_id="beobank_mastercard_pdf_v1",
+        raw_artifact_ref="imports/42/attempts/1/evidence/raw.json",
+        source_metadata={"provider_hint": "beobank"},
+        statement_metadata={"currency": "EUR"},
+        transactions=[],
+        issues=[],
+        overall_confidence=1.0,
+    )
+
+    store.write_normalized_result(session_id, 1, result)
+
+    payload = json.loads(
+        (settings.imports_dir / session_id / "attempts" / "1" / "normalized" / "extraction_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["extractor_id"] == "beobank_mastercard_pdf_v1"
+    assert payload["raw_artifact_ref"] == "imports/42/attempts/1/evidence/raw.json"
+    assert payload["statement_metadata"] == {"currency": "EUR"}

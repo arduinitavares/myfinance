@@ -6,6 +6,7 @@ import {
   TransferCategory,
   TransactionType,
   CategoryStatistics,
+  ClassificationStatusFilter,
   SortParams,
   ActionType,
 } from '../types/transaction';
@@ -23,6 +24,7 @@ export const useTransactions = () => {
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | IncomeCategory | TransferCategory | 'all'>('all');
+  const [classificationStatus, setClassificationStatus] = useState<ClassificationStatusFilter>('all');
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
 
   // Debounce for filters
@@ -45,6 +47,7 @@ export const useTransactions = () => {
 const fetchData = async (filtersOverride?: {
   search?: string;
   category?: string;
+  classification_status?: ClassificationStatusFilter;
   start_date?: string;
   end_date?: string;
 }) => {
@@ -53,6 +56,7 @@ const fetchData = async (filtersOverride?: {
     const filters = filtersOverride || {
       search: debouncedSearch || undefined,
       category: categoryFilter !== 'all' ? categoryFilter : undefined,
+      classification_status: classificationStatus !== 'all' ? classificationStatus : undefined,
       start_date: dateRange.start ? dateRange.start : undefined,
       end_date: dateRange.end ? dateRange.end : undefined,
     };
@@ -179,7 +183,7 @@ const fetchData = async (filtersOverride?: {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line
-  }, [currentPage, sortParams, debouncedSearch, categoryFilter, dateRange]);
+  }, [currentPage, sortParams, debouncedSearch, categoryFilter, classificationStatus, dateRange]);
 
   const handleUndo = async () => {
     const success = await undoLastAction();
@@ -194,6 +198,7 @@ const fetchData = async (filtersOverride?: {
   const clearFilters = () => {
     setSearchTerm('');
     setCategoryFilter('all');
+    setClassificationStatus('all');
     setDateRange({ start: '', end: '' });
     setCurrentPage(1);
   };
@@ -210,10 +215,12 @@ const fetchData = async (filtersOverride?: {
     refreshData: fetchData,
     setSearchTerm,
     setCategoryFilter,
+    setClassificationStatus,
     setDateRange,
     clearFilters,
     searchTerm,
     categoryFilter,
+    classificationStatus,
     dateRange,
     handleCategoryUpdate,
     handleDeleteTransaction,

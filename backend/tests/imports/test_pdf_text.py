@@ -1,0 +1,54 @@
+from app.imports.pdf_text import lineize_pdf_pages, read_pdf_page_text
+
+
+def test_read_pdf_page_text_uses_layout_extraction(monkeypatch):
+    calls = []
+
+    class FakePage:
+        def __init__(self, text):
+            self.text = text
+
+        def extract_text(self, extraction_mode=None):
+            calls.append(extraction_mode)
+            return self.text
+
+    class FakeReader:
+        def __init__(self, file_path):
+            self.file_path = file_path
+            self.pages = [FakePage("Page 1"), FakePage(None)]
+
+    monkeypatch.setattr("app.imports.pdf_text.PdfReader", FakeReader)
+
+    page_texts = read_pdf_page_text("/tmp/statement.pdf")
+
+    assert page_texts == ["Page 1", ""]
+    assert calls == ["layout", "layout"]
+
+
+def test_lineize_pdf_pages_normalizes_whitespace_and_numbers_lines_from_one():
+    pages = lineize_pdf_pages(
+        [
+            "Header\r\n\r\nSecond line\u00A0 \n",
+            "Uw transacties\nDatum Beschrijving Bedrag\n15/12/2025 TEST 12,34\n",
+        ]
+    )
+
+    assert pages == [
+        {
+            "page_number": 1,
+            "raw_text": "Header\n\nSecond line  \n",
+            "lines": [
+                {"line_number": 1, "text": "Header"},
+                {"line_number": 2, "text": "Second line"},
+            ],
+        },
+        {
+            "page_number": 2,
+            "raw_text": "Uw transacties\nDatum Beschrijving Bedrag\n15/12/2025 TEST 12,34\n",
+            "lines": [
+                {"line_number": 1, "text": "Uw transacties"},
+                {"line_number": 2, "text": "Datum Beschrijving Bedrag"},
+                {"line_number": 3, "text": "15/12/2025 TEST 12,34"},
+            ],
+        },
+    ]

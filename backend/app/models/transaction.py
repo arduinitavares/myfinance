@@ -120,6 +120,10 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    import_session_id = Column(Integer, ForeignKey("import_sessions.id"), index=True, nullable=True)
+    import_source_locator = Column(String(255), nullable=True)
+    import_source_description = Column(String(500), nullable=True)
+    canonical_description_en = Column(String(500), nullable=True)
     account_number = Column(String(50), index=True)
     transaction_date = Column(Date, index=True)
     amount = Column(Float)

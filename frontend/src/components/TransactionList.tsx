@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory, SortParams } from '../types/transaction';
-import { format } from 'date-fns';
 import { SparklesIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { Pagination } from './common/Pagination';
 import { ClassificationAssistantModal } from './transactions/ClassificationAssistantModal';
+import { formatDisplayDate } from '../utils/date';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -214,7 +214,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                   }
                 >
                   <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
-                    {format(new Date(transaction.transaction_date), 'dd/MM/yyyy')}
+                    {formatDisplayDate(transaction.transaction_date)}
                   </td>
                   <td className="px-6 py-4 text-gray-900 dark:text-gray-200">
                     {transaction.description}
@@ -323,6 +323,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         currentPage={currentPage}
         totalPages={totalPages}
         onPageChange={onPageChange}
+        mode="simple"
       />
       <ClassificationAssistantModal
         open={selectedTransaction !== null}

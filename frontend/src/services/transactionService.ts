@@ -4,6 +4,7 @@ import {
   ExpenseCategory, 
   IncomeCategory, 
   TransferCategory,
+  ClassificationStatusFilter,
   TransactionType,
   SortParams
 } from '../types/transaction';
@@ -29,6 +30,7 @@ export const transactionService = {
     filters: {
       search?: string;
       category?: string;
+      classification_status?: ClassificationStatusFilter;
       start_date?: string;
       end_date?: string;
     } = {}

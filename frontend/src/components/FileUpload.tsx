@@ -3,48 +3,82 @@ import axios from 'axios';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Progress from '@radix-ui/react-progress';
 import * as Toast from '@radix-ui/react-toast';
+import { useNavigate } from 'react-router-dom';
+import { importService } from '../services/importService';
 import { transactionService } from '../services/transactionService';
 
 interface FileUploadProps {
   onUploadSuccess: () => void;
 }
 
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
+const CSV_MIME_TYPES = new Set([
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+  '', // Some browsers leave this empty; we'll also check extension
+]);
+const PDF_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/octet-stream',
+  '',
+]);
+
+type UploadFileKind = 'csv' | 'pdf';
+
 export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [importedCount, setImportedCount] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Frontend guardrails to mirror backend limits
-  const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
-  const ALLOWED_MIME = new Set([
-    'text/csv',
-    'application/csv',
-    'application/vnd.ms-excel',
-    '' // Some browsers leave this empty; we'll also check extension
-  ]);
+  const getFileKind = (file: File): UploadFileKind | null => {
+    const normalizedName = file.name.toLowerCase();
+
+    if (normalizedName.endsWith('.pdf')) {
+      return 'pdf';
+    }
+
+    if (normalizedName.endsWith('.csv')) {
+      return 'csv';
+    }
+
+    return null;
+  };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    let fileKind: UploadFileKind | null = null;
 
     setLoading(true);
     setError(null);
 
     try {
-      // Client-side validation: extension and MIME
-      const hasCsvExtension = file.name.toLowerCase().endsWith('.csv');
-      if (!hasCsvExtension) {
-        throw new Error('Invalid file type. Please select a .csv file.');
-      }
-      if (!ALLOWED_MIME.has(file.type)) {
-        throw new Error('Unsupported file type. Please upload a CSV file.');
+      fileKind = getFileKind(file);
+      if (!fileKind) {
+        throw new Error('Invalid file type. Please select a CSV or PDF file.');
       }
 
-      // Client-side validation: size
+      const allowedMimeTypes = fileKind === 'pdf' ? PDF_MIME_TYPES : CSV_MIME_TYPES;
+      if (!allowedMimeTypes.has(file.type)) {
+        throw new Error(
+          fileKind === 'pdf'
+            ? 'Unsupported file type. Please upload a PDF statement.'
+            : 'Unsupported file type. Please upload a CSV file.'
+        );
+      }
+
       if (file.size > MAX_UPLOAD_BYTES) {
         throw new Error('File too large. The maximum allowed size is 5 MB.');
+      }
+
+      if (fileKind === 'pdf') {
+        const session = await importService.uploadStatement(file);
+        navigate(`/imports/${session.id}/review`);
+        return;
       }
 
       const result = await transactionService.uploadCSV(file);
@@ -57,9 +91,19 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
         const status = err.response?.status;
         const detail = (err.response?.data as any)?.detail;
         if (status === 413) message = 'File too large. Maximum allowed size is 5 MB.';
-        else if (status === 415) message = 'Unsupported media type. Please upload a CSV file.';
+        else if (status === 415) {
+          message = fileKind === 'pdf'
+            ? 'Unsupported media type. Please upload a PDF statement.'
+            : 'Unsupported media type. Please upload a CSV file.';
+        }
         else if (status === 429) message = 'Too many uploads in a short time. Please wait and try again.';
-        else if (status === 400) message = detail || 'Invalid CSV. Please check the file and try again.';
+        else if (status === 400) {
+          message = detail || (
+            fileKind === 'pdf'
+              ? 'Invalid PDF statement. Please check the file and try again.'
+              : 'Invalid CSV. Please check the file and try again.'
+          );
+        }
         else if (status && detail) message = detail;
       } else if (err instanceof Error) {
         message = err.message;
@@ -80,7 +124,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
       <Dialog.Root>
         <Dialog.Trigger asChild>
           <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-            Upload CSV
+            Upload File
           </button>
         </Dialog.Trigger>
         
@@ -94,7 +138,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
             <div className="space-y-4">
               <input
                 type="file"
-                accept=".csv"
+                accept=".csv,.pdf"
+                aria-label="Upload transaction file"
                 onChange={handleFileChange}
                 disabled={loading}
                 ref={fileInputRef}
@@ -107,7 +152,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
               />
 
               <p className="text-xs text-slate-500">
-                Max size: 5 MB. Accepted type: CSV. Uploads are rate-limited.
+                Max size: 5 MB. Accepted types: CSV and PDF. Uploads are rate-limited.
               </p>
               
               {loading && (

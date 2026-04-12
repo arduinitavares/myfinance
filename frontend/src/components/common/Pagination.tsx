@@ -5,13 +5,42 @@ interface PaginationProps {
   currentPage: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  mode?: 'full' | 'simple';
 }
 
 export const Pagination: React.FC<PaginationProps> = ({
   currentPage,
   totalPages,
   onPageChange,
+  mode = 'full',
 }) => {
+  if (mode === 'simple') {
+    return (
+      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          Page <span className="font-medium">{currentPage}</span> of{' '}
+          <span className="font-medium">{totalPages}</span>
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="inline-flex min-w-[88px] items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Back
+          </button>
+          <button
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="inline-flex min-w-[88px] items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
   
   const visiblePages = pages.filter(page => {

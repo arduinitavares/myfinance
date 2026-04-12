@@ -3,6 +3,7 @@ import { AlertCircle, Edit, Plus, Trash2, X, RefreshCw } from 'lucide-react';
 import { ProjectionScenario, ProjectionParameter, ProjectionParameterCreate } from '../../../types/projections';
 import { createScenario, updateScenario, deleteScenario, calculateProjection, recomputeBaseScenario } from '../../../services/projectionService';
 import ParameterEditor from './ParameterEditor';
+import { formatDisplayDate } from '../../../utils/date';
 
 interface ScenarioManagerProps {
   scenarios: ProjectionScenario[];
@@ -249,7 +250,7 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onScenario
                 <h4 className="text-lg font-medium">{scenario.name}</h4>
                 <div className="text-sm text-gray-500 dark:text-gray-400">
                   {scenario.is_default && <span className="text-blue-500 text-xs font-medium mr-2">DEFAULT</span>}
-                  Created: {new Date(scenario.created_at).toLocaleDateString()}
+                  Created: {formatDisplayDate(scenario.created_at)}
                 </div>
               </div>
               <div className="mb-4">

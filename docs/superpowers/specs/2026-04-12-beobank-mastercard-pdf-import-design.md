@@ -123,7 +123,9 @@ The parser must inspect every page from page 2 onward, but extract rows only fro
 - page contains the table header
 - page contains at least one valid dated row with an amount
 
-Pages after page 1 that do not match this shape are ignored rather than guessed.
+Pages after page 1 that contain no row-like transaction content are ignored rather than guessed.
+
+Pages after page 1 that do contain row-like transaction content but are missing `Uw transacties` or the required headers must fail with a blocking issue instead of being ignored.
 
 ## Canonical Text Representation
 
@@ -176,7 +178,7 @@ Within a `transaction_page`, every non-empty line in the table body must classif
 - `fx_helper`
 - `page_footer_noise`
 
-`WISSELKOSTEN` is a special case of `row_start`, not a separate helper line.
+`WISSELKOSTEN` is a special transaction-row shape, not a helper line.
 
 Any non-empty table-body line that cannot be classified into one of those classes is a blocking issue `unclassifiable_table_line`.
 
@@ -283,7 +285,14 @@ Lines containing original-currency hints such as `BRL WISSELKOERS` or `USD WISSE
 
 If `WISSELKOSTEN` appears with its own valid date and EUR amount in the transaction table, it becomes its own imported transaction row.
 
-If `WISSELKOSTEN` appears without its own valid date and amount, it is a blocking `unclassifiable_table_line`.
+If `WISSELKOSTEN` appears immediately after an FX helper line and immediately before a valid EUR amount line, it also becomes its own imported transaction row. In that shape:
+
+- `transaction_date` is inherited from the immediately preceding dated transaction row
+- `source_description = "WISSELKOSTEN"`
+- the following amount line supplies `signed_amount` and `debit_credit`
+- `source_locator` spans both the `WISSELKOSTEN` line and its amount line
+
+Any other `WISSELKOSTEN` shape is a blocking `unclassifiable_table_line`.
 
 ### Negative and positive sign handling
 

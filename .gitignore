@@ -43,3 +43,4 @@ PRD*.md
 /backend/app/data/
 /backend/config.local.yaml
 /backend/tests/.tmp/
+/bank_files/

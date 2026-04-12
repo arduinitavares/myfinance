@@ -37,6 +37,26 @@ def _ensure_classification_transaction_columns() -> None:
             )
         )
 
+
+def _ensure_import_traceability_transaction_columns() -> None:
+    inspector = inspect(engine)
+    if "transactions" not in inspector.get_table_names():
+        return
+
+    transaction_columns = {column["name"] for column in inspector.get_columns("transactions")}
+    with engine.begin() as conn:
+        if "import_session_id" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN import_session_id INTEGER"))
+        if "import_source_locator" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN import_source_locator VARCHAR(255)"))
+        if "import_source_description" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN import_source_description VARCHAR(500)"))
+        if "canonical_description_en" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN canonical_description_en VARCHAR(500)"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_transactions_import_session_id ON transactions (import_session_id)")
+        )
+
 def init_database():
     """Initialize the database and create all tables"""
     logger.info("Initializing database...")
@@ -47,6 +67,7 @@ def init_database():
     logger.info(f"Existing tables: {existing_tables}")
 
     _ensure_classification_transaction_columns()
+    _ensure_import_traceability_transaction_columns()
 
     tables_to_check = [
         "transactions",

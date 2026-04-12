@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { format, parseISO } from 'date-fns';
 import { statisticService, TransferSummaryResponse } from '../../services/statisticService';
 import { Loading } from '../common/Loading';
+import { formatDisplayDate } from '../../utils/date';
 
 const EUR_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -50,7 +50,6 @@ export const TransferSummary: React.FC = () => {
   }, []);
 
   const formatCurrency = (amount: number) => EUR_FORMATTER.format(amount);
-  const formatDate = (date: string) => format(parseISO(date), 'MMM d, yyyy');
 
   if (loading) {
     return <Loading variant="progress" size="medium" />;
@@ -79,7 +78,7 @@ export const TransferSummary: React.FC = () => {
           <h3 className="text-lg font-medium dark:text-gray-200">Transfers & Settlements</h3>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             {summary.start_date && summary.end_date
-              ? `Showing ${formatDate(summary.start_date)} to ${formatDate(summary.end_date)}`
+              ? `Showing ${formatDisplayDate(summary.start_date)} to ${formatDisplayDate(summary.end_date)}`
               : 'Showing transfer activity for the selected period'}
           </p>
         </div>

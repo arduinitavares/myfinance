@@ -109,6 +109,32 @@ def test_extracted_transaction_limits_edit_source_values():
         )
 
 
+def test_extracted_transaction_accepts_deterministic_edit_source():
+    tx = ExtractedTransaction(
+        transaction_date="2026-04-11",
+        source_description="WISSELKOSTEN",
+        signed_amount=-0.38,
+        currency="EUR",
+        debit_credit="debit",
+        source_locator="pdf:p2:l21",
+        edit_source="deterministic_extracted",
+    )
+    assert tx.edit_source == "deterministic_extracted"
+
+
+def test_raw_evidence_accepts_page_line_payloads():
+    evidence = RawEvidence(
+        text_blocks=[
+            {
+                "page_number": 2,
+                "raw_text": "Uw transacties\n15/12/2025 Merchant 14,20",
+                "lines": ["Uw transacties", "15/12/2025 Merchant 14,20"],
+            }
+        ]
+    )
+    assert evidence.model_dump()["text_blocks"][0]["page_number"] == 2
+
+
 def test_provider_description_is_exported_from_package_surface():
     provider = ProviderDescription(
         provider_name="belfius",

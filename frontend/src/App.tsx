@@ -23,6 +23,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
 import { AuthWrapper } from './components/auth/AuthWrapper';
 import { CategoryAverages } from './components/dashboard/CategoryAverages';
+import { ImportReviewPage } from './components/imports/ImportReviewPage';
 
 // Analytics Dashboard Component
 const AnalyticsDashboard = () => {
@@ -59,10 +60,12 @@ const TransactionsView = () => {
     refreshData,
     setSearchTerm,
     setCategoryFilter,
+    setClassificationStatus,
     setDateRange,
     clearFilters,
     searchTerm,
     categoryFilter,
+    classificationStatus,
     dateRange,
     handleCategoryUpdate,
     handleDeleteTransaction,
@@ -118,9 +121,14 @@ const TransactionsView = () => {
       <TransactionFilters
         searchTerm={searchTerm}
         categoryFilter={categoryFilter}
+        classificationStatus={classificationStatus}
         dateRange={dateRange}
         onSearchChange={setSearchTerm}
         onCategoryFilter={setCategoryFilter}
+        onClassificationStatusFilter={(status) => {
+          setCurrentPage(1);
+          setClassificationStatus(status);
+        }}
         onDateRangeChange={setDateRange}
         onClearFilters={clearFilters}
       />
@@ -184,6 +192,14 @@ function App() {
                   <TransactionsView />
                 </MainLayout>
               } 
+            />
+            <Route
+              path="/imports/:sessionId/review"
+              element={
+                <MainLayout onUploadSuccess={handleUploadSuccess}>
+                  <ImportReviewPage />
+                </MainLayout>
+              }
             />
             <Route 
               path="/financial-health" 

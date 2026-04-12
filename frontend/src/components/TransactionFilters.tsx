@@ -1,13 +1,15 @@
 import React from 'react';
 import * as Select from '@radix-ui/react-select';
-import { ExpenseCategory, IncomeCategory, TransferCategory } from '../types/transaction';
+import { ClassificationStatusFilter, ExpenseCategory, IncomeCategory, TransferCategory } from '../types/transaction';
 
 interface TransactionFiltersProps {
   searchTerm: string;
   categoryFilter: ExpenseCategory | IncomeCategory | TransferCategory | 'all';
+  classificationStatus: ClassificationStatusFilter;
   dateRange: { start: string; end: string };
   onSearchChange: (search: string) => void;
   onCategoryFilter: (category: ExpenseCategory | IncomeCategory | TransferCategory | 'all') => void;
+  onClassificationStatusFilter: (status: ClassificationStatusFilter) => void;
   onDateRangeChange: (range: { start: string; end: string }) => void;
   onClearFilters: () => void;
 }
@@ -15,9 +17,11 @@ interface TransactionFiltersProps {
 export const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   searchTerm,
   categoryFilter,
+  classificationStatus,
   dateRange,
   onSearchChange,
   onCategoryFilter,
+  onClassificationStatusFilter,
   onDateRangeChange,
   onClearFilters,
 }) => {
@@ -38,12 +42,18 @@ export const TransactionFilters: React.FC<TransactionFiltersProps> = ({
         />
 
         <Select.Root value={categoryFilter} onValueChange={(value) => onCategoryFilter(value as ExpenseCategory | IncomeCategory | TransferCategory | 'all')}>
-          <Select.Trigger className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800">
+          <Select.Trigger
+            aria-label="category-filter"
+            className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800"
+          >
             <Select.Value placeholder="Filter by category" />
           </Select.Trigger>
 
           <Select.Portal>
-            <Select.Content className="overflow-hidden bg-white dark:bg-gray-800 rounded-md shadow-lg border dark:border-gray-700">
+            <Select.Content
+              aria-label="category-filter"
+              className="overflow-hidden bg-white dark:bg-gray-800 rounded-md shadow-lg border dark:border-gray-700"
+            >
               <Select.Viewport className="p-2">
                 <Select.Item 
                   value="all"
@@ -96,6 +106,46 @@ export const TransactionFilters: React.FC<TransactionFiltersProps> = ({
                     </Select.Item>
                   ))}
                 </Select.Group>
+              </Select.Viewport>
+            </Select.Content>
+          </Select.Portal>
+        </Select.Root>
+
+        <Select.Root
+          value={classificationStatus}
+          onValueChange={(value) => onClassificationStatusFilter(value as ClassificationStatusFilter)}
+        >
+          <Select.Trigger
+            aria-label="classification-status-filter"
+            className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800"
+          >
+            <Select.Value placeholder="Classification status" />
+          </Select.Trigger>
+
+          <Select.Portal>
+            <Select.Content
+              aria-label="classification-status-filter"
+              className="overflow-hidden bg-white dark:bg-gray-800 rounded-md shadow-lg border dark:border-gray-700"
+            >
+              <Select.Viewport className="p-2">
+                <Select.Item
+                  value="all"
+                  className="relative flex items-center px-8 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
+                >
+                  <Select.ItemText>All Transactions</Select.ItemText>
+                </Select.Item>
+                <Select.Item
+                  value="classified"
+                  className="relative flex items-center px-8 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
+                >
+                  <Select.ItemText>Classified Only</Select.ItemText>
+                </Select.Item>
+                <Select.Item
+                  value="unclassified"
+                  className="relative flex items-center px-8 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
+                >
+                  <Select.ItemText>Unclassified Only</Select.ItemText>
+                </Select.Item>
               </Select.Viewport>
             </Select.Content>
           </Select.Portal>

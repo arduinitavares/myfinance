@@ -46,7 +46,7 @@ class ExtractedTransaction(BaseModel):
     category_source: str | None = None
     confidence: dict[str, float] = Field(default_factory=dict)
     source_locator: str
-    edit_source: Literal["ai_extracted", "user_edited"] = "ai_extracted"
+    edit_source: Literal["deterministic_extracted", "ai_extracted", "user_edited"] = "ai_extracted"
 
 
 class ExtractionResult(BaseModel):

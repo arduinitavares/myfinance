@@ -78,6 +78,10 @@ class TransactionCreate(TransactionBase):
 
 class Transaction(TransactionBase):
     id: int
+    import_session_id: Optional[int] = None
+    import_source_locator: Optional[str] = None
+    import_source_description: Optional[str] = None
+    canonical_description_en: Optional[str] = None
 
     class Config:
         orm_mode = True

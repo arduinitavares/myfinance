@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.config import settings
 
-from .contracts import DetectionResult, RawEvidence
+from .contracts import DetectionResult, ExtractionResult, RawEvidence
 
 
 class ArtifactStore:
@@ -28,6 +28,12 @@ class ArtifactStore:
     def write_meta(self, session_id: str, payload: dict) -> None:
         self._write_json(self.session_dir(session_id) / "meta.json", payload)
 
+    def read_meta(self, session_id: str) -> dict:
+        path = self.session_dir(session_id) / "meta.json"
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
     def write_detection(self, session_id: str, detection: DetectionResult) -> None:
         self._write_json(self.session_dir(session_id) / "detection.json", detection.model_dump(mode="json"))
 
@@ -35,12 +41,26 @@ class ArtifactStore:
         attempt_dir = self.attempt_dir(session_id, attempt_number)
         self._write_json(attempt_dir / "evidence" / "raw.json", evidence.model_dump(mode="json"))
 
+    def write_normalized_result(self, session_id: str, attempt_number: int, result: ExtractionResult) -> None:
+        attempt_dir = self.attempt_dir(session_id, attempt_number)
+        self._write_json(attempt_dir / "normalized" / "extraction_result.json", result.model_dump(mode="json"))
+
     def write_original_file(self, session_id: str, filename: str, file_bytes: bytes) -> Path:
         self._validate_original_filename(filename)
         target = self.session_dir(session_id) / "original" / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(file_bytes)
         return target
+
+    def existing_attempt_numbers(self, session_id: str) -> list[int]:
+        attempts_root = self.session_dir(session_id) / "attempts"
+        if not attempts_root.exists():
+            return []
+        attempt_numbers = []
+        for child in attempts_root.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                attempt_numbers.append(int(child.name))
+        return sorted(attempt_numbers)
 
     @staticmethod
     def _write_json(path: Path, payload: dict) -> None:

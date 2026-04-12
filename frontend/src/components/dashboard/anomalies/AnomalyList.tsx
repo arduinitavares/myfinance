@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AlertTriangle, Eye, Check, X, Clock, TrendingUp, Shield, Filter } from 'lucide-react';
 import { anomalyService, Anomaly, AnomalyPage } from '../../../services/anomalyService';
 import { Pagination } from '../../common/Pagination';
+import { formatDisplayDate } from '../../../utils/date';
 
 interface AnomalyListProps {}
 
@@ -209,7 +210,7 @@ export const AnomalyList: React.FC<AnomalyListProps> = () => {
                           <div>
                             <span className="font-medium text-gray-600 dark:text-gray-400">Date:</span>
                             <span className="ml-2 text-gray-900 dark:text-white">
-                              {new Date(anomaly.transaction.transaction_date).toLocaleDateString()}
+                              {formatDisplayDate(anomaly.transaction.transaction_date)}
                             </span>
                           </div>
                           <div>
@@ -231,7 +232,7 @@ export const AnomalyList: React.FC<AnomalyListProps> = () => {
                     <div className="flex items-center space-x-4 text-sm text-gray-600 dark:text-gray-400">
                       <span>Score: {anomaly.anomaly_score.toFixed(1)}</span>
                       <span>Confidence: {(anomaly.confidence * 100).toFixed(1)}%</span>
-                      <span>Detected: {new Date(anomaly.detection_timestamp).toLocaleDateString()}</span>
+                      <span>Detected: {formatDisplayDate(anomaly.detection_timestamp)}</span>
                     </div>
                   </div>
 

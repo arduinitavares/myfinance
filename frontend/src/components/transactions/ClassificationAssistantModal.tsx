@@ -11,6 +11,7 @@ import {
   TransferCategory,
   TransactionType,
 } from '../../types/transaction';
+import { formatDisplayDate } from '../../utils/date';
 
 interface ClassificationAssistantModalProps {
   open: boolean;
@@ -29,19 +30,11 @@ const FEEDBACK_OPTIONS = [
   { value: 'accept', label: 'Accept' },
 ] as const;
 
-const RECURRENCE_FREQUENCIES = ['weekly', 'monthly', 'quarterly', 'yearly', 'unknown'] as const;
+const DEFAULT_RECURRENCE_FREQUENCY = 'monthly';
+const RECURRENCE_FREQUENCIES = [DEFAULT_RECURRENCE_FREQUENCY, 'weekly', 'quarterly', 'yearly', 'unknown'] as const;
 
 const formatTransactionDate = (transactionDate?: string) => {
-  if (!transactionDate) {
-    return null;
-  }
-
-  const parsedDate = new Date(transactionDate);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return transactionDate;
-  }
-
-  return format(parsedDate, 'dd/MM/yyyy');
+  return transactionDate ? formatDisplayDate(transactionDate) : null;
 };
 
 const formatTransactionAmount = (amount: number, currency: string) =>
@@ -90,7 +83,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
   const [selectedSimilarIds, setSelectedSimilarIds] = useState<number[]>([]);
   const [pendingAdvanceToNext, setPendingAdvanceToNext] = useState(false);
   const [recurrenceEnabled, setRecurrenceEnabled] = useState(false);
-  const [recurrenceFrequency, setRecurrenceFrequency] = useState<string>('monthly');
+  const [recurrenceFrequency, setRecurrenceFrequency] = useState<string>(DEFAULT_RECURRENCE_FREQUENCY);
   const [selectedType, setSelectedType] = useState<TransactionType>(TransactionType.EXPENSE);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const resolvedCategory = selectedCategory || proposal?.category || '';
@@ -124,7 +117,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
     }
 
     setRecurrenceEnabled(false);
-    setRecurrenceFrequency('monthly');
+    setRecurrenceFrequency(DEFAULT_RECURRENCE_FREQUENCY);
   }, [proposal]);
 
   const handleTypeChange = (nextType: TransactionType) => {

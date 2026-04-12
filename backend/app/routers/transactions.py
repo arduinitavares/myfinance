@@ -286,6 +286,7 @@ def get_transactions(
     sort_direction: str = Query('desc', regex='^(asc|desc)$'),
     search: str = Query(None, description="Search term for description/counterparty"),
     category: str = Query(None, description="Category filter (expense or income)"),
+    classification_status: str = Query('all', regex='^(all|classified|unclassified)$'),
     start_date: str = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: str = Query(None, description="End date (YYYY-MM-DD)")
 ):
@@ -375,6 +376,41 @@ def get_transactions(
                 query = query.filter(Transaction.transaction_date <= end)
             except Exception:
                 pass
+
+        if classification_status == 'classified':
+            query = query.filter(
+                or_(
+                    and_(
+                        Transaction.transaction_type == TransactionType.EXPENSE,
+                        Transaction.expense_category.isnot(None),
+                    ),
+                    and_(
+                        Transaction.transaction_type == TransactionType.INCOME,
+                        Transaction.income_category.isnot(None),
+                    ),
+                    and_(
+                        Transaction.transaction_type == TransactionType.TRANSFER,
+                        Transaction.transfer_category.isnot(None),
+                    ),
+                )
+            )
+        elif classification_status == 'unclassified':
+            query = query.filter(
+                or_(
+                    and_(
+                        Transaction.transaction_type == TransactionType.EXPENSE,
+                        Transaction.expense_category.is_(None),
+                    ),
+                    and_(
+                        Transaction.transaction_type == TransactionType.INCOME,
+                        Transaction.income_category.is_(None),
+                    ),
+                    and_(
+                        Transaction.transaction_type == TransactionType.TRANSFER,
+                        Transaction.transfer_category.is_(None),
+                    ),
+                )
+            )
 
         # Add sorting
         if sort_direction == 'asc':

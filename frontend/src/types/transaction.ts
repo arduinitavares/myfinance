@@ -131,6 +131,8 @@ export interface SortParams {
   direction: 'asc' | 'desc';
 }
 
+export type ClassificationStatusFilter = 'all' | 'classified' | 'unclassified';
+
 export enum ActionType {
   DELETE_TRANSACTION = 'DELETE_TRANSACTION',
   UPDATE_CATEGORY = 'UPDATE_CATEGORY'

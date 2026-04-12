@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { format } from 'date-fns';
+import { formatDisplayDate } from '../../../utils/date';
 
 interface Recommendation {
   id: number;
@@ -261,11 +261,11 @@ const Recommendations: React.FC<RecommendationsProps> = ({ recommendations, onUp
                     <span className="font-medium dark:text-gray-300">Potential Improvement:</span> +{recommendation.estimated_score_improvement} points
                   </div>
                   <div>
-                    <span className="font-medium dark:text-gray-300">Created:</span> {format(new Date(recommendation.date_created), 'MMM d, yyyy')}
+                    <span className="font-medium dark:text-gray-300">Created:</span> {formatDisplayDate(recommendation.date_created)}
                   </div>
                   {recommendation.is_completed && recommendation.date_completed && (
                     <div>
-                      <span className="font-medium dark:text-gray-300">Completed:</span> {format(new Date(recommendation.date_completed), 'MMM d, yyyy')}
+                      <span className="font-medium dark:text-gray-300">Completed:</span> {formatDisplayDate(recommendation.date_completed)}
                     </div>
                   )}
                 </div>
