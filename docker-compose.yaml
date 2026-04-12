@@ -6,12 +6,13 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./backend/app/data:/app/app/data
+      - myfinance-data:/app/app/data
     restart: unless-stopped
     environment:
       - TZ=UTC
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - MYFINANCE_DATA_DIR=/app/app/data
       - MYFINANCE_PROVIDER_CONFIG=/app/config.local.yaml
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs')"]
