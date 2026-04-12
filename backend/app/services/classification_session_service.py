@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 import logging
+import os
 
 from fastapi import HTTPException
+from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,7 +16,7 @@ from ..models.classification import (
     ClassificationTurn,
     RecurrencePattern,
 )
-from ..models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType
+from ..models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType, TransferCategory
 from ..schemas.classification import (
     ApplyBatchRequest,
     ApplyBatchResponse,
@@ -28,7 +30,13 @@ from ..schemas.classification import (
 )
 from ..schemas.transaction import Transaction as TransactionSchema
 from ..routers.suggestions import category_suggestion_service
-from ..services.classifier_providers import StubClassifierProvider
+from ..services.classifier_providers import OpenAICompatibleClassifierProvider, StubClassifierProvider
+from .classification_similarity import (
+    SIMILARITY_PREVIEW_LIMIT,
+    SIMILARITY_THRESHOLD,
+    has_conflicting_family,
+    shares_source_bank,
+)
 from ..utils.text_normalization import normalize_for_matching
 from .classification_commit_service import commit_category_change, normalized_category_for
 
@@ -36,8 +44,7 @@ from .classification_commit_service import commit_category_change, normalized_ca
 logger = logging.getLogger(__name__)
 
 SESSION_TTL = timedelta(hours=24)
-SIMILARITY_THRESHOLD = 0.5
-SIMILARITY_PREVIEW_LIMIT = 8
+REMOTE_PROVIDER_ERRORS = (RuntimeError, APIError, APIConnectionError, APITimeoutError, RateLimitError)
 
 
 def _same_sign(left: Transaction, right: Transaction) -> bool:
@@ -81,7 +88,18 @@ class ClassificationSessionService:
             .first()
         )
         if existing:
-            return existing
+            if cls._provider_is_available_in_current_config(existing.provider_name):
+                return existing
+
+            logger.info(
+                "Classification session %s uses unavailable provider %s; cancelling and recreating",
+                existing.id,
+                existing.provider_name,
+            )
+            existing.status = ClassificationSessionStatus.CANCELLED
+            existing.updated_at = datetime.utcnow()
+            db.add(existing)
+            db.flush()
 
         provider = cls._build_provider()
         session = ClassificationSession(
@@ -113,10 +131,10 @@ class ClassificationSessionService:
     def propose(cls, db: Session, session_id: int) -> ClassificationProposalResponse:
         session = cls._require_open_session(db, session_id)
         transaction = cls._require_transaction(db, session.transaction_id)
-        provider = cls._build_provider(session.provider_name, session.model_name)
-        proposal = provider.propose(
+        proposal = cls._generate_proposal(
+            db=db,
+            session=session,
             transaction=transaction,
-            allowed_categories=cls._allowed_categories(transaction.transaction_type),
             feedback_tag=None,
             feedback_note=None,
         )
@@ -147,10 +165,10 @@ class ClassificationSessionService:
     ) -> ClassificationProposalResponse:
         session = cls._require_open_session(db, session_id)
         transaction = cls._require_transaction(db, session.transaction_id)
-        provider = cls._build_provider(session.provider_name, session.model_name)
-        proposal = provider.propose(
+        proposal = cls._generate_proposal(
+            db=db,
+            session=session,
             transaction=transaction,
-            allowed_categories=cls._allowed_categories(transaction.transaction_type),
             feedback_tag=request.feedback_tag,
             feedback_note=request.feedback_note,
         )
@@ -286,7 +304,11 @@ class ClassificationSessionService:
             if transaction_id not in allowed_transaction_ids:
                 skipped_transaction_ids.append(transaction_id)
                 continue
-            if candidate.expense_category is not None or candidate.income_category is not None:
+            if (
+                candidate.expense_category is not None
+                or candidate.income_category is not None
+                or candidate.transfer_category is not None
+            ):
                 skipped_transaction_ids.append(transaction_id)
                 continue
 
@@ -371,12 +393,19 @@ class ClassificationSessionService:
             db.commit()
 
     @staticmethod
-    def _allowed_categories(transaction_type: TransactionType) -> list[str]:
+    def _allowed_options_by_type(transaction_type: TransactionType) -> dict[str, list[str]]:
+        transfer_categories = [category.value for category in TransferCategory]
         if transaction_type == TransactionType.EXPENSE:
-            return [category.value for category in ExpenseCategory]
+            return {
+                TransactionType.EXPENSE.value: [category.value for category in ExpenseCategory],
+                TransactionType.TRANSFER.value: transfer_categories,
+            }
         if transaction_type == TransactionType.INCOME:
-            return [category.value for category in IncomeCategory]
-        return [ExpenseCategory.INTERNAL_TRANSFER.value]
+            return {
+                TransactionType.INCOME.value: [category.value for category in IncomeCategory],
+                TransactionType.TRANSFER.value: transfer_categories,
+            }
+        return {TransactionType.TRANSFER.value: transfer_categories}
 
     @staticmethod
     def _proposal_response(turn: ClassificationTurn) -> ClassificationProposalResponse:
@@ -405,6 +434,96 @@ class ClassificationSessionService:
         return latest_turn.proposal_recurrence_frequency
 
     @classmethod
+    def _conversation_history(cls, db: Session, session_id: int) -> list[ClassificationTurn]:
+        return (
+            db.query(ClassificationTurn)
+            .filter(ClassificationTurn.session_id == session_id)
+            .order_by(ClassificationTurn.turn_index)
+            .all()
+        )
+
+    @classmethod
+    def _fallback_suggestions(cls, transaction: Transaction) -> list[dict[str, float | str]]:
+        if transaction.transaction_type not in {TransactionType.EXPENSE, TransactionType.INCOME}:
+            return []
+        suggestions = category_suggestion_service.suggest_category(
+            description=transaction.description,
+            amount=transaction.amount,
+            transaction_type=transaction.transaction_type,
+        )
+        return [
+            {"category": category, "confidence": float(confidence)}
+            for category, confidence in suggestions
+        ]
+
+    @classmethod
+    def _generate_proposal(
+        cls,
+        *,
+        db: Session,
+        session: ClassificationSession,
+        transaction: Transaction,
+        feedback_tag: str | None,
+        feedback_note: str | None,
+    ):
+        allowed_options_by_type = cls._allowed_options_by_type(transaction.transaction_type)
+        conversation_history = cls._conversation_history(db, session.id)
+        providers_to_try = [(session.provider_name, session.model_name)] + [
+            (provider_name, None)
+            for provider_name in cls._fallback_provider_names(session.provider_name)
+        ]
+        last_error = None
+
+        for provider_name, model_name in providers_to_try:
+            try:
+                provider = cls._build_provider(provider_name, model_name)
+            except HTTPException as exc:
+                if exc.status_code == 503:
+                    last_error = exc
+                    logger.info(
+                        "Skipping unavailable configured classification provider %s",
+                        provider_name,
+                    )
+                    continue
+                raise
+            try:
+                proposal = provider.propose(
+                    transaction=transaction,
+                    allowed_options_by_type=allowed_options_by_type,
+                    conversation_history=conversation_history,
+                    feedback_tag=feedback_tag,
+                    feedback_note=feedback_note,
+                )
+                if session.provider_name != provider.name or session.model_name != provider.model_name:
+                    logger.info(
+                        "Classification session switching provider from %s to %s",
+                        session.provider_name,
+                        provider.name,
+                    )
+                    session.provider_name = provider.name
+                    session.model_name = provider.model_name
+                return proposal
+            except REMOTE_PROVIDER_ERRORS as exc:
+                last_error = exc
+                logger.warning(
+                    "Classification provider %s unavailable, trying next fallback if configured",
+                    provider_name,
+                    exc_info=exc,
+                )
+
+        logger.warning(
+            "Classification provider unavailable; returning degraded suggestions",
+            exc_info=last_error,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Classification provider unavailable",
+                "suggestions": cls._fallback_suggestions(transaction),
+            },
+        ) from last_error
+
+    @classmethod
     def _similar_candidates(cls, db: Session, seed_transaction: Transaction) -> list[tuple[Transaction, float]]:
         if seed_transaction.amount == 0:
             return []
@@ -416,6 +535,7 @@ class ClassificationSessionService:
                 Transaction.currency == seed_transaction.currency,
                 Transaction.expense_category.is_(None),
                 Transaction.income_category.is_(None),
+                Transaction.transfer_category.is_(None),
             )
         )
         if seed_transaction.amount < 0:
@@ -426,6 +546,10 @@ class ClassificationSessionService:
         candidates: list[tuple[Transaction, float]] = []
         for transaction in query.all():
             if not _compatible_candidate_family(seed_transaction, transaction):
+                continue
+            if not shares_source_bank(seed_transaction, transaction):
+                continue
+            if has_conflicting_family(seed_transaction, transaction):
                 continue
             score = category_suggestion_service.similarity_score(
                 seed_transaction.description.lower(),
@@ -443,9 +567,52 @@ class ClassificationSessionService:
             provider_name=provider_name,
             model_name=model_name,
         )
+        registry = ProviderRegistry.from_path(settings.provider_config_path)
+        provider_config = registry.family("classification_assistant").providers.get(resolved_provider_name)
+
         if resolved_provider_name == "stub":
             return StubClassifierProvider(name=resolved_provider_name, model_name=resolved_model_name)
+        if provider_config and provider_config.kind in {"openai", "openai_compatible"}:
+            if not provider_config.api_key_env:
+                raise HTTPException(status_code=503, detail="No classification assistant provider configured")
+            api_key = os.environ.get(provider_config.api_key_env)
+            if not api_key:
+                raise HTTPException(status_code=503, detail="No classification assistant provider configured")
+            return OpenAICompatibleClassifierProvider(
+                name=resolved_provider_name,
+                model_name=resolved_model_name,
+                api_key=api_key,
+                base_url=provider_config.base_url or "https://api.openai.com/v1",
+            )
         raise HTTPException(status_code=503, detail="Unsupported classification provider configured")
+
+    @classmethod
+    def _fallback_provider_names(cls, provider_name: str | None) -> list[str]:
+        registry = ProviderRegistry.from_path(settings.provider_config_path)
+        report = registry.validate().get("classification_assistant", {})
+        family = registry.family("classification_assistant")
+        fallback_names: list[str] = []
+        passed_current = provider_name is None or provider_name not in family.order
+
+        for candidate_name in family.order:
+            if not passed_current:
+                if candidate_name == provider_name:
+                    passed_current = True
+                continue
+            if candidate_name == provider_name:
+                continue
+            provider_report = report.get(candidate_name, {})
+            if provider_report.get("available"):
+                fallback_names.append(candidate_name)
+
+        return fallback_names
+
+    @classmethod
+    def _provider_is_available_in_current_config(cls, provider_name: str) -> bool:
+        registry = ProviderRegistry.from_path(settings.provider_config_path)
+        report = registry.validate().get("classification_assistant", {})
+        provider_report = report.get(provider_name, {})
+        return bool(provider_report.get("available"))
 
     @classmethod
     def _resolve_provider_selection(

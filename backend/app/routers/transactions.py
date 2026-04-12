@@ -9,7 +9,13 @@ import logging
 import time
 
 from ..database import get_db
-from ..models.transaction import Transaction, ExpenseCategory, IncomeCategory, TransactionType
+from ..models.transaction import (
+    Transaction,
+    ExpenseCategory,
+    IncomeCategory,
+    TransactionType,
+    TransferCategory,
+)
 from ..models.classification import RecurrencePattern
 from ..models.anomaly import TransactionAnomaly
 from ..schemas import transaction as schemas
@@ -179,11 +185,13 @@ async def upload_csv(
                     )
                 else:
                     # Get category suggestions only after recurrence patterns are ruled out
-                    suggestions = category_suggestion_service.suggest_category(
-                        trans.description,
-                        trans.amount,
-                        trans.transaction_type
-                    )
+                    suggestions = []
+                    if trans.transaction_type != TransactionType.TRANSFER:
+                        suggestions = category_suggestion_service.suggest_category(
+                            trans.description,
+                            trans.amount,
+                            trans.transaction_type
+                        )
 
                     # If we have suggestions with high confidence, set the category
                     if suggestions and suggestions[0][1] > 0.5:  # Check if confidence > 0.5
@@ -304,6 +312,7 @@ def get_transactions(
             # Try to match ExpenseCategory or IncomeCategory enums
             expense_enum = None
             income_enum = None
+            transfer_enum = None
             try:
                 expense_enum = ExpenseCategory(category)
             except Exception:
@@ -312,17 +321,45 @@ def get_transactions(
                 income_enum = IncomeCategory(category)
             except Exception:
                 pass
-            if expense_enum and income_enum:
+            try:
+                transfer_enum = TransferCategory(category)
+            except Exception:
+                pass
+            if expense_enum and income_enum and transfer_enum:
+                query = query.filter(
+                    or_(
+                        Transaction.expense_category == expense_enum,
+                        Transaction.income_category == income_enum,
+                        Transaction.transfer_category == transfer_enum,
+                    )
+                )
+            elif expense_enum and income_enum:
                 query = query.filter(
                     or_(
                         Transaction.expense_category == expense_enum,
                         Transaction.income_category == income_enum
                     )
                 )
+            elif expense_enum and transfer_enum:
+                query = query.filter(
+                    or_(
+                        Transaction.expense_category == expense_enum,
+                        Transaction.transfer_category == transfer_enum,
+                    )
+                )
+            elif income_enum and transfer_enum:
+                query = query.filter(
+                    or_(
+                        Transaction.income_category == income_enum,
+                        Transaction.transfer_category == transfer_enum,
+                    )
+                )
             elif expense_enum:
                 query = query.filter(Transaction.expense_category == expense_enum)
             elif income_enum:
                 query = query.filter(Transaction.income_category == income_enum)
+            elif transfer_enum:
+                query = query.filter(Transaction.transfer_category == transfer_enum)
             else:
                 query = query.filter(False)  # No match, return empty
         # Apply date range filter
@@ -372,9 +409,23 @@ async def delete_transaction(transaction_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     transaction_date = transaction.transaction_date
+    seeded_pattern_ids = [pattern.id for pattern in transaction.seeded_recurrence_patterns]
+
+    if seeded_pattern_ids:
+        (
+            db.query(Transaction)
+            .filter(Transaction.recurrence_pattern_id.in_(seeded_pattern_ids))
+            .update({Transaction.recurrence_pattern_id: None}, synchronize_session=False)
+        )
     
     # Delete associated anomaly records first to avoid foreign key constraint violation
     db.query(TransactionAnomaly).filter(TransactionAnomaly.transaction_id == transaction_id).delete()
+
+    for pattern in list(transaction.seeded_recurrence_patterns):
+        db.delete(pattern)
+
+    for session in list(transaction.classification_sessions):
+        db.delete(session)
     
     # Delete the transaction
     db.delete(transaction)

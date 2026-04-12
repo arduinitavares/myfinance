@@ -3,7 +3,13 @@ import logging
 from sqlalchemy.orm import Session
 
 from ..models.classification import RecurrencePattern
-from ..models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType
+from ..models.transaction import (
+    ExpenseCategory,
+    IncomeCategory,
+    Transaction,
+    TransactionType,
+    TransferCategory,
+)
 from ..routers.suggestions import category_suggestion_service
 from .statistics_service import StatisticsService
 
@@ -18,9 +24,7 @@ def normalized_category_for(
     amount: float,
 ) -> str:
     if transaction_type == TransactionType.TRANSFER:
-        if amount < 0:
-            return ExpenseCategory.INTERNAL_TRANSFER.value
-        return IncomeCategory.INTERNAL_TRANSFER.value
+        return TransferCategory(category).value
     return category
 
 
@@ -65,16 +69,15 @@ def commit_category_change(
     if transaction_type == TransactionType.EXPENSE:
         transaction.expense_category = ExpenseCategory(normalized_category)
         transaction.income_category = None
+        transaction.transfer_category = None
     elif transaction_type == TransactionType.INCOME:
         transaction.income_category = IncomeCategory(normalized_category)
         transaction.expense_category = None
+        transaction.transfer_category = None
     else:
-        if transaction.amount < 0:
-            transaction.expense_category = ExpenseCategory.INTERNAL_TRANSFER
-            transaction.income_category = None
-        else:
-            transaction.income_category = IncomeCategory.INTERNAL_TRANSFER
-            transaction.expense_category = None
+        transaction.transfer_category = TransferCategory(normalized_category)
+        transaction.expense_category = None
+        transaction.income_category = None
 
     db.add(transaction)
     db.flush()
@@ -83,14 +86,13 @@ def commit_category_change(
         db.commit()
         db.refresh(transaction)
 
-        if transaction.transaction_type in {TransactionType.EXPENSE, TransactionType.INCOME}:
-            try:
-                category_suggestion_service.add_transaction(transaction)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to update suggestion index for transaction %s: %s",
-                    transaction.id,
-                    exc,
-                )
+        try:
+            category_suggestion_service.sync_transaction(transaction)
+        except Exception as exc:
+            logger.warning(
+                "Failed to update suggestion index for transaction %s: %s",
+                transaction.id,
+                exc,
+            )
 
     return transaction

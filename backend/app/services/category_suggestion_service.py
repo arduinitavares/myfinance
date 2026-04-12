@@ -145,13 +145,21 @@ class CategorySuggestionService:
         return score
 
     def _get_collection_name(self, transaction_type: TransactionType) -> str:
-        return "expense_embeddings" if transaction_type == TransactionType.EXPENSE else "income_embeddings"
+        if transaction_type == TransactionType.EXPENSE:
+            return "expense_embeddings"
+        if transaction_type == TransactionType.INCOME:
+            return "income_embeddings"
+        raise ValueError(f"Unsupported transaction type for suggestions: {transaction_type}")
 
     def train_on_existing_transactions(self, db: Session):
         """Train the model on existing transactions"""
         transactions = db.query(Transaction).all()
         
         for transaction in transactions:
+            if transaction.transaction_type == TransactionType.TRANSFER:
+                continue
+            if transaction.transfer_category is not None:
+                continue
             if not transaction.expense_category and not transaction.income_category:
                 continue
             if transaction.transaction_type not in {TransactionType.EXPENSE, TransactionType.INCOME}:
@@ -184,6 +192,8 @@ class CategorySuggestionService:
         top_k: int = 3
     ) -> List[Tuple[str, float]]:
         """Suggest categories for a new transaction"""
+        if transaction_type == TransactionType.TRANSFER:
+            return []
         text = f"{self._preprocess_description(description)} {abs(amount)}"
         logger.info(f"Suggesting category for text: {text}")
         embedding = self.model.encode(text)
@@ -216,6 +226,10 @@ class CategorySuggestionService:
 
     def add_transaction(self, transaction: Transaction):
         """Add a new transaction to the vector database"""
+        if transaction.transaction_type == TransactionType.TRANSFER:
+            return
+        if transaction.transfer_category is not None:
+            return
         if not transaction.expense_category and not transaction.income_category:
             return
             
@@ -235,3 +249,16 @@ class CategorySuggestionService:
                 )
             ]
         )
+
+    def remove_transaction(self, transaction_id: int | None):
+        """Remove a transaction from all embedding collections."""
+        if transaction_id is None:
+            return
+
+        for collection_name in ("expense_embeddings", "income_embeddings"):
+            self.client.delete(collection_name=collection_name, points_selector=[transaction_id])
+
+    def sync_transaction(self, transaction: Transaction):
+        """Synchronize the indexed representation for a transaction."""
+        self.remove_transaction(transaction.id)
+        self.add_transaction(transaction)
