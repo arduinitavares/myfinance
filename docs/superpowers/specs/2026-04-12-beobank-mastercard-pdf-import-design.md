@@ -11,6 +11,7 @@ Scope: deterministic import support for text-selectable Beobank Mastercard state
 - Parse only the detailed transaction table, not statement summaries.
 - Keep the import review-first workflow: extract, review, then commit.
 - Fail closed when the PDF is scanned, password-protected, or layout-incompatible.
+- Ship one end-to-end PDF vertical slice, not a parser-only prototype.
 
 ## Non-Goals
 
@@ -32,6 +33,20 @@ Reasoning:
 
 AI remains a possible later fallback for rejected PDFs, but it is out of scope for this first slice.
 
+## Scope Truth
+
+The current runtime import pipeline stops at `DETECTED`. This slice is therefore not parser-only.
+
+This slice includes the minimum missing platform work required to make one PDF path shippable:
+
+- extraction orchestration after `DETECTED`
+- draft and issue persistence for extraction attempts
+- review read APIs for statement drafts, transaction drafts, issues, and evidence
+- approval / rejection / retry extraction actions
+- commit path from approved drafts into committed `Transaction` rows
+
+This slice does not attempt to finish every future import feature. It only builds the missing post-detection path needed to ship Beobank Mastercard PDF import end to end.
+
 ## Shared Foundation Alignment
 
 This slice does not change the shared rule that the pipeline routes by `strategy_key` only.
@@ -49,8 +64,25 @@ For deterministic Beobank Mastercard attempts:
 - `evidence/raw.json` must be present
 - `normalized/extraction_result.json` must be present
 - `ai/request.json` and `ai/response.json` must be absent
+- every extracted draft row must persist `edit_source = deterministic_extracted`
 
 This makes the deterministic path compatible with the accepted shared import architecture instead of replacing it.
+
+## Implementation Technology
+
+The v1 text extraction library is `pypdf`.
+
+Use:
+
+- `PdfReader(...)`
+- `page.extract_text(extraction_mode="layout")`
+
+This choice is intentional:
+
+- pure Python
+- page-by-page extraction
+- good fit for text-layer PDFs
+- low operational complexity compared with OCR or rendering-first libraries
 
 ## Source Format Assumptions
 
@@ -93,6 +125,35 @@ The parser must inspect every page from page 2 onward, but extract rows only fro
 
 Pages after page 1 that do not match this shape are ignored rather than guessed.
 
+## Canonical Text Representation
+
+The parser, evidence layer, issue locators, and review UI must all use the same canonical lineization output.
+
+For each page:
+
+1. extract page text with `pypdf` layout mode
+2. normalize `\u00A0` to regular spaces
+3. normalize line endings to `\n`
+4. split into lines
+5. trim trailing whitespace from each line
+6. drop lines that are empty after trimming
+7. store the remaining lines as a 1-based line array for that page
+
+`source_locator` line numbers always refer to this canonical 1-based non-empty line array, not raw byte offsets and not visual coordinates.
+
+`evidence/raw.json` for this slice must store, per page:
+
+- `page_number`
+- `raw_text`
+- `lines`: ordered array of canonical non-empty lines
+
+All structural marker matching in this slice must use:
+
+- Unicode-normalized text
+- `\u00A0` already converted to regular spaces
+- collapsed internal whitespace for matching
+- case-insensitive token comparison
+
 ## Page Qualification and Line Classes
 
 After page 1 is skipped, each page must be classified as either:
@@ -119,6 +180,13 @@ Within a `transaction_page`, every non-empty line in the table body must classif
 
 Any non-empty table-body line that cannot be classified into one of those classes is a blocking issue `unclassifiable_table_line`.
 
+`page_footer_noise` is intentionally narrow. In v1 it is allowed only for known footer patterns such as:
+
+- `Blz <number>`
+- document code lines beginning with `KB.`
+
+It must not become a catch-all bucket for unknown text.
+
 ## Imported Data Contract
 
 Only these table columns are authoritative for row creation:
@@ -137,6 +205,24 @@ Each imported transaction row must produce:
 - `source_locator`
 
 Standard import metadata continues to flow through `ExtractionResult` and draft tables.
+
+## Statement Metadata Extraction
+
+Page 1 is ignored for transaction rows, but it is still used for layout validation and limited metadata extraction.
+
+For v1, the extractor must populate these `statement_metadata` fields when present:
+
+- `statement_period_start`
+- `statement_period_end`
+- `card_number_hint`
+- `currency = "EUR"`
+
+For v1, these fields remain null unless later shared work defines them more broadly:
+
+- `account_number_hint`
+- balances
+- summary totals
+- `summary_text`
 
 ## Explicit Ignore Rules
 
@@ -165,6 +251,7 @@ A new transaction row begins when the parser finds a line with:
 - a leading date in `dd/MM/yyyy`
 - a description region
 - a right-side EUR amount
+- non-empty description text between date and amount
 
 For v1, a row start is valid only if the parsed amount token matches Belgian numeric format:
 
@@ -173,7 +260,12 @@ For v1, a row start is valid only if the parsed amount token matches Belgian num
 - `-12,34`
 - `-1.234,56`
 
-Any other amount shape is a blocking `malformed_row`.
+Unsupported amount shapes are blocking `malformed_row`, including:
+
+- `+12,34`
+- `1.234`
+- `0,00`
+- `-0,00`
 
 ### Multiline descriptions
 
@@ -189,7 +281,9 @@ Lines containing original-currency hints such as `BRL WISSELKOERS` or `USD WISSE
 
 ### Fee rows
 
-If `WISSELKOSTEN` appears with its own EUR amount in the transaction table, it becomes its own imported transaction row.
+If `WISSELKOSTEN` appears with its own valid date and EUR amount in the transaction table, it becomes its own imported transaction row.
+
+If `WISSELKOSTEN` appears without its own valid date and amount, it is a blocking `unclassifiable_table_line`.
 
 ### Negative and positive sign handling
 
@@ -217,6 +311,42 @@ Examples:
 - `pdf:p3:l18-l20`
 
 This locator is the only accepted `source_locator` syntax for this slice.
+
+## Commit Mapping
+
+This slice includes commit behavior for approved drafts.
+
+Each approved Beobank Mastercard draft row maps into `TransactionCreate` as follows:
+
+- `account_number = card_number_hint`
+- `transaction_date = draft.transaction_date`
+- `amount = draft.signed_amount`
+- `currency = draft.currency`
+- `description = draft.source_description`
+- `counterparty_name = null`
+- `counterparty_account = null`
+- `transaction_type = null` at input level so existing sign-based inference can derive default type
+- `expense_category = null`
+- `income_category = null`
+- `transfer_category = null`
+- `classification_source = null`
+- `source_bank = "Beobank"`
+
+The commit path must also persist traceability onto committed transactions:
+
+- `import_session_id`
+- `source_locator`
+- `source_description`
+- `canonical_description_en`
+
+Those traceability fields are required now for this slice. They are not deferred.
+
+Duplicate behavior remains aligned with the shared import design:
+
+- duplicate file detection uses `file_hash`
+- duplicate transaction detection uses `card_number_hint` as `statement_account_or_card_hint`
+
+If approval would commit a transaction already present by duplicate fingerprint, the commit must reject that row explicitly rather than silently creating a second copy.
 
 ## Recognition and Validation
 
@@ -289,6 +419,14 @@ This slice does not change the CSV import path.
 
 This slice does not bypass review.
 
+Concrete deliverables for this slice are:
+
+- `DETECTED -> EXTRACTED -> NORMALIZED -> VALIDATED -> AWAITING_REVIEW` orchestration for this PDF path
+- draft and issue persistence
+- review APIs and evidence read path
+- approve / reject / retry extraction APIs
+- approved draft commit into `transactions`
+
 ## Review Expectations
 
 This slice keeps the shared review UI contract.
@@ -344,6 +482,9 @@ Use sanitized fixtures derived from the format shape, not the user’s real stat
 - confirm extractor produces expected draft rows
 - confirm no page-1 summary rows appear in output
 - confirm malformed transaction-page input fails extraction and never reaches `awaiting_review`
+- confirm approved draft rows commit into `transactions` with required traceability fields
+- confirm deterministic rows persist `edit_source = deterministic_extracted`
+- confirm duplicate committed transaction is rejected by fingerprint
 
 ## Out of Scope Follow-Ups
 
@@ -365,4 +506,7 @@ This slice is complete when:
 - `WISSELKOSTEN` rows are preserved as separate rows
 - FX helper lines are ignored
 - extracted draft rows are available for review before commit, with issue summary and evidence panel still visible
+- approved draft rows can be committed into `transactions` through the import workflow
+- deterministic extraction provenance is preserved in draft rows
+- committed rows carry import traceability fields
 - scanned/password/incompatible PDFs fail explicitly instead of guessing

@@ -194,7 +194,11 @@ Artifacts are stored locally on disk and never committed to git.
 - confidence fields
 - `edit_source`
 
-`edit_source` allowed values are `ai_extracted` and `user_edited`.
+`edit_source` allowed values are:
+
+- `deterministic_extracted`
+- `ai_extracted`
+- `user_edited`
 
 #### `import_issues`
 
@@ -209,7 +213,7 @@ Artifacts are stored locally on disk and never committed to git.
 
 ### Committed transaction traceability
 
-Committed transactions should eventually carry:
+Any import slice that ships review -> commit for statements must persist these fields on committed transactions:
 
 - `import_session_id`
 - `source_locator`
