@@ -156,6 +156,48 @@ If the folder exceeds these guardrails, the route returns `400` before creating 
 
 Files are processed in stable filename order using case-insensitive sorting.
 
+## Concurrency And Crash Safety
+
+V1 must make the duplicate-skip promise true even under concurrent requests.
+
+### File-hash dedupe under concurrency
+
+`ImportSession.file_hash` must become database-unique in v1, not only indexed.
+
+Backend rule:
+
+- add a unique constraint on `import_sessions.file_hash`
+- continue to pre-check for an existing hash for the common fast path
+- treat the database constraint as the final source of truth
+
+If two `POST /imports/batch-folder` requests race on the same PDF:
+
+- at most one request may create the new `ImportSession`
+- the losing request must catch the uniqueness conflict
+- it must re-query the existing session by `file_hash`
+- it must persist the batch item as `skipped_existing`
+- it must not surface the conflict as a duplicate-creating success
+
+This keeps dedupe correct without adding a separate batch mutex.
+
+### Batch-run terminalization on uncaught error
+
+Every batch run must end in exactly one terminal state:
+
+- `completed`
+- `failed`
+
+Any uncaught processing error after the batch row exists must trigger top-level rescue logic:
+
+- mark the current batch item `failed` when enough context exists to identify it
+- preserve already-finished item rows exactly as they were
+- update counts to reflect finished work and the failed item when applicable
+- mark the batch run `failed`
+- set `completed_at`
+- persist a human-readable batch-level message
+
+No persisted batch may remain forever in `running` because the request crashed mid-run.
+
 ## High-Level Design
 
 ### Trigger
@@ -186,11 +228,12 @@ Add routes:
 7. creates import sessions only for new PDFs
 8. immediately runs PDF extraction exactly like the current single-file import route
 9. persists one batch-item row per discovered file
-10. marks the batch run complete and returns the full summary
+10. ends the batch in terminal state `completed` or `failed`
+11. returns the full summary
 
 `GET /imports/batches/{batch_id}` returns the persisted batch summary.
 
-`GET /imports/batches/latest` returns the most recent batch summary so the UI can recover after refresh or a dropped client request.
+`GET /imports/batches/latest` returns the most recent batch summary by `created_at DESC` for this backend instance so the UI can recover after refresh or a dropped client request.
 
 ## Persisted Batch Summary
 
@@ -231,6 +274,11 @@ Add lightweight persistence models:
 
 This batch persistence is intentionally lightweight. It is for operator recovery and truthful reporting, not for a long-running jobs system.
 
+Retention for v1:
+
+- no automatic cleanup
+- batch-run rows remain until a later maintenance feature defines pruning
+
 ## Duplicate-Skip Rule
 
 The duplicate rule is file-content based, not filename based.
@@ -241,6 +289,8 @@ For each supported PDF file:
 - query `ImportSession.file_hash`
 - if a row already exists with the same hash, do not create a new import session
 - instead emit a batch item with status `skipped_existing`
+- if no row exists, attempt session creation under the unique `file_hash` constraint
+- if uniqueness is lost to a concurrent request, re-query and emit `skipped_existing`
 
 The batch item must include:
 
@@ -262,6 +312,7 @@ For each new supported PDF file:
 - persist the original artifact
 - run detector
 - if strategy is `pdf_statement`, immediately run extraction via `ImportWorkflowService.extract_detected_session`
+- if strategy is not `pdf_statement`, do not attempt extraction; persist the item as terminal `failed` with a clear message that this PDF did not match the supported PDF-statement strategy
 - persist the batch item with the resulting session id and session status
 
 ### Skipped existing PDF files
@@ -272,6 +323,8 @@ Persist a batch item with:
 
 - `status = skipped_existing`
 - existing session linkage
+
+If the existing same-hash session is in `failed`, v1 still reports `skipped_existing`. The user should open the existing session and use the normal retry flow there instead of creating a second session for identical bytes.
 
 ### Unsupported files
 
@@ -294,6 +347,8 @@ Persist a batch item with:
 - `message`
 
 If some files fail and others succeed, the batch run still completes with accurate counts.
+
+Unexpected route-level failure after batch creation is different from an expected per-file failure: in that case the batch run itself ends as `failed`, with partial finished items preserved.
 
 ### Empty folder
 
@@ -332,6 +387,8 @@ Allowed item statuses for v1:
 
 For v1, `processed` means a new `ImportSession` was created and the route reached a stable per-file outcome. The final `session_status` may still be `awaiting_review` or `failed`, so callers must inspect `session_status` as well as the batch item status.
 
+For v1, a `.pdf` file that reaches detection but does not end up on `pdf_statement` must be reported as terminal `failed`, not silently ignored.
+
 ### `ImportBatchResponse`
 
 - `id: int`
@@ -346,6 +403,11 @@ For v1, `processed` means a new `ImportSession` was created and the route reache
 - `created_at: datetime`
 - `completed_at: datetime | None`
 - `items: list[ImportBatchItemResponse]`
+
+Run status semantics:
+
+- `completed` means the route finished scanning and item processing, even if some individual items are `failed`
+- `failed` means the batch itself terminated early because of an uncaught route-level processing error after the run was created
 
 ## Frontend UX
 
@@ -405,6 +467,8 @@ To recover from refresh or a dropped request, the frontend may also use:
 
 No `sessionStorage`-only recovery in v1.
 
+The UI should treat `latest` as an operator convenience entry point, not as a replacement for explicit batch ids.
+
 ## Error Handling
 
 Frontend button errors:
@@ -418,6 +482,8 @@ These should appear inline in the upload dialog or page area as short operationa
 
 Per-file failures must never collapse the whole batch unless the route itself cannot preflight or scan the folder at all.
 
+If the route fails after creating the batch run, the response may still be `500`, but persisted recovery data must show the batch in terminal state `failed` with partial finished items preserved.
+
 ## Testing
 
 ### Backend
@@ -427,10 +493,13 @@ Add tests for:
 - folder scan with mixed PDF, CSV, and unsupported files
 - PDF files are processed and CSV files are reported as unsupported
 - file-hash skipping when an existing import session already has the same PDF content
+- uniqueness-conflict path maps concurrent duplicate creation to `skipped_existing`
 - successful processing creates sessions only for new PDFs
 - PDF files still run extraction immediately
+- non-`pdf_statement` PDF detection path becomes terminal item `failed`
 - unsupported files are reported but do not fail batch
 - batch run and batch items are persisted
+- uncaught mid-run exception marks the batch run `failed` with `completed_at`
 - latest-batch route returns the most recent run
 - missing folder returns `400`
 - too many files returns `400`
@@ -460,3 +529,5 @@ Add tests for:
 8. Unsupported or failed files do not block other files in the same batch.
 9. No file in the configured folder is deleted, renamed, or moved by this feature.
 10. Backend runtime resolves the folder through `MYFINANCE_BATCH_IMPORT_DIR`, not by guessing repo-root paths.
+11. Concurrent batch requests do not create duplicate `ImportSession` rows for the same PDF bytes.
+12. Every persisted batch run ends in terminal state `completed` or `failed`, never stuck indefinitely in `running`.
