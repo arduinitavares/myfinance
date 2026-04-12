@@ -5,7 +5,7 @@ Status: Draft
 
 ## Goal
 
-Add an app button that immediately processes every supported statement file inside the configured `bank_files` folder, reusing the existing import-session review flow, while skipping files that were already processed before.
+Add an app button that immediately processes every supported statement file inside the configured `bank_files` folder, reusing the existing import-session review flow and safely reusing or replacing same-hash sessions when needed.
 
 This is a local-operator workflow. The folder already exists on the same machine as the app. The user does not want to pick files one by one and does not want a terminal command for v1.
 
@@ -16,7 +16,7 @@ From the app, the user clicks one button and the system:
 1. scans the configured `bank_files` folder
 2. lists direct child files in stable filename order
 3. reports unsupported files in the batch result
-4. skips PDF files already known by file hash
+4. reuses usable existing PDF sessions already known by file hash
 5. creates import sessions only for new supported PDF files
 6. runs the existing detect/extract workflow for each new PDF
 7. shows a persisted batch results screen with one row per file and links into normal per-session review
@@ -29,7 +29,7 @@ In scope:
 
 - app button to trigger folder import
 - backend route to scan and process the configured folder
-- file-hash based skipping of already known PDF import sessions
+- duplicate-safe reuse or replacement of already known PDF import sessions
 - duplicate-safe behavior for the existing single-file PDF upload route
 - migration/backfill rule needed to make `ImportSession.file_hash` unique safely
 - lightweight persisted batch-run summary
@@ -112,7 +112,7 @@ Cons:
 
 Use Approach A for v1.
 
-It is the smallest design that stays true to the existing codebase and preserves the user promise that previously processed files are skipped safely. CSV batch import should come later, after CSV ingestion is moved onto import sessions or intentionally designed as a separate lane.
+It is the smallest design that stays true to the existing codebase and preserves safe duplicate handling for previously seen files. CSV batch import should come later, after CSV ingestion is moved onto import sessions or intentionally designed as a separate lane.
 
 ## Runtime Folder Contract
 
@@ -179,7 +179,9 @@ If two `POST /imports/batch-folder` requests race on the same PDF:
 - at most one request may create the new `ImportSession`
 - the losing request must catch the uniqueness conflict
 - it must re-query the existing session by `file_hash`
-- it must persist the batch item as `skipped_existing`
+- it must apply canonical-session precedence to the re-queried owner
+- it must persist the batch item as `skipped_existing` only when that owner is usable
+- it may create a replacement session instead when the owner is non-retryable
 - it must not surface the conflict as a duplicate-creating success
 
 This keeps dedupe correct without adding a separate batch mutex.
@@ -193,7 +195,9 @@ New rule for duplicate single-file PDF upload:
 - if upload bytes hash to an existing `ImportSession.file_hash`, the route must not return `500`
 - it must catch the uniqueness conflict or fast-path duplicate lookup
 - it must re-query the existing session by `file_hash`
-- it must return `409 Conflict` with a structured duplicate payload
+- it must apply canonical-session precedence to the returned owner
+- it must return `409 Conflict` with a structured duplicate payload only when that owner is usable
+- it may create a replacement session instead when the owner is non-retryable
 
 Duplicate response payload:
 
@@ -205,9 +209,50 @@ User-facing meaning:
 
 - the file was already uploaded before
 - no new session was created
-- the frontend should offer an `Open Existing` action that routes to the existing review/session page
+- the frontend should offer an `Open Existing` action that routes to the existing review/session page when the existing session is usable
 
 This replaces the current accidental behavior where duplicate PDF bytes can create a second session and fail only later at approval.
+
+### Canonical session precedence
+
+Hash ownership must point to the most useful session, not simply the oldest session.
+
+Canonical-session precedence for identical PDF bytes:
+
+1. `COMMITTED` or `PARTIALLY_COMMITTED`
+2. `AWAITING_REVIEW`
+3. retryable `FAILED`
+4. all other sessions
+
+Break ties within a precedence tier by oldest `created_at`.
+
+Define a retryable failed session as all of:
+
+- `status = FAILED`
+- `strategy_key = pdf_statement`
+- original uploaded file still exists in the session artifact directory at `original/<file_name>`
+
+A failed session that does not satisfy all three rules is non-retryable.
+
+### Non-retryable escape hatch
+
+If the current exact-hash owner is non-retryable, the backend must not poison that file hash forever.
+
+Instead, the backend may create a replacement session:
+
+1. rewrite the broken owner's `file_hash` to a legacy non-colliding surrogate
+2. set its status to `SUPERSEDED` when the state model allows that transition; otherwise preserve the status and relinquish ownership only through the rewritten `file_hash`
+3. create a fresh session that takes ownership of the real SHA-256 hash
+
+This rule applies to both:
+
+- duplicate single-file `/imports/upload`
+- batch-folder processing
+
+The result is:
+
+- usable existing owner -> return or skip to the existing session
+- non-retryable existing owner -> create a replacement session instead of hard-blocking forever
 
 ### Existing-data migration rule
 
@@ -215,10 +260,10 @@ Before adding the unique constraint, the migration must handle any pre-existing 
 
 Migration rule for duplicate groups:
 
-- keep the oldest session by `created_at` as the canonical session for that hash
+- select the canonical session using canonical-session precedence
 - preserve all duplicate session rows for audit/history
 - rewrite the non-canonical duplicate rows to a legacy non-colliding `file_hash` form such as `<original_hash>#legacy-duplicate#<session_id>`
-- set those non-canonical rows to `SUPERSEDED` when they are not already in a terminal committed state; if a row is already `COMMITTED` or `PARTIALLY_COMMITTED`, preserve its status and rewrite only the stored `file_hash`
+- set non-canonical rows to `SUPERSEDED` when the state model allows that transition; if a row is already `COMMITTED` or `PARTIALLY_COMMITTED`, preserve its status and rewrite only the stored `file_hash`
 
 This migration rule exists only to unblock the uniqueness constraint safely. Going forward, real SHA-256 file hashes remain unique across new uploads.
 
@@ -266,8 +311,8 @@ Add routes:
 3. creates a persisted batch-run row
 4. scans direct child files in stable order
 5. computes SHA-256 hash for supported PDFs
-6. skips PDFs whose hash already exists in `import_sessions.file_hash`
-7. creates import sessions only for new PDFs
+6. reuses usable existing same-hash PDF sessions and replaces non-retryable owners when necessary
+7. creates import sessions only for new PDFs or approved replacement cases
 8. immediately runs PDF extraction exactly like the current single-file import route
 9. persists one batch-item row per discovered file
 10. ends the batch in terminal state `completed` or `failed`
@@ -280,6 +325,7 @@ Add routes:
 Related shared route change:
 
 - `POST /imports/upload` now returns either normal `ImportSessionResponse` for a new upload or `409` duplicate payload for an already-known file hash
+- if the exact-hash owner is non-retryable, `POST /imports/upload` may create a replacement session instead of returning `409`
 
 ## Persisted Batch Summary
 
@@ -333,10 +379,10 @@ For each supported PDF file:
 
 - compute SHA-256 from file bytes
 - query `ImportSession.file_hash`
-- if a row already exists with the same hash, do not create a new import session
+- if a usable owner already exists with the same hash, do not create a new import session
 - instead emit a batch item with status `skipped_existing`
 - if no row exists, attempt session creation under the unique `file_hash` constraint
-- if uniqueness is lost to a concurrent request, re-query and emit `skipped_existing`
+- if uniqueness is lost to a concurrent request, re-query using canonical-session precedence and either emit `skipped_existing` or create a replacement session when the owner is non-retryable
 
 The batch item must include:
 
@@ -372,7 +418,11 @@ Persist a batch item with:
 - `status = skipped_existing`
 - existing session linkage
 
-If the existing same-hash session is in `failed`, v1 still reports `skipped_existing`. The user should open the existing session and use the normal retry flow there instead of creating a second session for identical bytes.
+Report `skipped_existing` only when the exact-hash owner is usable under canonical-session precedence.
+
+If the exact-hash owner is retryable `FAILED`, the user can open the existing session and use the normal retry flow there.
+
+If the exact-hash owner is non-retryable, do not report `skipped_existing`; create a replacement session instead.
 
 ### Unsupported files
 
@@ -467,6 +517,8 @@ Run status semantics:
   - `file_hash: str`
   - `existing_session: ImportSessionResponse`
 
+Return this `409` shape only when the exact-hash owner is usable. If the exact-hash owner is non-retryable, the route should create and return a fresh replacement session instead.
+
 ## Frontend UX
 
 ### Entry point
@@ -551,8 +603,10 @@ Add tests for:
 - folder scan with mixed PDF, CSV, and unsupported files
 - PDF files are processed and CSV files are reported as unsupported
 - file-hash skipping when an existing import session already has the same PDF content
-- uniqueness-conflict path maps concurrent duplicate creation to `skipped_existing`
-- duplicate single-file `/imports/upload` returns `409` with existing session payload, not `500`
+- uniqueness-conflict path resolves to `skipped_existing` or replacement session according to owner usability
+- canonical-session selection prefers useful owner over oldest owner
+- non-retryable same-hash owner is superseded and replaced by a fresh session
+- duplicate single-file `/imports/upload` returns `409` with existing session payload for usable owners, not `500`
 - successful processing creates sessions only for new PDFs
 - PDF files still run extraction immediately
 - non-`pdf_statement` PDF detection path becomes terminal item `failed`
@@ -562,7 +616,7 @@ Add tests for:
 - latest-batch route returns the most recent run
 - missing folder returns `400`
 - too many files returns `400`
-- migration test covers pre-existing duplicate `file_hash` rows before uniqueness is applied
+- migration test covers pre-existing duplicate `file_hash` rows before uniqueness is applied, using canonical-session precedence instead of oldest-wins
 
 ### Frontend
 
@@ -580,7 +634,7 @@ Add tests for:
 ## Acceptance Criteria
 
 1. Clicking `Import bank_files` processes all supported PDF files directly inside the configured folder.
-2. PDF files already seen before, identified by file hash in `ImportSession`, are skipped without creating duplicate sessions.
+2. PDF files already seen before, identified by file hash in `ImportSession`, either reuse a usable existing session or replace a non-retryable owner without creating duplicate live hash ownership.
 3. New PDF files create normal import sessions and reuse the existing per-file review flow.
 4. PDF statements still run extraction immediately, exactly like single-file upload.
 5. CSV files inside the folder are surfaced clearly as unsupported in v1 and are not imported silently.
@@ -591,4 +645,5 @@ Add tests for:
 10. Backend runtime resolves the folder through `MYFINANCE_BATCH_IMPORT_DIR`, not by guessing repo-root paths.
 11. Concurrent batch requests do not create duplicate `ImportSession` rows for the same PDF bytes.
 12. Every persisted batch run ends in terminal state `completed` or `failed`, never stuck indefinitely in `running`.
-13. Duplicate single-file PDF upload returns structured `409` duplicate information instead of creating a second session or returning `500`.
+13. Duplicate single-file PDF upload returns structured `409` duplicate information for usable owners instead of creating a second session or returning `500`.
+14. A non-retryable same-hash session does not poison future uploads; the backend can supersede it and create a replacement session.
