@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from datetime import date
 
 from app.models.transaction import ExpenseCategory, IncomeCategory, TransactionType, TransferCategory
 from app.schemas.transaction import TransactionRestore
@@ -29,7 +30,10 @@ def _restore_transaction(client, *, description: str):
     return response.json()
 
 
-@pytest.mark.xfail(reason="Task 2 finishes the transfer commit/update path; this API check still depends on out-of-scope startup plumbing.")
+@pytest.mark.xfail(
+    strict=True,
+    reason="Task 2 finishes the transfer commit/update path; this API check still depends on out-of-scope startup plumbing.",
+)
 def test_manual_transfer_update_uses_transfer_category_and_clears_legacy_categories():
     from app.main import app
 
@@ -53,28 +57,32 @@ def test_manual_transfer_update_uses_transfer_category_and_clears_legacy_categor
     assert payload["income_category"] is None
 
 
-def test_transfer_schema_infers_transfer_type_from_transfer_category():
-    transaction = TransactionRestore(
-        account_number="BE55000000000001",
-        transaction_date="2025-01-15",
-        amount=-240.00,
-        currency="EUR",
-        description="Belfius card settlement",
-        counterparty_name="Counterparty",
-        counterparty_account="BE99000000000002",
-        transfer_category=TransferCategory.CREDIT_CARD_SETTLEMENT.value,
-        expense_category=ExpenseCategory.INTERNAL_TRANSFER.value,
-        income_category=IncomeCategory.INTERNAL_TRANSFER.value,
-        source_bank="ing",
-    )
+def test_transfer_schema_normalizes_legacy_transfer_rows_from_orm():
+    class LegacyTransferRow:
+        account_number = "BE55000000000001"
+        transaction_date = date(2025, 1, 15)
+        amount = -240.00
+        currency = "EUR"
+        description = "Belfius card settlement"
+        counterparty_name = "Counterparty"
+        counterparty_account = "BE99000000000002"
+        transaction_type = TransactionType.TRANSFER
+        expense_category = ExpenseCategory.INTERNAL_TRANSFER
+        income_category = IncomeCategory.INTERNAL_TRANSFER
+        transfer_category = None
+        classification_source = None
+        recurrence_pattern_id = None
+        source_bank = "ing"
+
+    transaction = TransactionRestore.model_validate(LegacyTransferRow(), from_attributes=True)
 
     assert transaction.transaction_type == TransactionType.TRANSFER
-    assert transaction.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
+    assert transaction.transfer_category == TransferCategory.INTERNAL_TRANSFER
     assert transaction.expense_category is None
     assert transaction.income_category is None
 
     payload = transaction.model_dump(mode="json")
     assert payload["transaction_type"] == TransactionType.TRANSFER.value
-    assert payload["transfer_category"] == TransferCategory.CREDIT_CARD_SETTLEMENT.value
+    assert payload["transfer_category"] == TransferCategory.INTERNAL_TRANSFER.value
     assert payload["expense_category"] is None
     assert payload["income_category"] is None
