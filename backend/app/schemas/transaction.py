@@ -1,8 +1,8 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, root_validator, validator
 from datetime import date
 from typing import Optional, Literal
 from enum import Enum
-from ..models.transaction import ExpenseCategory, IncomeCategory, TransactionType
+from ..models.transaction import ExpenseCategory, IncomeCategory, TransactionType, TransferCategory
 
 class TransactionBase(BaseModel):
     account_number: str
@@ -15,50 +15,54 @@ class TransactionBase(BaseModel):
     transaction_type: Optional[TransactionType] = None
     expense_category: Optional[ExpenseCategory] = None
     income_category: Optional[IncomeCategory] = None
+    transfer_category: Optional[TransferCategory] = None
     classification_source: Optional[str] = None
     recurrence_pattern_id: Optional[int] = None
     source_bank: str
 
-    @validator('transaction_type', pre=True, always=True)
-    def set_transaction_type(cls, v, values):
-        if v is not None:
-            return v
-        if 'amount' in values:
-            return TransactionType.EXPENSE if values['amount'] < 0 else TransactionType.INCOME
-        return None
+    @root_validator(pre=True)
+    def set_transaction_type(cls, values):
+        if values.get("transaction_type") is not None:
+            return values
 
-    @validator('expense_category', 'income_category')
-    def validate_categories(cls, v, values):
-        if 'transaction_type' in values:
-            if values['transaction_type'] == TransactionType.EXPENSE and isinstance(v, ExpenseCategory):
-                return v
-            if values['transaction_type'] == TransactionType.INCOME and isinstance(v, IncomeCategory):
-                return v
-            if values['transaction_type'] == TransactionType.TRANSFER:
-                if isinstance(v, ExpenseCategory) and v == ExpenseCategory.INTERNAL_TRANSFER:
-                    return v
-                if isinstance(v, IncomeCategory) and v == IncomeCategory.INTERNAL_TRANSFER:
-                    return v
-            return None
-        return v
+        if values.get("transfer_category") is not None:
+            values["transaction_type"] = TransactionType.TRANSFER
+            return values
 
-class TransactionCreate(TransactionBase):
-    @validator('expense_category', 'income_category', pre=True)
-    def validate_categories(cls, v, values):
+        amount = values.get("amount")
+        if amount is not None:
+            values["transaction_type"] = (
+                TransactionType.EXPENSE if float(amount) < 0 else TransactionType.INCOME
+            )
+        return values
+
+    @validator('expense_category', pre=True)
+    def validate_expense_category(cls, v, values):
         if not v:
             return None
-            
-        if 'transaction_type' in values:
-            if values['transaction_type'] == TransactionType.EXPENSE:
-                return ExpenseCategory(v) if isinstance(v, (str, ExpenseCategory)) else None
-            if values['transaction_type'] == TransactionType.INCOME:
-                return IncomeCategory(v) if isinstance(v, (str, IncomeCategory)) else None
-            if values['transaction_type'] == TransactionType.TRANSFER:
-                if isinstance(v, (str, ExpenseCategory)) and ExpenseCategory(v) == ExpenseCategory.INTERNAL_TRANSFER:
-                    return ExpenseCategory.INTERNAL_TRANSFER
-                if isinstance(v, (str, IncomeCategory)) and IncomeCategory(v) == IncomeCategory.INTERNAL_TRANSFER:
-                    return IncomeCategory.INTERNAL_TRANSFER
+        if values.get('transaction_type') == TransactionType.EXPENSE:
+            return ExpenseCategory(v)
         return None
+
+    @validator('income_category', pre=True)
+    def validate_income_category(cls, v, values):
+        if not v:
+            return None
+        if values.get('transaction_type') == TransactionType.INCOME:
+            return IncomeCategory(v)
+        return None
+
+    @validator('transfer_category', pre=True)
+    def validate_transfer_category(cls, v, values):
+        if not v:
+            return None
+        if values.get('transaction_type') == TransactionType.TRANSFER:
+            return TransferCategory(v)
+        return None
+
+
+class TransactionCreate(TransactionBase):
+    pass
 
 class Transaction(TransactionBase):
     id: int
