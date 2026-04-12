@@ -4,6 +4,7 @@ import { MainLayout } from './layouts/MainLayout';
 import { TransactionList } from './components/TransactionList';
 import { TransactionFilters } from './components/TransactionFilters';
 import { FinancialOverview } from './components/dashboard/FinancialOverview';
+import { TransferSummary } from './components/dashboard/TransferSummary';
 import { FinancialTrends } from './components/dashboard/FinancialTrends';
 import { CategoryBreakdown } from './components/dashboard/CategoryBreakdown';
 import { CategoryTrends } from './components/dashboard/CategoryTrends';
@@ -28,6 +29,7 @@ const AnalyticsDashboard = () => {
   return (
     <div className="space-y-6 mt-4">
       <FinancialOverview />
+      <TransferSummary />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <CategoryBreakdown />
         <div className="space-y-6">

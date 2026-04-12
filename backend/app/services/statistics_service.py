@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from datetime import date
 import calendar
 from ..models.statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
-from ..models.transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory
+from ..models.transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory
 from sqlalchemy import func, extract, and_, or_, text
 import logging
 
@@ -58,7 +58,7 @@ class StatisticsService:
             if trans.transaction_type == TransactionType.INCOME:
                 period_stats['period_income'] += trans.amount
                 period_stats['income_count'] += 1
-            else:
+            elif trans.transaction_type == TransactionType.EXPENSE:
                 period_stats['period_expenses'] += abs(trans.amount)
                 period_stats['expense_count'] += 1
         
@@ -72,7 +72,7 @@ class StatisticsService:
         for trans in cumulative_transactions:
             if trans.transaction_type == TransactionType.INCOME:
                 cumulative_stats['total_income'] += trans.amount
-            else:
+            elif trans.transaction_type == TransactionType.EXPENSE:
                 cumulative_stats['total_expenses'] += abs(trans.amount)
         
         # New: Calculate yearly stats
@@ -85,7 +85,7 @@ class StatisticsService:
         for trans in yearly_transactions:
             if trans.transaction_type == TransactionType.INCOME:
                 yearly_stats['yearly_income'] += trans.amount
-            else:
+            elif trans.transaction_type == TransactionType.EXPENSE:
                 yearly_stats['yearly_expenses'] += abs(trans.amount)
         
         # Calculate derived statistics
@@ -157,11 +157,13 @@ class StatisticsService:
         for cat in ExpenseCategory:
             # Period-specific stats
             period_amount = db.query(func.sum(func.abs(Transaction.amount))).filter(
+                Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.expense_category == cat,
                 *period_filters
             ).scalar() or 0
             
             period_count = db.query(func.count(Transaction.id)).filter(
+                Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.expense_category == cat,
                 *period_filters
             ).scalar() or 0
@@ -185,11 +187,13 @@ class StatisticsService:
             
             # Cumulative stats
             total_amount = db.query(func.sum(func.abs(Transaction.amount))).filter(
+                Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.expense_category == cat,
                 *cumulative_filters
             ).scalar() or 0
             
             total_count = db.query(func.count(Transaction.id)).filter(
+                Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.expense_category == cat,
                 *cumulative_filters
             ).scalar() or 0
@@ -208,11 +212,13 @@ class StatisticsService:
             
             # Yearly stats
             yearly_amount = db.query(func.sum(func.abs(Transaction.amount))).filter(
+                Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.expense_category == cat,
                 *yearly_filters
             ).scalar() or 0
             
             yearly_count = db.query(func.count(Transaction.id)).filter(
+                Transaction.transaction_type == TransactionType.EXPENSE,
                 Transaction.expense_category == cat,
                 *yearly_filters
             ).scalar() or 0
@@ -239,11 +245,13 @@ class StatisticsService:
         for cat in IncomeCategory:
             # Period-specific stats
             period_amount = db.query(func.sum(Transaction.amount)).filter(
+                Transaction.transaction_type == TransactionType.INCOME,
                 Transaction.income_category == cat,
                 *period_filters
             ).scalar() or 0
             
             period_count = db.query(func.count(Transaction.id)).filter(
+                Transaction.transaction_type == TransactionType.INCOME,
                 Transaction.income_category == cat,
                 *period_filters
             ).scalar() or 0
@@ -267,11 +275,13 @@ class StatisticsService:
                     
             # Cumulative stats
             total_amount = db.query(func.sum(Transaction.amount)).filter(
+                Transaction.transaction_type == TransactionType.INCOME,
                 Transaction.income_category == cat,
                 *cumulative_filters
             ).scalar() or 0
             
             total_count = db.query(func.count(Transaction.id)).filter(
+                Transaction.transaction_type == TransactionType.INCOME,
                 Transaction.income_category == cat,
                 *cumulative_filters
             ).scalar() or 0
@@ -290,11 +300,13 @@ class StatisticsService:
             
             # Yearly stats
             yearly_amount = db.query(func.sum(Transaction.amount)).filter(
+                Transaction.transaction_type == TransactionType.INCOME,
                 Transaction.income_category == cat,
                 *yearly_filters
             ).scalar() or 0
             
             yearly_count = db.query(func.count(Transaction.id)).filter(
+                Transaction.transaction_type == TransactionType.INCOME,
                 Transaction.income_category == cat,
                 *yearly_filters
             ).scalar() or 0
@@ -316,6 +328,42 @@ class StatisticsService:
             })
         
         return expense_categories + income_categories
+
+    @staticmethod
+    def calculate_transfer_summary(db: Session, start: date, end: date):
+        """
+        Summarize transfer transactions by transfer category.
+        """
+        transfers = db.query(Transaction.transfer_category, Transaction.amount).filter(
+            Transaction.transaction_type == TransactionType.TRANSFER,
+            Transaction.currency == "EUR",
+            Transaction.transaction_date >= start,
+            Transaction.transaction_date <= end,
+        ).all()
+
+        summary = {}
+        for transfer_category, amount in transfers:
+            category_name = (
+                transfer_category.value
+                if transfer_category is not None
+                else TransferCategory.INTERNAL_TRANSFER.value
+            )
+
+            if category_name not in summary:
+                summary[category_name] = {
+                    "subtype": category_name,
+                    "total_incoming_eur": 0.0,
+                    "total_outgoing_eur": 0.0,
+                    "transaction_count": 0,
+                }
+
+            summary[category_name]["transaction_count"] += 1
+            if amount < 0:
+                summary[category_name]["total_outgoing_eur"] += abs(amount)
+            else:
+                summary[category_name]["total_incoming_eur"] += amount
+
+        return sorted(summary.values(), key=lambda item: item["subtype"])
 
     @staticmethod
     def update_statistics(db: Session, transaction_date: date):

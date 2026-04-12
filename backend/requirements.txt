@@ -11,3 +11,4 @@ black
 pytest==8.3.5
 PyYAML==6.0.2
 httpx<0.28
+openai>=2.0.0

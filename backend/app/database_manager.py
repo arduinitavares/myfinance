@@ -24,6 +24,8 @@ def _ensure_classification_transaction_columns() -> None:
 
     transaction_columns = {column["name"] for column in inspector.get_columns("transactions")}
     with engine.begin() as conn:
+        if "transfer_category" not in transaction_columns:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN transfer_category VARCHAR(50)"))
         if "classification_source" not in transaction_columns:
             conn.execute(text("ALTER TABLE transactions ADD COLUMN classification_source VARCHAR(50)"))
         if "recurrence_pattern_id" not in transaction_columns:
@@ -125,47 +127,50 @@ def init_database():
         logger.info("All required database tables already exist")
 
 
-def _set_sqlite_foreign_keys(enabled: bool) -> None:
-    raw_connection = engine.raw_connection()
-    try:
-        cursor = raw_connection.cursor()
+def _recreate_tables(*, tables=None) -> None:
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
         try:
-            cursor.execute(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}")
+            Base.metadata.drop_all(bind=connection, tables=tables)
+            Base.metadata.create_all(bind=connection, tables=tables)
+            connection.commit()
         finally:
-            cursor.close()
-        raw_connection.commit()
-    finally:
-        raw_connection.close()
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
 
 def reset_database(reset_type: str = "all"):
     """Drop all tables and recreate them"""
     logger.info("Resetting database...")
     try:
         if reset_type == "all":
-            _set_sqlite_foreign_keys(False)
-            try:
-                Base.metadata.drop_all(bind=engine)
-                Base.metadata.create_all(bind=engine)
-            finally:
-                _set_sqlite_foreign_keys(True)
+            _recreate_tables()
         elif reset_type == "transactions":
-            Base.metadata.drop_all(bind=engine, tables=[Transaction.__table__])
-            Base.metadata.create_all(bind=engine, tables=[Transaction.__table__])
+            _recreate_tables(tables=[Transaction.__table__])
         elif reset_type == "statistics":
-            Base.metadata.drop_all(bind=engine, tables=[FinancialStatistics.__table__, CategoryStatistics.__table__])
-            Base.metadata.create_all(bind=engine, tables=[FinancialStatistics.__table__, CategoryStatistics.__table__])
+            _recreate_tables(tables=[FinancialStatistics.__table__, CategoryStatistics.__table__])
         elif reset_type == "financial_health":
-            Base.metadata.drop_all(bind=engine, tables=[FinancialHealth.__table__, FinancialRecommendation.__table__])
-            Base.metadata.create_all(bind=engine, tables=[FinancialHealth.__table__, FinancialRecommendation.__table__])
+            _recreate_tables(tables=[FinancialHealth.__table__, FinancialRecommendation.__table__])
         elif reset_type == "projections":
-            Base.metadata.drop_all(bind=engine, tables=[ProjectionScenario.__table__, ProjectionParameter.__table__, ProjectionResult.__table__])
-            Base.metadata.create_all(bind=engine, tables=[ProjectionScenario.__table__, ProjectionParameter.__table__, ProjectionResult.__table__])
+            _recreate_tables(
+                tables=[
+                    ProjectionScenario.__table__,
+                    ProjectionParameter.__table__,
+                    ProjectionResult.__table__,
+                ]
+            )
         elif reset_type == "anomalies":
-            Base.metadata.drop_all(bind=engine, tables=[TransactionAnomaly.__table__, AnomalyPattern.__table__, AnomalyRule.__table__])
-            Base.metadata.create_all(bind=engine, tables=[TransactionAnomaly.__table__, AnomalyPattern.__table__, AnomalyRule.__table__])
+            _recreate_tables(
+                tables=[TransactionAnomaly.__table__, AnomalyPattern.__table__, AnomalyRule.__table__]
+            )
         elif reset_type == "imports":
-            Base.metadata.drop_all(bind=engine, tables=[ImportIssue.__table__, ImportTransactionDraft.__table__, ImportStatementDraft.__table__, ImportSession.__table__])
-            Base.metadata.create_all(bind=engine, tables=[ImportSession.__table__, ImportStatementDraft.__table__, ImportTransactionDraft.__table__, ImportIssue.__table__])
+            _recreate_tables(
+                tables=[
+                    ImportIssue.__table__,
+                    ImportTransactionDraft.__table__,
+                    ImportStatementDraft.__table__,
+                    ImportSession.__table__,
+                ]
+            )
         elif reset_type == "classification":
             with Session(engine) as db:
                 db.query(Transaction).update(
@@ -176,22 +181,14 @@ def reset_database(reset_type: str = "all"):
                     synchronize_session=False,
                 )
                 db.commit()
-            Base.metadata.drop_all(
-                bind=engine,
+            _recreate_tables(
                 tables=[
                     ClassificationTurn.__table__,
                     ClassificationSession.__table__,
                     RecurrencePattern.__table__,
                 ],
             )
-            Base.metadata.create_all(
-                bind=engine,
-                tables=[
-                    ClassificationSession.__table__,
-                    ClassificationTurn.__table__,
-                    RecurrencePattern.__table__,
-                ],
-            )
+        engine.dispose()
         logger.info("Database reset successfully!")
     except Exception as e:
         logger.error(f"Error resetting database: {str(e)}")

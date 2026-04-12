@@ -4,6 +4,15 @@ export enum TransactionType {
   TRANSFER = "Transfer"
 }
 
+export enum TransferCategory {
+  INTERNAL_TRANSFER = "Internal Transfer",
+  CREDIT_CARD_SETTLEMENT = "Credit Card Settlement",
+  LOAN_TO_PERSON = "Loan to Person",
+  LOAN_REPAYMENT_RECEIVED = "Loan Repayment Received",
+  LOAN_FROM_PERSON = "Loan from Person",
+  DEBT_REPAYMENT_SENT = "Debt Repayment Sent"
+}
+
 export enum ExpenseType {
   FIXED_ESSENTIAL = "Fixed Essential",
   GUILT_FREE_DISCRETIONARY = "Discretionary",
@@ -72,6 +81,7 @@ export interface Transaction {
   transaction_type: TransactionType;
   expense_category?: ExpenseCategory;
   income_category?: IncomeCategory;
+  transfer_category?: TransferCategory;
   classification_source?:
     | 'manual'
     | 'assistant'
@@ -146,8 +156,8 @@ export interface DeleteTransactionAction {
 export interface UpdateCategoryAction {
   type: ActionType.UPDATE_CATEGORY;
   transactionId: number;
-  oldCategory: ExpenseCategory | IncomeCategory | undefined;
-  newCategory: ExpenseCategory | IncomeCategory;
+  oldCategory: ExpenseCategory | IncomeCategory | TransferCategory | undefined;
+  newCategory: ExpenseCategory | IncomeCategory | TransferCategory;
   transactionType: TransactionType;
 }
 

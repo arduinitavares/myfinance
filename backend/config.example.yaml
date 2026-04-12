@@ -79,9 +79,35 @@ duplicate_detection:
       requires_confirmation: false
 
 classification_assistant:
-  order: [stub]
+  order: [openai, openrouter, stub]
   fallback_on: []
   providers:
+    openai:
+      enabled: false
+      kind: openai
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+      timeout_seconds: 30
+      max_retries: 2
+      supports_pdf: false
+      supports_images: false
+      supports_json_schema: true
+      cost_tier: metered
+      requires_confirmation: true
+    openrouter:
+      enabled: false
+      kind: openai_compatible
+      model: openai/gpt-4.1-mini
+      base_url: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+      timeout_seconds: 30
+      max_retries: 2
+      supports_pdf: false
+      supports_images: false
+      supports_json_schema: true
+      cost_tier: metered
+      requires_confirmation: true
     stub:
       enabled: true
       kind: stub

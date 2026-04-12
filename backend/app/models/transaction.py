@@ -117,6 +117,14 @@ class IncomeCategory(enum.Enum):
     INTERNAL_TRANSFER = "Internal Transfer" # Incoming money from another own account
     OTHER = "Other Income"
 
+class TransferCategory(enum.Enum):
+    INTERNAL_TRANSFER = "Internal Transfer"
+    CREDIT_CARD_SETTLEMENT = "Credit Card Settlement"
+    LOAN_TO_PERSON = "Loan to Person"
+    LOAN_REPAYMENT_RECEIVED = "Loan Repayment Received"
+    LOAN_FROM_PERSON = "Loan from Person"
+    DEBT_REPAYMENT_SENT = "Debt Repayment Sent"
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -133,6 +141,7 @@ class Transaction(Base):
     transaction_type = Column(Enum(TransactionType))
     expense_category = Column(Enum(ExpenseCategory), nullable=True)
     income_category = Column(Enum(IncomeCategory), nullable=True)
+    transfer_category = Column(Enum(TransferCategory), nullable=True)
     classification_source = Column(String(50), nullable=True)
     recurrence_pattern_id = Column(
         Integer,
@@ -147,10 +156,15 @@ class Transaction(Base):
     
     source_bank = Column(String(10))
 
-    classification_sessions = relationship("ClassificationSession", back_populates="transaction")
+    classification_sessions = relationship(
+        "ClassificationSession",
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+    )
     recurrence_pattern = relationship("RecurrencePattern", foreign_keys=[recurrence_pattern_id], post_update=True)
     seeded_recurrence_patterns = relationship(
         "RecurrencePattern",
         foreign_keys="RecurrencePattern.seed_transaction_id",
         back_populates="seed_transaction",
+        cascade="all, delete-orphan",
     )

@@ -1,20 +1,102 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { TransactionList } from './TransactionList';
-import { ExpenseCategory, TransactionType } from '../types/transaction';
+import { ExpenseCategory, TransactionType, TransferCategory } from '../types/transaction';
 
 jest.mock('./transactions/ClassificationAssistantModal', () => ({
   ClassificationAssistantModal: ({
     open,
     transaction,
+    onSaved,
+    getNextTransaction,
   }: {
     open: boolean;
-    transaction: { description: string } | null;
-  }) => (open ? <div data-testid="assistant-modal">{transaction?.description}</div> : null),
+    transaction: { id: number; description: string } | null;
+    onSaved: (nextTransaction: { id: number; description: string } | null) => Promise<void>;
+    getNextTransaction: (currentId: number) => { id: number; description: string } | null;
+  }) =>
+    open ? (
+      <div data-testid="assistant-modal">
+        <div>{transaction?.description}</div>
+        <button
+          type="button"
+          onClick={() => {
+            void onSaved(transaction ? getNextTransaction(transaction.id) : null);
+          }}
+        >
+          Save Next
+        </button>
+      </div>
+    ) : null,
 }));
 
+jest.mock('@radix-ui/react-select', () => {
+  const React = require('react') as typeof import('react');
+
+  const SelectContext = React.createContext<{
+    value: string;
+    onValueChange: (value: string) => void;
+  } | null>(null);
+
+  const Root = ({ value, onValueChange, children }: {
+    value: string;
+    onValueChange: (value: string) => void;
+    children: React.ReactNode;
+  }) => (
+    <SelectContext.Provider value={{ value, onValueChange }}>
+      <div>{children}</div>
+    </SelectContext.Provider>
+  );
+
+  const Trigger = ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  );
+
+  const Value = ({ placeholder }: { placeholder?: string }) => {
+    const context = React.useContext(SelectContext);
+    return <span>{context?.value || placeholder}</span>;
+  };
+
+  const Portal = ({ children }: { children: React.ReactNode }) => <>{children}</>;
+  const Content = ({ children }: { children: React.ReactNode }) => {
+    const context = React.useContext(SelectContext);
+    return (
+      <select
+        aria-label="category-select"
+        value={context?.value ?? ''}
+        onChange={(event) => context?.onValueChange(event.target.value)}
+      >
+        {children}
+      </select>
+    );
+  };
+  const Viewport = ({ children }: { children: React.ReactNode }) => <>{children}</>;
+  const Group = ({ children }: { children: React.ReactNode }) => <>{children}</>;
+  const Label = ({ children }: { children: React.ReactNode }) => <>{children}</>;
+  const Item = ({ children, value }: { children: React.ReactNode; value: string }) => (
+    <option value={value}>{children}</option>
+  );
+  const ItemText = ({ children }: { children: React.ReactNode }) => <>{children}</>;
+
+  return {
+    Root,
+    Trigger,
+    Value,
+    Portal,
+    Content,
+    Viewport,
+    Group,
+    Label,
+    Item,
+    ItemText,
+  };
+});
+
 describe('TransactionList', () => {
-  test('shows Ask AI only for uncategorized transactions and opens the assistant modal', () => {
+  test('shows Ask AI for categorized and uncategorized expense rows and opens the assistant modal', () => {
     render(
       <TransactionList
         transactions={[
@@ -39,8 +121,19 @@ describe('TransactionList', () => {
             expense_category: ExpenseCategory.EATING_OUT,
             source_bank: 'Belfius',
           },
+          {
+            id: 3,
+            account_number: 'BE003',
+            transaction_date: '2026-04-13',
+            amount: -545,
+            currency: 'EUR',
+            description: 'Transfer to savings',
+            transaction_type: TransactionType.TRANSFER,
+            transfer_category: TransferCategory.INTERNAL_TRANSFER,
+            source_bank: 'Belfius',
+          },
         ]}
-        totalTransactions={2}
+        totalTransactions={3}
         currentPage={1}
         totalPages={1}
         onPageChange={() => {}}
@@ -52,10 +145,138 @@ describe('TransactionList', () => {
       />
     );
 
-    expect(screen.getAllByRole('button', { name: /ask ai/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /ask ai/i })).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole('button', { name: /ask ai/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: /ask ai/i })[1]);
 
-    expect(screen.getByTestId('assistant-modal')).toHaveTextContent('SEPA PROXIMUS');
+    expect(screen.getByTestId('assistant-modal')).toHaveTextContent('Bakery');
+  });
+
+  test('shows Internal Transfer for transfer rows that store the category on transfer_category', () => {
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 3,
+            account_number: 'BE003',
+            transaction_date: '2026-04-13',
+            amount: -545,
+            currency: 'EUR',
+            description: 'Transfer to my other account',
+            transaction_type: TransactionType.TRANSFER,
+            transfer_category: TransferCategory.INTERNAL_TRANSFER,
+            source_bank: 'Belfius',
+          },
+        ]}
+        totalTransactions={1}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={async () => {}}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Internal Transfer' })).toBeInTheDocument();
+  });
+
+  test('updates transfer rows using transfer categories', () => {
+    const onTransactionUpdate = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 3,
+            account_number: 'BE003',
+            transaction_date: '2026-04-13',
+            amount: -545,
+            currency: 'EUR',
+            description: 'Transfer to my other account',
+            transaction_type: TransactionType.TRANSFER,
+            transfer_category: TransferCategory.INTERNAL_TRANSFER,
+            source_bank: 'Belfius',
+          },
+        ]}
+        totalTransactions={1}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={onTransactionUpdate}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('category-select'), {
+      target: { value: TransferCategory.CREDIT_CARD_SETTLEMENT },
+    });
+
+    expect(onTransactionUpdate).toHaveBeenCalledWith(
+      3,
+      TransferCategory.CREDIT_CARD_SETTLEMENT,
+      TransactionType.TRANSFER
+    );
+  });
+
+  test('save and next advances to the next uncategorized non-transfer row', async () => {
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 1,
+            account_number: 'BE001',
+            transaction_date: '2026-04-11',
+            amount: -45.99,
+            currency: 'EUR',
+            description: 'Uncategorized one',
+            transaction_type: TransactionType.EXPENSE,
+            source_bank: 'Belfius',
+          },
+          {
+            id: 2,
+            account_number: 'BE002',
+            transaction_date: '2026-04-12',
+            amount: -12.5,
+            currency: 'EUR',
+            description: 'Already categorized',
+            transaction_type: TransactionType.EXPENSE,
+            expense_category: ExpenseCategory.EATING_OUT,
+            source_bank: 'Belfius',
+          },
+          {
+            id: 3,
+            account_number: 'BE003',
+            transaction_date: '2026-04-13',
+            amount: -30,
+            currency: 'EUR',
+            description: 'Uncategorized two',
+            transaction_type: TransactionType.EXPENSE,
+            source_bank: 'Belfius',
+          },
+        ]}
+        totalTransactions={3}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={async () => {}}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: /ask ai/i })[0]);
+    fireEvent.click(screen.getByRole('button', { name: /save next/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('assistant-modal')).toHaveTextContent('Uncategorized two');
+    });
   });
 });

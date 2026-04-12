@@ -6,7 +6,8 @@ class StubClassifierProvider(ClassifierProvider):
         self,
         *,
         transaction,
-        allowed_categories,
+        allowed_options_by_type,
+        conversation_history,
         feedback_tag,
         feedback_note,
     ) -> ClassificationProposal:
@@ -22,6 +23,7 @@ class StubClassifierProvider(ClassifierProvider):
                 completion_tokens=18,
             )
 
+        allowed_categories = list(allowed_options_by_type.get(transaction.transaction_type.value, []))
         fallback_category = allowed_categories[0] if allowed_categories else transaction.transaction_type.value
         return ClassificationProposal(
             transaction_type=transaction.transaction_type.value,

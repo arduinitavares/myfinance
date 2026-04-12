@@ -1,13 +1,13 @@
 import React from 'react';
 import * as Select from '@radix-ui/react-select';
-import { ExpenseCategory, IncomeCategory } from '../types/transaction';
+import { ExpenseCategory, IncomeCategory, TransferCategory } from '../types/transaction';
 
 interface TransactionFiltersProps {
   searchTerm: string;
-  categoryFilter: ExpenseCategory | IncomeCategory | 'all';
+  categoryFilter: ExpenseCategory | IncomeCategory | TransferCategory | 'all';
   dateRange: { start: string; end: string };
   onSearchChange: (search: string) => void;
-  onCategoryFilter: (category: ExpenseCategory | IncomeCategory | 'all') => void;
+  onCategoryFilter: (category: ExpenseCategory | IncomeCategory | TransferCategory | 'all') => void;
   onDateRangeChange: (range: { start: string; end: string }) => void;
   onClearFilters: () => void;
 }
@@ -37,7 +37,7 @@ export const TransactionFilters: React.FC<TransactionFiltersProps> = ({
           className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 flex-1 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400"
         />
 
-        <Select.Root value={categoryFilter} onValueChange={(value) => onCategoryFilter(value as ExpenseCategory | IncomeCategory | 'all')}>
+        <Select.Root value={categoryFilter} onValueChange={(value) => onCategoryFilter(value as ExpenseCategory | IncomeCategory | TransferCategory | 'all')}>
           <Select.Trigger className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800">
             <Select.Value placeholder="Filter by category" />
           </Select.Trigger>
@@ -72,6 +72,21 @@ export const TransactionFilters: React.FC<TransactionFiltersProps> = ({
                     Income Categories
                   </Select.Label>
                   {Object.values(IncomeCategory).map((category) => (
+                    <Select.Item
+                      key={category}
+                      value={category}
+                      className="relative flex items-center px-8 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
+                    >
+                      <Select.ItemText>{category}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Group>
+
+                <Select.Group>
+                  <Select.Label className="px-8 py-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    Transfer Categories
+                  </Select.Label>
+                  {Object.values(TransferCategory).map((category) => (
                     <Select.Item
                       key={category}
                       value={category}

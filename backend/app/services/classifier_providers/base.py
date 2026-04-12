@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Mapping, Sequence
 
+from ...models.classification import ClassificationTurn
 from ...models.transaction import Transaction
 
 
@@ -21,6 +22,8 @@ class ClassificationProposal:
 class ProviderDescription:
     name: str
     model_name: str
+    base_url: str | None = None
+    prompt_fingerprint: str | None = None
 
 
 class ClassifierProvider(ABC):
@@ -37,7 +40,8 @@ class ClassifierProvider(ABC):
         self,
         *,
         transaction: Transaction,
-        allowed_categories: Sequence[str],
+        allowed_options_by_type: Mapping[str, Sequence[str]],
+        conversation_history: Sequence[ClassificationTurn],
         feedback_tag: str | None,
         feedback_note: str | None,
     ) -> ClassificationProposal:

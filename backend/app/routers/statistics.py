@@ -18,7 +18,8 @@ from ..schemas.statistics import (
     CategoryStatisticsResponse,
     CategoryAveragesResponse,
     ExpenseTypeTimeseriesResponse,
-    ExpenseTypeTimeseriesItem
+    ExpenseTypeTimeseriesItem,
+    TransferSummaryResponse
 )
 from ..schemas.transaction import TimePeriod
 
@@ -392,6 +393,40 @@ def get_statistics_overview(db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Error in get_statistics_overview: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/transfers/summary", response_model=TransferSummaryResponse)
+def get_transfer_summary(
+    db: Session = Depends(get_db),
+    start_date: str = Query(None, description="Start date in ISO format (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="End date in ISO format (YYYY-MM-DD)"),
+):
+    try:
+        latest_transaction_date = db.query(func.max(Transaction.transaction_date)).scalar()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else latest_transaction_date
+        if end is None:
+            end = date.today()
+        start = (
+            datetime.strptime(start_date, "%Y-%m-%d").date()
+            if start_date
+            else end.replace(day=1)
+        )
+
+        if start > end:
+            raise HTTPException(status_code=400, detail="Start date must be before end date")
+
+        return {
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "items": StatisticsService.calculate_transfer_summary(db, start, end),
+        }
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_transfer_summary: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/initialize")

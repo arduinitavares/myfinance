@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from datetime import date
 
 from app.main import app
+from app.database import SessionLocal
 from app.models.transaction import (
     ExpenseCategory,
     IncomeCategory,
@@ -11,6 +12,7 @@ from app.models.transaction import (
     TransactionType,
     TransferCategory,
 )
+from app.models.statistics import CategoryStatistics, FinancialStatistics
 from app.routers import transactions as tx_router
 from app.schemas.transaction import TransactionCreate
 from app.schemas.transaction import TransactionRestore
@@ -51,6 +53,46 @@ def _restore_transaction(client, *, description: str):
     return response.json()
 
 
+def _create_transaction(
+    db_session,
+    *,
+    description: str,
+    amount: float,
+    transaction_type: TransactionType,
+    expense_category=None,
+    income_category=None,
+    transfer_category=None,
+):
+    transaction = Transaction(
+        account_number="BE55000000000001",
+        transaction_date=date(2025, 1, 15),
+        amount=amount,
+        currency="EUR",
+        description=description,
+        counterparty_name="Counterparty",
+        counterparty_account="BE99000000000002",
+        transaction_type=transaction_type,
+        expense_category=expense_category,
+        income_category=income_category,
+        transfer_category=transfer_category,
+        source_bank="ing",
+    )
+    db_session.add(transaction)
+    db_session.flush()
+    return transaction
+
+
+def _clear_transactions_and_statistics():
+    db_session = SessionLocal()
+    try:
+        db_session.query(CategoryStatistics).delete()
+        db_session.query(FinancialStatistics).delete()
+        db_session.query(Transaction).delete()
+        db_session.commit()
+    finally:
+        db_session.close()
+
+
 def test_manual_transfer_update_uses_transfer_category_and_clears_legacy_categories():
     client = TestClient(app)
     _reset_database(client)
@@ -70,6 +112,207 @@ def test_manual_transfer_update_uses_transfer_category_and_clears_legacy_categor
     assert payload["transfer_category"] == TransferCategory.CREDIT_CARD_SETTLEMENT.value
     assert payload["expense_category"] is None
     assert payload["income_category"] is None
+
+
+def test_statistics_overview_excludes_transfer_transactions():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+
+    try:
+        _create_transaction(
+            db_session,
+            description="Salary",
+            amount=5000.0,
+            transaction_type=TransactionType.INCOME,
+            income_category=IncomeCategory.SALARY,
+        )
+        _create_transaction(
+            db_session,
+            description="Groceries",
+            amount=-125.0,
+            transaction_type=TransactionType.EXPENSE,
+            expense_category=ExpenseCategory.GROCERIES,
+        )
+        _create_transaction(
+            db_session,
+            description="Card settlement",
+            amount=-240.0,
+            transaction_type=TransactionType.TRANSFER,
+            expense_category=ExpenseCategory.INTERNAL_TRANSFER,
+            income_category=IncomeCategory.INTERNAL_TRANSFER,
+            transfer_category=TransferCategory.CREDIT_CARD_SETTLEMENT,
+        )
+        db_session.commit()
+
+        from app.services.statistics_service import StatisticsService
+
+        StatisticsService.initialize_statistics(db_session)
+        StatisticsService.initialize_category_statistics(db_session)
+
+        response = client.get("/statistics/overview")
+        assert response.status_code == 200
+
+        payload = response.json()
+        current_month = payload["current_month"]
+        all_time = payload["all_time"]
+
+        assert current_month["period_income"] == 5000.0
+        assert current_month["period_expenses"] == 125.0
+        assert current_month["income_count"] == 1
+        assert current_month["expense_count"] == 1
+        assert current_month["total_income"] == 5000.0
+        assert current_month["total_expenses"] == 125.0
+        assert current_month["total_net_savings"] == 4875.0
+        assert all_time["total_income"] == 5000.0
+        assert all_time["total_expenses"] == 125.0
+    finally:
+        db_session.close()
+
+
+def test_category_statistics_ignore_transfer_rows():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+
+    try:
+        _create_transaction(
+            db_session,
+            description="Salary",
+            amount=5000.0,
+            transaction_type=TransactionType.INCOME,
+            income_category=IncomeCategory.SALARY,
+        )
+        _create_transaction(
+            db_session,
+            description="Groceries",
+            amount=-125.0,
+            transaction_type=TransactionType.EXPENSE,
+            expense_category=ExpenseCategory.GROCERIES,
+        )
+        _create_transaction(
+            db_session,
+            description="Transfer to savings",
+            amount=-240.0,
+            transaction_type=TransactionType.TRANSFER,
+            expense_category=ExpenseCategory.INTERNAL_TRANSFER,
+            income_category=IncomeCategory.INTERNAL_TRANSFER,
+            transfer_category=TransferCategory.INTERNAL_TRANSFER,
+        )
+        db_session.commit()
+
+        from app.services.statistics_service import StatisticsService
+
+        StatisticsService.initialize_statistics(db_session)
+        StatisticsService.initialize_category_statistics(db_session)
+
+        response = client.get("/statistics/by-category", params={"period": "monthly", "date": "2025-01-15"})
+        assert response.status_code == 200
+
+        payload = response.json()
+        categories = {item["category"] for item in payload}
+
+        assert "Internal Transfer" not in categories
+        assert categories == {"Salary", "Groceries"}
+    finally:
+        db_session.close()
+
+
+def test_transfer_summary_groups_by_category_and_sign():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+
+    try:
+        _create_transaction(
+            db_session,
+            description="Card settlement",
+            amount=-240.0,
+            transaction_type=TransactionType.TRANSFER,
+            transfer_category=TransferCategory.CREDIT_CARD_SETTLEMENT,
+        )
+        _create_transaction(
+            db_session,
+            description="Card refund",
+            amount=240.0,
+            transaction_type=TransactionType.TRANSFER,
+            transfer_category=TransferCategory.CREDIT_CARD_SETTLEMENT,
+        )
+        _create_transaction(
+            db_session,
+            description="Savings transfer",
+            amount=-100.0,
+            transaction_type=TransactionType.TRANSFER,
+            transfer_category=None,
+        )
+        _create_transaction(
+            db_session,
+            description="Loan repayment received",
+            amount=55.0,
+            transaction_type=TransactionType.TRANSFER,
+            transfer_category=TransferCategory.LOAN_REPAYMENT_RECEIVED,
+        )
+        _create_transaction(
+            db_session,
+            description="USD transfer should be excluded until FX support exists",
+            amount=-80.0,
+            transaction_type=TransactionType.TRANSFER,
+            transfer_category=TransferCategory.INTERNAL_TRANSFER,
+        ).currency = "USD"
+        db_session.commit()
+
+        response = client.get(
+            "/statistics/transfers/summary",
+            params={"start_date": "2025-01-01", "end_date": "2025-01-31"},
+        )
+        assert response.status_code == 200
+
+        payload = response.json()
+        assert payload["start_date"] == "2025-01-01"
+        assert payload["end_date"] == "2025-01-31"
+
+        by_category = {item["subtype"]: item for item in payload["items"]}
+
+        assert by_category["Credit Card Settlement"]["transaction_count"] == 2
+        assert by_category["Credit Card Settlement"]["total_outgoing_eur"] == 240.0
+        assert by_category["Credit Card Settlement"]["total_incoming_eur"] == 240.0
+        assert by_category["Internal Transfer"]["transaction_count"] == 1
+        assert by_category["Internal Transfer"]["total_outgoing_eur"] == 100.0
+        assert by_category["Internal Transfer"]["total_incoming_eur"] == 0.0
+        assert by_category["Loan Repayment Received"]["transaction_count"] == 1
+        assert by_category["Loan Repayment Received"]["total_outgoing_eur"] == 0.0
+        assert by_category["Loan Repayment Received"]["total_incoming_eur"] == 55.0
+    finally:
+        db_session.close()
+
+
+def test_transfer_summary_empty_state_honors_requested_dates():
+    client = TestClient(app)
+    _clear_transactions_and_statistics()
+
+    response = client.get(
+        "/statistics/transfers/summary",
+        params={"start_date": "2025-01-01", "end_date": "2025-01-31"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "start_date": "2025-01-01",
+        "end_date": "2025-01-31",
+        "items": [],
+    }
+
+
+def test_transfer_summary_rejects_invalid_dates_when_no_transactions_exist():
+    client = TestClient(app)
+    _clear_transactions_and_statistics()
+
+    response = client.get(
+        "/statistics/transfers/summary",
+        params={"start_date": "not-a-date"},
+    )
+
+    assert response.status_code == 400
 
 
 def test_normalized_category_for_validates_transfer_categories():

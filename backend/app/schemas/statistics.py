@@ -96,3 +96,16 @@ class CategoryAveragesResponse(BaseModel):
     end_date: str = Field(..., description="End date of the period")
     months_count: int = Field(..., description="Number of months in the period")
     categories: List[CategoryAverageItem] = Field(..., description="List of category averages")
+
+
+class TransferSummaryItem(BaseModel):
+    subtype: str = Field(..., description="Transfer category name")
+    transaction_count: int = Field(..., description="Number of transfer transactions")
+    total_outgoing_eur: float = Field(..., description="Total outgoing transfer amount")
+    total_incoming_eur: float = Field(..., description="Total incoming transfer amount")
+
+
+class TransferSummaryResponse(BaseModel):
+    start_date: str = Field(..., description="Start date of the summary window")
+    end_date: str = Field(..., description="End date of the summary window")
+    items: List[TransferSummaryItem] = Field(..., description="Transfer totals grouped by subtype")

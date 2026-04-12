@@ -7,6 +7,19 @@ import {
 } from '../types/transaction';
 import { API_BASE_URL } from '../config';
 
+export interface TransferSummaryItem {
+  subtype: string;
+  transaction_count: number;
+  total_outgoing_eur: number;
+  total_incoming_eur: number;
+}
+
+export interface TransferSummaryResponse {
+  start_date: string;
+  end_date: string;
+  items: TransferSummaryItem[];
+}
+
 export const statisticService = {
   getCategoryStatistics: async (
     period: 'monthly' | 'yearly' | 'all_time' = 'monthly',
@@ -40,6 +53,15 @@ export const statisticService = {
 
   getStatisticsOverview: async () => {
     const response = await axios.get(`${API_BASE_URL}/statistics/overview`);
+    return response.data;
+  },
+
+  getTransferSummary: async (start_date?: string, end_date?: string): Promise<TransferSummaryResponse> => {
+    const params: Record<string, string> = {};
+    if (start_date) params.start_date = start_date;
+    if (end_date) params.end_date = end_date;
+
+    const response = await axios.get(`${API_BASE_URL}/statistics/transfers/summary`, { params });
     return response.data;
   },
 

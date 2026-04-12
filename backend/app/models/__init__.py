@@ -5,7 +5,7 @@ from .classification import (
     ClassificationTurn,
     RecurrencePattern,
 )
-from .transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory
+from .transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory
 from .statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
 from .financial_health import FinancialHealth, FinancialRecommendation
 from .financial_projection import ProjectionScenario, ProjectionParameter, ProjectionResult
@@ -26,6 +26,7 @@ __all__ = [
     'TransactionType',
     'ExpenseCategory',
     'IncomeCategory',
+    'TransferCategory',
     'FinancialHealth',
     'FinancialRecommendation',
     'ProjectionScenario',

@@ -8,13 +8,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.database import SessionLocal, enable_sqlite_foreign_keys
+import app.database_manager as database_manager_module
 from app.database_manager import init_database, reset_database
 from app.imports.providers import ProviderRegistry
 from app.migrations import migrate_classification_assistant as migration_module
 from app.models.classification import ClassificationSession, ClassificationSessionStatus
 from app.models.transaction import Transaction, TransactionType
-from app.services.classifier_providers import StubClassifierProvider
-from app.services.classification_session_service import ClassificationSessionService
+from app.services.projection_service import ProjectionService
+from app.services.classifier_providers import ProviderDescription, StubClassifierProvider
 
 
 def test_stub_provider_returns_utilities_monthly_for_proximus():
@@ -32,7 +33,8 @@ def test_stub_provider_returns_utilities_monthly_for_proximus():
 
     proposal = provider.propose(
         transaction=transaction,
-        allowed_categories=["Utilities", "Others"],
+        allowed_options_by_type={"Expense": ["Utilities", "Others"]},
+        conversation_history=[],
         feedback_tag=None,
         feedback_note=None,
     )
@@ -75,6 +77,62 @@ def test_provider_registry_accepts_classification_assistant_family_and_selects_s
     assert report["classification_assistant"]["stub"]["available"] is True
     assert report["classification_assistant"]["__family__"]["chain_available"] is True
     assert report["classification_assistant"]["__family__"]["selected_provider"] == "stub"
+
+
+def test_provider_registry_accepts_openai_and_openrouter_for_classification_assistant(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    config_path = tmp_path / "config.local.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            classification_assistant:
+              order: [openai, openrouter, stub]
+              fallback_on: []
+              providers:
+                openai:
+                  enabled: true
+                  kind: openai
+                  model: gpt-4o-mini
+                  base_url: https://api.openai.com/v1
+                  api_key_env: OPENAI_API_KEY
+                openrouter:
+                  enabled: true
+                  kind: openai_compatible
+                  model: openai/gpt-4.1-mini
+                  base_url: https://openrouter.ai/api/v1
+                  api_key_env: OPENROUTER_API_KEY
+                stub:
+                  enabled: true
+                  kind: stub
+                  model: stub-classifier-v1
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ProviderRegistry.from_path(config_path)
+    report = registry.validate()
+
+    assert report["classification_assistant"]["openai"]["available"] is False
+    assert report["classification_assistant"]["openai"]["reason"] == "missing_env"
+    assert report["classification_assistant"]["openrouter"]["available"] is False
+    assert report["classification_assistant"]["openrouter"]["reason"] == "missing_env"
+    assert report["classification_assistant"]["stub"]["available"] is True
+    assert report["classification_assistant"]["__family__"]["selected_provider"] == "stub"
+
+
+def test_provider_description_includes_base_url_and_prompt_fingerprint():
+    description = ProviderDescription(
+        name="openai",
+        model_name="gpt-4o-mini",
+        base_url="https://api.openai.com/v1",
+        prompt_fingerprint="classification-v1",
+    )
+
+    assert description.base_url == "https://api.openai.com/v1"
+    assert description.prompt_fingerprint == "classification-v1"
 
 
 def test_transaction_model_declares_recurrence_pattern_foreign_key():
@@ -134,21 +192,68 @@ def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key
         }
         foreign_keys = verify_conn.execute("PRAGMA foreign_key_list(transactions)").fetchall()
         rows = verify_conn.execute(
-            "SELECT id, classification_source, recurrence_pattern_id, description FROM transactions"
+            "SELECT id, transfer_category, classification_source, recurrence_pattern_id, description FROM transactions"
         ).fetchall()
     finally:
         verify_conn.close()
         temp_engine.dispose()
 
+    assert "transfer_category" in columns
     assert "classification_source" in columns
     assert "recurrence_pattern_id" in columns
     assert any(fk[3] == "recurrence_pattern_id" and fk[2] == "recurrence_patterns" and fk[4] == "id" for fk in foreign_keys)
-    assert rows == [(1, None, None, "PROXIMUS telecom invoice")]
+    assert rows == [(1, None, None, None, "PROXIMUS telecom invoice")]
+
+
+def test_init_database_adds_transfer_category_column_to_legacy_transactions(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy-transactions.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE transactions (
+                id INTEGER NOT NULL PRIMARY KEY,
+                account_number VARCHAR(50),
+                transaction_date DATE,
+                amount FLOAT,
+                currency VARCHAR(3),
+                description VARCHAR(500),
+                counterparty_name VARCHAR(200),
+                counterparty_account VARCHAR(50),
+                transaction_type VARCHAR(8),
+                expense_category VARCHAR(20),
+                income_category VARCHAR(20),
+                source_bank VARCHAR(10)
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(database_manager_module, "engine", temp_engine)
+    monkeypatch.setattr(ProjectionService, "create_default_scenarios", staticmethod(lambda db: []))
+
+    database_manager_module.init_database()
+
+    verify_conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in verify_conn.execute("PRAGMA table_info(transactions)").fetchall()}
+    finally:
+        verify_conn.close()
+        temp_engine.dispose()
+
+    assert "transfer_category" in columns
+    assert "classification_source" in columns
+    assert "recurrence_pattern_id" in columns
 
 
 def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
     init_database()
     reset_database()
+
+    from app.services.classification_session_service import ClassificationSessionService
 
     db_session = SessionLocal()
     transaction = Transaction(

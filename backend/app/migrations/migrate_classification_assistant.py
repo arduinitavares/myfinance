@@ -48,6 +48,7 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
                 transaction_type VARCHAR(8),
                 expense_category VARCHAR(20),
                 income_category VARCHAR(20),
+                transfer_category VARCHAR(50),
                 classification_source VARCHAR(50),
                 recurrence_pattern_id INTEGER,
                 source_bank VARCHAR(10),
@@ -57,6 +58,7 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             """
         )
 
+        transfer_category_sql = "transfer_category" if "transfer_category" in transaction_columns else "NULL"
         classification_source_sql = "classification_source" if "classification_source" in transaction_columns else "NULL"
         recurrence_pattern_id_sql = "recurrence_pattern_id" if "recurrence_pattern_id" in transaction_columns else "NULL"
         cursor.execute(
@@ -73,6 +75,7 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
                 transaction_type,
                 expense_category,
                 income_category,
+                transfer_category,
                 classification_source,
                 recurrence_pattern_id,
                 source_bank
@@ -89,6 +92,7 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
                 transaction_type,
                 expense_category,
                 income_category,
+                {transfer_category_sql},
                 {classification_source_sql},
                 {recurrence_pattern_id_sql},
                 source_bank
@@ -124,6 +128,8 @@ def migrate_classification_assistant():
     transaction_columns = {column["name"] for column in inspector.get_columns("transactions")}
 
     needs_rebuild = (
+        "transfer_category" not in transaction_columns
+        or
         "classification_source" not in transaction_columns
         or "recurrence_pattern_id" not in transaction_columns
         or not _has_recurrence_pattern_foreign_key()

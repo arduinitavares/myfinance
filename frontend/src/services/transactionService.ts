@@ -3,6 +3,7 @@ import {
   Transaction, 
   ExpenseCategory, 
   IncomeCategory, 
+  TransferCategory,
   TransactionType,
   SortParams
 } from '../types/transaction';
@@ -51,7 +52,7 @@ export const transactionService = {
 
   updateCategory: async (
     transactionId: number,
-    category: ExpenseCategory | IncomeCategory,
+    category: ExpenseCategory | IncomeCategory | TransferCategory,
     transactionType: TransactionType
   ): Promise<Transaction> => {
     const response = await axios.patch(
@@ -87,4 +88,4 @@ export const transactionService = {
     
     return response.data;
   }
-}; 
+};

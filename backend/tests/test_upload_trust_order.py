@@ -428,7 +428,7 @@ def test_transfer_recurrence_pattern_matches_expense_upload_rows(monkeypatch):
     accepted = _accept_session(
         seed["id"],
         transaction_type="Transfer",
-        category="Salary",
+        category="Internal Transfer",
         recurrence={"is_recurrent": True, "frequency": "monthly"},
     )
     pattern_id = accepted["recurrence_pattern_id"]
@@ -455,7 +455,8 @@ def test_transfer_recurrence_pattern_matches_expense_upload_rows(monkeypatch):
 
     imported_transaction = second_upload.json()[0]
     assert imported_transaction["transaction_type"] == "Transfer"
-    assert imported_transaction["expense_category"] == "Internal Transfer"
+    assert imported_transaction["transfer_category"] == "Internal Transfer"
+    assert imported_transaction["expense_category"] is None
     assert imported_transaction["classification_source"] == "recurrence_pattern"
     assert imported_transaction["recurrence_pattern_id"] == pattern_id
 

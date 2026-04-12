@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as Select from '@radix-ui/react-select';
-import { Transaction, TransactionType, ExpenseCategory, IncomeCategory, SortParams } from '../types/transaction';
+import { Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory, SortParams } from '../types/transaction';
 import { format } from 'date-fns';
 import { SparklesIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { ChevronUp, ChevronDown } from 'lucide-react';
@@ -17,7 +17,7 @@ interface TransactionListProps {
   onSortChange: (params: SortParams) => void;
   onTransactionUpdate: (
     transactionId: number,
-    category: ExpenseCategory | IncomeCategory,
+    category: ExpenseCategory | IncomeCategory | TransferCategory,
     transactionType: TransactionType
   ) => Promise<void>;
   onTransactionDelete: (transactionId: number) => Promise<void>;
@@ -25,7 +25,6 @@ interface TransactionListProps {
 }
 
 type SortField = 'date' | 'description' | 'amount' | 'type';
-type SortDirection = 'asc' | 'desc';
 
 export const TransactionList: React.FC<TransactionListProps> = ({
   transactions,
@@ -40,6 +39,26 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onTransactionsRefresh,
 }) => {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+
+  const getDisplayedCategory = (transaction: Transaction) => {
+    if (transaction.transaction_type === TransactionType.EXPENSE) {
+      return transaction.expense_category;
+    }
+    if (transaction.transaction_type === TransactionType.INCOME) {
+      return transaction.income_category;
+    }
+    return transaction.transfer_category;
+  };
+
+  const getCategoryOptions = (transaction: Transaction) => {
+    if (transaction.transaction_type === TransactionType.EXPENSE) {
+      return Object.values(ExpenseCategory);
+    }
+    if (transaction.transaction_type === TransactionType.INCOME) {
+      return Object.values(IncomeCategory);
+    }
+    return Object.values(TransferCategory);
+  };
 
   const handleSort = (field: SortField) => {
     if (field === sortParams.field) {
@@ -75,9 +94,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   );
 
   const getNextTransaction = (currentId: number): Transaction | null => {
-    const uncategorized = transactions.filter(
-      (item) => !item.expense_category && !item.income_category
-    );
+    const uncategorized = transactions.filter((item) => {
+      if (item.transaction_type === TransactionType.EXPENSE) {
+        return !item.expense_category;
+      }
+      if (item.transaction_type === TransactionType.INCOME) {
+        return !item.income_category;
+      }
+      return false;
+    });
     const currentIndex = uncategorized.findIndex((item) => item.id === currentId);
     if (currentIndex === -1) {
       return null;
@@ -134,13 +159,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <Select.Root
-                    value={transaction.transaction_type === TransactionType.EXPENSE 
-                      ? transaction.expense_category 
-                      : transaction.income_category}
+                    value={getDisplayedCategory(transaction) ?? ''}
                     onValueChange={(value) =>
                       onTransactionUpdate(
                         transaction.id,
-                        value as (ExpenseCategory | IncomeCategory),
+                        value as ExpenseCategory | IncomeCategory | TransferCategory,
                         transaction.transaction_type
                       )
                     }
@@ -152,38 +175,27 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     <Select.Portal>
                       <Select.Content className="overflow-hidden bg-white dark:bg-gray-800 rounded-md shadow-lg border dark:border-gray-700">
                         <Select.Viewport className="p-1">
-                          {transaction.transaction_type === TransactionType.EXPENSE
-                            ? Object.values(ExpenseCategory).map((category) => (
-                                <Select.Item
-                                  key={category}
-                                  value={category}
-                                  className="relative flex items-center px-8 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
-                                >
-                                  <Select.ItemText>{category}</Select.ItemText>
-                                </Select.Item>
-                              ))
-                            : Object.values(IncomeCategory).map((category) => (
-                                <Select.Item
-                                  key={category}
-                                  value={category}
-                                  className="relative flex items-center px-8 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
-                                >
-                                  <Select.ItemText>{category}</Select.ItemText>
-                                </Select.Item>
-                              ))
-                          }
+                          {getCategoryOptions(transaction).map((category) => (
+                            <Select.Item
+                              key={category}
+                              value={category}
+                              className="relative flex items-center px-8 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
+                            >
+                              <Select.ItemText>{category}</Select.ItemText>
+                            </Select.Item>
+                          ))}
                         </Select.Viewport>
                       </Select.Content>
                     </Select.Portal>
                   </Select.Root>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center gap-2">
-                    {!transaction.expense_category && !transaction.income_category && (
+                  <div className="flex min-w-[136px] items-center justify-end gap-2">
+                    {transaction.transaction_type !== TransactionType.TRANSFER && (
                       <button
                         type="button"
                         onClick={() => setSelectedTransaction(transaction)}
-                        className="inline-flex items-center gap-1 rounded-md border border-blue-500 px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                        className="inline-flex min-w-[78px] items-center justify-center gap-1 rounded-md border border-blue-500 px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-950/40"
                       >
                         <SparklesIcon className="h-3.5 w-3.5" />
                         <span>Ask AI</span>

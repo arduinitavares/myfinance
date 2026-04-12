@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { UndoableAction, ActionType, Transaction, ExpenseCategory, IncomeCategory, TransactionType } from '../types/transaction';
+import { UndoableAction, ActionType, Transaction, ExpenseCategory, IncomeCategory, TransferCategory, TransactionType } from '../types/transaction';
 import { transactionService } from '../services/transactionService';
 
 export const useActionHistory = () => {
@@ -61,7 +61,7 @@ export const useActionHistory = () => {
 
   const restoreCategory = async (
     transactionId: number,
-    oldCategory: ExpenseCategory | IncomeCategory | undefined,
+    oldCategory: ExpenseCategory | IncomeCategory | TransferCategory | undefined,
     transactionType: TransactionType
   ): Promise<boolean> => {
     try {

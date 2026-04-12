@@ -70,10 +70,12 @@ describe('ClassificationAssistantModal', () => {
         open
         transaction={{
           id: 1,
+          transaction_date: '2026-04-11',
           description: 'SEPA PROXIMUS',
           amount: -45.99,
           currency: 'EUR',
           transaction_type: 'Expense',
+          expense_category: 'Health',
         } as any}
         onOpenChange={() => {}}
         onSaved={async () => {}}
@@ -81,8 +83,17 @@ describe('ClassificationAssistantModal', () => {
       />
     );
 
+    expect(await screen.findByText(/transaction under review/i)).toBeInTheDocument();
+    expect(screen.getByText('SEPA PROXIMUS')).toBeInTheDocument();
+    expect(screen.getByText('11/04/2026')).toBeInTheDocument();
+    expect(screen.getByText(/-\€45\.99/)).toBeInTheDocument();
+    expect(screen.getByText(/saved now · expense · health/i)).toBeInTheDocument();
     expect(await screen.findByText(/utilities/i)).toBeInTheDocument();
+    expect(screen.getByText(/ai confidence/i)).toBeInTheDocument();
     expect(screen.getByText(/telecom or household bill/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/category/i)).toHaveValue('Utilities');
+    });
     await waitFor(() => {
       expect(
         screen.getByRole('checkbox', { name: /create recurrence rule/i })
@@ -94,7 +105,9 @@ describe('ClassificationAssistantModal', () => {
     expect(screen.getByRole('button', { name: /save & next/i })).toBeInTheDocument();
   });
 
-  test('save and next shows a completion state when there is no next row', async () => {
+  test('save and next closes the modal when there is no next row', async () => {
+    const onOpenChange = jest.fn();
+
     render(
       <ClassificationAssistantModal
         open
@@ -105,7 +118,7 @@ describe('ClassificationAssistantModal', () => {
           currency: 'EUR',
           transaction_type: 'Expense',
         } as any}
-        onOpenChange={() => {}}
+        onOpenChange={onOpenChange}
         onSaved={async () => {}}
         getNextTransaction={() => null}
       />
@@ -114,9 +127,9 @@ describe('ClassificationAssistantModal', () => {
     await screen.findByText(/utilities/i);
     fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
 
-    expect(
-      await screen.findByText(/no more uncategorized transactions/i)
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
   });
 
   test('save and next hands off to the next transaction without closing the modal', async () => {
@@ -187,7 +200,83 @@ describe('ClassificationAssistantModal', () => {
     );
 
     expect(await screen.findByText(/fallback suggestions/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/similarity/i)).toHaveLength(2);
     expect(screen.queryByText(/telecom or household bill/i)).not.toBeInTheDocument();
+  });
+
+  test('uses the selected category when saving', async () => {
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={{
+          id: 1,
+          description: 'SEPA PROXIMUS',
+          amount: -45.99,
+          currency: 'EUR',
+          transaction_type: 'Expense',
+        } as any}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    await screen.findByText(/utilities/i);
+    fireEvent.change(screen.getByLabelText(/category/i), {
+      target: { value: 'Personal' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockedService.accept).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({
+          category: 'Personal',
+        })
+      );
+    });
+  });
+
+  test('preview similar shows the category being applied', async () => {
+    mockedService.previewSimilar.mockResolvedValueOnce({
+      session: {
+        id: 10,
+        transaction_id: 1,
+        status: 'accepted',
+      },
+      seed_transaction_id: 1,
+      matches: [
+        {
+          transaction_id: 7,
+          description: 'Overschrijving naar OCTA+ ENERGIE SA',
+          amount: -56.0,
+          currency: 'EUR',
+          score: 0.83,
+        },
+      ],
+    } as never);
+
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={{
+          id: 1,
+          description: 'SEPA PROXIMUS',
+          amount: -45.99,
+          currency: 'EUR',
+          transaction_type: 'Expense',
+        } as any}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    await screen.findByText(/utilities/i);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByText(/apply category/i)).toBeInTheDocument();
+    expect(screen.getByText(/utilities/i)).toBeInTheDocument();
   });
 
   test('retries with structured feedback and replaces the proposal', async () => {

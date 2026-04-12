@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Transaction, 
   ExpenseCategory, 
   IncomeCategory, 
+  TransferCategory,
   TransactionType,
   CategoryStatistics,
   SortParams,
@@ -21,7 +22,7 @@ export const useTransactions = () => {
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | IncomeCategory | 'all'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<ExpenseCategory | IncomeCategory | TransferCategory | 'all'>('all');
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
 
   // Debounce for filters
@@ -40,13 +41,6 @@ export const useTransactions = () => {
     field: 'date',
     direction: 'desc'
   });
-
-  // Helper to format date to YYYY-MM-DD
-const formatDate = (date: Date | string | undefined) => {
-  if (!date) return undefined;
-  if (typeof date === 'string') return date;
-  return date.toISOString().split('T')[0];
-};
 
 const fetchData = async (filtersOverride?: {
   search?: string;
@@ -82,7 +76,7 @@ const fetchData = async (filtersOverride?: {
 
   const handleCategoryUpdate = async (
     transactionId: number,
-    category: ExpenseCategory | IncomeCategory,
+    category: ExpenseCategory | IncomeCategory | TransferCategory,
     transactionType: TransactionType
   ) => {
     try {
@@ -91,7 +85,9 @@ const fetchData = async (filtersOverride?: {
 
       const oldCategory = transactionType === TransactionType.EXPENSE 
         ? transaction.expense_category 
-        : transaction.income_category;
+        : transactionType === TransactionType.INCOME
+          ? transaction.income_category
+          : transaction.transfer_category;
 
       // Record this action for potential undo
       addAction({
@@ -139,7 +135,9 @@ const fetchData = async (filtersOverride?: {
       // Update local statistics before refetching
       const category = transaction.transaction_type === TransactionType.EXPENSE 
         ? transaction.expense_category 
-        : transaction.income_category;
+        : transaction.transaction_type === TransactionType.INCOME
+          ? transaction.income_category
+          : transaction.transfer_category;
 
       setStatistics(prevStats => {
         const newStats = [...prevStats];

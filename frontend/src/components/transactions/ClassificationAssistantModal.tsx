@@ -1,9 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { format } from 'date-fns';
 
 import { useClassificationSession } from '../../hooks/useClassificationSession';
 import { classificationService } from '../../services/classificationService';
-import { Transaction } from '../../types/transaction';
+import {
+  ExpenseCategory,
+  IncomeCategory,
+  Transaction,
+  TransactionType,
+} from '../../types/transaction';
 
 interface ClassificationAssistantModalProps {
   open: boolean;
@@ -23,6 +29,45 @@ const FEEDBACK_OPTIONS = [
 ] as const;
 
 const RECURRENCE_FREQUENCIES = ['weekly', 'monthly', 'quarterly', 'yearly', 'unknown'] as const;
+
+const formatTransactionDate = (transactionDate?: string) => {
+  if (!transactionDate) {
+    return null;
+  }
+
+  const parsedDate = new Date(transactionDate);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return transactionDate;
+  }
+
+  return format(parsedDate, 'dd/MM/yyyy');
+};
+
+const formatTransactionAmount = (amount: number, currency: string) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+  }).format(amount);
+
+const currentTransactionCategory = (transaction: Transaction) => {
+  if (transaction.transaction_type === TransactionType.EXPENSE) {
+    return transaction.expense_category ?? 'Uncategorized';
+  }
+  if (transaction.transaction_type === TransactionType.INCOME) {
+    return transaction.income_category ?? 'Uncategorized';
+  }
+  return transaction.expense_category ?? transaction.income_category ?? 'Uncategorized';
+};
+
+const categoryOptionsForType = (transactionType: TransactionType): string[] => {
+  if (transactionType === TransactionType.EXPENSE) {
+    return Object.values(ExpenseCategory);
+  }
+  if (transactionType === TransactionType.INCOME) {
+    return Object.values(IncomeCategory);
+  }
+  return [ExpenseCategory.INTERNAL_TRANSFER];
+};
 
 export const ClassificationAssistantModal: React.FC<ClassificationAssistantModalProps> = ({
   open,
@@ -44,6 +89,13 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
   const [pendingAdvanceToNext, setPendingAdvanceToNext] = useState(false);
   const [recurrenceEnabled, setRecurrenceEnabled] = useState(false);
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<string>('monthly');
+  const [selectedType, setSelectedType] = useState<TransactionType>(TransactionType.EXPENSE);
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const resolvedCategory = selectedCategory || proposal?.category || '';
+  const formattedTransactionDate = formatTransactionDate(transaction?.transaction_date);
+  const formattedTransactionAmount = transaction
+    ? formatTransactionAmount(transaction.amount, transaction.currency)
+    : null;
 
   useEffect(() => {
     setFeedbackTag('close');
@@ -58,6 +110,10 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
       return;
     }
 
+    const proposalType = proposal.transaction_type as TransactionType;
+    setSelectedType(proposalType);
+    setSelectedCategory(proposal.category);
+
     if (proposal.recurrence_frequency) {
       setRecurrenceEnabled(true);
       setRecurrenceFrequency(proposal.recurrence_frequency);
@@ -68,6 +124,14 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
     setRecurrenceFrequency('monthly');
   }, [proposal]);
 
+  const handleTypeChange = (nextType: TransactionType) => {
+    const options = categoryOptionsForType(nextType);
+    setSelectedType(nextType);
+    setSelectedCategory((currentCategory) =>
+      options.includes(currentCategory) ? currentCategory : (options[0] ?? '')
+    );
+  };
+
   const finalizeSave = async (advanceToNext: boolean) => {
     if (!transaction) {
       return;
@@ -76,10 +140,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
     const nextTransaction = advanceToNext ? getNextTransaction(transaction.id) : null;
     await onSaved(nextTransaction);
 
-    if (advanceToNext) {
-      if (!nextTransaction) {
-        setPhase('complete_no_more_uncategorized');
-      }
+    if (advanceToNext && nextTransaction) {
       return;
     }
 
@@ -87,7 +148,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
   };
 
   const finishSave = async (advanceToNext: boolean, confirmTypeChange: boolean) => {
-    if (!transaction || !proposal || !sessionId) {
+    if (!transaction || !proposal || !sessionId || !resolvedCategory) {
       return;
     }
 
@@ -96,8 +157,8 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
 
     try {
       await classificationService.accept(sessionId, {
-        transaction_type: proposal.transaction_type,
-        category: proposal.category,
+        transaction_type: selectedType,
+        category: resolvedCategory,
         classification_source: 'assistant',
         confirm_type_change: confirmTypeChange,
         recurrence: {
@@ -126,7 +187,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
       return;
     }
 
-    if (proposal.transaction_type !== transaction.transaction_type) {
+    if (selectedType !== transaction.transaction_type) {
       setPendingAdvanceToNext(advanceToNext);
       setPhase('confirm_type_change');
       return;
@@ -170,6 +231,24 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
             Review the proposed category, leave feedback if needed, and save when it looks right.
           </Dialog.Description>
 
+          {transaction && (
+            <div className="mt-4 rounded-md border border-gray-200 p-4 dark:border-gray-700">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Transaction under review
+              </p>
+              <p className="mt-2 break-words text-sm font-medium text-gray-900 dark:text-gray-100">
+                {transaction.description}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
+                {formattedTransactionDate && <span>{formattedTransactionDate}</span>}
+                {formattedTransactionAmount && <span>{formattedTransactionAmount}</span>}
+                <span>
+                  Saved now · {transaction.transaction_type} · {currentTransactionCategory(transaction)}
+                </span>
+              </div>
+            </div>
+          )}
+
           {phase === 'generating_proposal' && (
             <p className="mt-4 text-sm text-gray-600 dark:text-gray-300">
               Generating proposal...
@@ -187,7 +266,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                   >
                     <div className="font-medium">{suggestion.category}</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {Math.round(suggestion.confidence * 100)}% confidence
+                      Similarity · {Math.round(suggestion.confidence * 100)}%
                     </div>
                   </div>
                 ))}
@@ -214,11 +293,48 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
             <div className="mt-4 space-y-4">
               <div className="rounded-md border border-gray-200 p-4 dark:border-gray-700">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium">{proposal.category}</p>
-                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      {proposal.transaction_type} · {Math.round(proposal.confidence * 100)}%
-                    </p>
+                  <div className="grid flex-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <label
+                        htmlFor="assistant-type"
+                        className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"
+                      >
+                        Type
+                      </label>
+                      <select
+                        id="assistant-type"
+                        value={selectedType}
+                        onChange={(event) => handleTypeChange(event.target.value as TransactionType)}
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+                      >
+                        {Object.values(TransactionType).map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="assistant-category"
+                        className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"
+                      >
+                        Category
+                      </label>
+                      <select
+                        id="assistant-category"
+                        value={resolvedCategory}
+                        onChange={(event) => setSelectedCategory(event.target.value)}
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+                      >
+                        {categoryOptionsForType(selectedType).map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   {proposal.recurrence_frequency && (
                     <span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200">
@@ -226,6 +342,10 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                     </span>
                   )}
                 </div>
+
+                <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  AI confidence · {Math.round(proposal.confidence * 100)}%
+                </p>
 
                 {proposal.rationale && (
                   <p className="mt-3 text-sm text-gray-700 dark:text-gray-200">
@@ -249,25 +369,29 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                   />
                   <span>Create recurrence rule</span>
                 </label>
-                {recurrenceEnabled && (
-                  <div className="mt-3 flex items-center gap-3">
-                    <label htmlFor="recurrence-frequency" className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Frequency
-                    </label>
-                    <select
-                      id="recurrence-frequency"
-                      value={recurrenceFrequency}
-                      onChange={(event) => setRecurrenceFrequency(event.target.value)}
-                      className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
-                    >
-                      {RECURRENCE_FREQUENCIES.map((frequency) => (
-                        <option key={frequency} value={frequency}>
-                          {frequency}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div
+                  className={`mt-3 flex min-h-[42px] items-center gap-3 ${
+                    recurrenceEnabled ? 'opacity-100' : 'pointer-events-none opacity-0'
+                  }`}
+                  aria-hidden={!recurrenceEnabled}
+                >
+                  <label htmlFor="recurrence-frequency" className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Frequency
+                  </label>
+                  <select
+                    id="recurrence-frequency"
+                    value={recurrenceFrequency}
+                    disabled={!recurrenceEnabled}
+                    onChange={(event) => setRecurrenceFrequency(event.target.value)}
+                    className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+                  >
+                    {RECURRENCE_FREQUENCIES.map((frequency) => (
+                      <option key={frequency} value={frequency}>
+                        {frequency}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -351,7 +475,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                 </p>
                 <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
                   The assistant wants to change this transaction from {transaction.transaction_type} to{' '}
-                  {proposal.transaction_type}.
+                  {selectedType}.
                 </p>
               </div>
               <div className="flex justify-end gap-2">
@@ -381,6 +505,9 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                 <p className="text-sm font-semibold">Apply to similar</p>
                 <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
                   These uncategorized transactions look close enough to batch with the same answer.
+                </p>
+                <p className="mt-3 text-sm font-medium text-gray-900 dark:text-gray-100">
+                  Apply category: {resolvedCategory}
                 </p>
               </div>
               <div className="space-y-2">
@@ -433,23 +560,6 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
               {savingError && (
                 <p className="text-sm text-red-600 dark:text-red-400">{savingError}</p>
               )}
-            </div>
-          )}
-
-          {phase === 'complete_no_more_uncategorized' && (
-            <div className="mt-4 space-y-3">
-              <p className="text-sm text-gray-700 dark:text-gray-200">
-                No more uncategorized transactions in this view.
-              </p>
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white"
-                  onClick={() => onOpenChange(false)}
-                >
-                  Close
-                </button>
-              </div>
             </div>
           )}
         </Dialog.Content>
