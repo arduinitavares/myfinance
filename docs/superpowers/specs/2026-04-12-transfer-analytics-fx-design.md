@@ -227,6 +227,18 @@ The section should be clearly distinct from spending analytics.
 
 The section is descriptive, not balancing. Cross-border timing differences, embedded FX spread, or incomplete reconciliation may leave visible mismatches between outgoing and incoming transfer totals until a later reconciliation layer exists.
 
+For v1, transfer direction is defined by the signed transaction amount:
+
+- outgoing transfer = `amount < 0`
+- incoming transfer = `amount > 0`
+
+The transfer section should expose a compact structured payload with:
+
+- `subtype`
+- `transaction_count`
+- `total_outgoing_eur`
+- `total_incoming_eur`
+
 ### `/analytics` behavior summary
 
 - expenses card: excludes all transfers
@@ -298,6 +310,10 @@ Analytics uses `EUR`-normalized values.
 
 If normalized analytics is incomplete because historical rates are missing, the UI should show that the report is incomplete rather than silently dropping those values or showing `0`.
 
+### FX rollout note
+
+The transfer-semantics fix and the FX-normalization slice are related but not equally blocked. Transfer analytics and category semantics can be implemented before the final FX source/population decision is settled, as long as the reporting layer clearly scopes non-`EUR` normalization behind the later FX milestone.
+
 ## Reconciliation Readiness
 
 The design should prepare for, but not yet fully implement, linkages between related entries.
@@ -355,9 +371,18 @@ Whenever one category family is set by a commit path, the other two category col
 
 For v1, this is enforced in commit/update/migration logic rather than via a strict database check requiring exactly one non-null category, because the existing app still supports uncategorized transactions and legacy rows with null categories.
 
+If the migration layer can support it cleanly, add a narrower database guard that prevents `transfer_category` from coexisting with `expense_category` or `income_category` on the same row.
+
 ### Legacy note
 
 The current codebase still contains `Internal Transfer` inside the income/expense enums and `Loan Disbursement` inside income categories. Those are legacy compatibility values. New transfer-style flows should move to `TransferCategory` rather than expanding the old income/expense transfer semantics.
+
+After `TransferCategory` lands:
+
+- no new write path should assign `ExpenseCategory.INTERNAL_TRANSFER`
+- no new write path should assign `IncomeCategory.INTERNAL_TRANSFER`
+- UI category pickers for transfer rows must use only `TransferCategory`
+- later cleanup may remove the legacy enum members once migration and compatibility concerns are closed
 
 ### Classification commit rules
 
@@ -390,6 +415,8 @@ Explicit logic is required:
 
 This change must be applied to the current-period, cumulative, and yearly accumulation loops, not only to one summary path.
 
+For v1, transfer totals should not be shoved into ad hoc keys on the existing `FinancialStatistics` row model. Main `FinancialStatistics` stays focused on income/expense savings analytics. The transfer section should be backed by a dedicated transfer-summary query or response shape.
+
 This rule must be applied consistently to:
 
 - overview cards
@@ -400,6 +427,7 @@ This rule must be applied consistently to:
 - essential vs discretionary calculations
 - time-series charts
 - downstream services that consume `FinancialStatistics`, especially financial-health calculations
+- projections and any other features derived from `FinancialStatistics`
 
 After the logic change, historical aggregate tables must be regenerated so old transfer-polluted values do not remain in `FinancialStatistics` or downstream financial-health history.
 
@@ -434,6 +462,12 @@ The assistant must follow the app contract, not invent its own ontology.
 - invalid model outputs must be rejected at the provider boundary
 - frontend transaction types, update payloads, filters, and undo state must represent `TransferCategory` explicitly
 
+The assistant contract should treat category options as a typed family map:
+
+- `Expense` -> `ExpenseCategory[]`
+- `Income` -> `IncomeCategory[]`
+- `Transfer` -> `TransferCategory[]`
+
 This is already partially aligned with the current provider-hardening work and must remain true after transfer subtypes are added.
 
 ### UX implication
@@ -441,6 +475,17 @@ This is already partially aligned with the current provider-hardening work and m
 When classifying a transfer, the modal should show transfer subtype options, not expense or income categories.
 
 The transaction API and frontend transaction model must expose `transfer_category` as a first-class field rather than hiding transfer meaning behind the old income/expense category columns.
+
+### API shape
+
+Transaction responses should expose:
+
+- `transaction_type`
+- `expense_category`
+- `income_category`
+- `transfer_category`
+
+Analytics responses should add a dedicated transfer-summary structure rather than trying to overload existing expense/income category payloads.
 
 ## Loan Tracking Readiness
 
