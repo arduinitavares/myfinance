@@ -50,18 +50,29 @@ Extraction is a strategy interface:
 
 - `BelfiusCsvExtractor`
 - `BeobankCsvExtractor`
-- `PdfAiExtractor`
+- `PdfStatementExtractor`
 
 Known CSVs are parsed deterministically. PDFs use an AI-backed extractor.
+
+For `pdf_statement`, the pipeline still routes using only `strategy_key`. The selected `PdfStatementExtractor` owns the ordered PDF sub-extractor chain internally. This preserves the invariant that the pipeline chooses extractors by `strategy_key` only.
+
+The `PdfStatementExtractor` chain may mix deterministic layout-specific extractors and AI-backed fallback extractors. In v1, deterministic PDF extractors are allowed to run before `PdfAiExtractor` without changing the shared pipeline contract.
 
 ### PDF decomposition
 
 PDF import separates evidence gathering from structured extraction:
 
-`PdfAiExtractor`
+`PdfStatementExtractor`
 - `gather_evidence(file) -> RawEvidence`
   - `TextLayerReader`
   - `OcrReader` fallback
+- `dispatch(evidence) -> ExtractionResult`
+  - ordered deterministic PDF extractors
+  - `PdfAiExtractor` fallback when configured
+
+Deterministic PDF extractors may consume `RawEvidence` directly and return an `ExtractionResult` without any AI request.
+
+`PdfAiExtractor`
 - `extract_structure(evidence) -> ExtractionResult`
   - `AiStructuredExtractor`
 
@@ -127,8 +138,8 @@ Artifacts are stored locally on disk and never committed to git.
 - `original/<filename>`
 - `detection.json`
 - `evidence/...`
-- `ai/request.json`
-- `ai/response.json`
+- `ai/request.json` (present only for AI-backed attempts)
+- `ai/response.json` (present only for AI-backed attempts)
 - `normalized/extraction_result.json`
 
 `backend/app/data/` must remain gitignored broadly.
