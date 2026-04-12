@@ -30,6 +30,8 @@ In scope:
 - app button to trigger folder import
 - backend route to scan and process the configured folder
 - file-hash based skipping of already known PDF import sessions
+- duplicate-safe behavior for the existing single-file PDF upload route
+- migration/backfill rule needed to make `ImportSession.file_hash` unique safely
 - lightweight persisted batch-run summary
 - batch results UI backed by persisted batch data
 - links from batch results into existing import review pages
@@ -57,6 +59,8 @@ Today:
 Because CSV does not currently create `ImportSession` rows, `import_sessions.file_hash` cannot prove that a CSV was "already processed before" if the user imported it through the existing CSV path.
 
 For that reason, v1 batch import is intentionally limited to the import-session lane only.
+
+This design also owns the shared import-contract change required to make PDF dedupe safe across all import entry points.
 
 ## Approaches Considered
 
@@ -168,7 +172,7 @@ Backend rule:
 
 - add a unique constraint on `import_sessions.file_hash`
 - continue to pre-check for an existing hash for the common fast path
-- treat the database constraint as the final source of truth
+- treat the database constraint as the final source of truth for both batch import and single-file upload
 
 If two `POST /imports/batch-folder` requests race on the same PDF:
 
@@ -179,6 +183,44 @@ If two `POST /imports/batch-folder` requests race on the same PDF:
 - it must not surface the conflict as a duplicate-creating success
 
 This keeps dedupe correct without adding a separate batch mutex.
+
+### Shared single-file upload behavior
+
+Because `file_hash` uniqueness applies globally, the existing `POST /imports/upload` route must change as part of this design.
+
+New rule for duplicate single-file PDF upload:
+
+- if upload bytes hash to an existing `ImportSession.file_hash`, the route must not return `500`
+- it must catch the uniqueness conflict or fast-path duplicate lookup
+- it must re-query the existing session by `file_hash`
+- it must return `409 Conflict` with a structured duplicate payload
+
+Duplicate response payload:
+
+- `message`
+- `file_hash`
+- `existing_session` as normal `ImportSessionResponse`
+
+User-facing meaning:
+
+- the file was already uploaded before
+- no new session was created
+- the frontend should offer an `Open Existing` action that routes to the existing review/session page
+
+This replaces the current accidental behavior where duplicate PDF bytes can create a second session and fail only later at approval.
+
+### Existing-data migration rule
+
+Before adding the unique constraint, the migration must handle any pre-existing duplicate `file_hash` groups.
+
+Migration rule for duplicate groups:
+
+- keep the oldest session by `created_at` as the canonical session for that hash
+- preserve all duplicate session rows for audit/history
+- rewrite the non-canonical duplicate rows to a legacy non-colliding `file_hash` form such as `<original_hash>#legacy-duplicate#<session_id>`
+- set those non-canonical rows to `SUPERSEDED` when they are not already in a terminal committed state; if a row is already `COMMITTED` or `PARTIALLY_COMMITTED`, preserve its status and rewrite only the stored `file_hash`
+
+This migration rule exists only to unblock the uniqueness constraint safely. Going forward, real SHA-256 file hashes remain unique across new uploads.
 
 ### Batch-run terminalization on uncaught error
 
@@ -234,6 +276,10 @@ Add routes:
 `GET /imports/batches/{batch_id}` returns the persisted batch summary.
 
 `GET /imports/batches/latest` returns the most recent batch summary by `created_at DESC` for this backend instance so the UI can recover after refresh or a dropped client request.
+
+Related shared route change:
+
+- `POST /imports/upload` now returns either normal `ImportSessionResponse` for a new upload or `409` duplicate payload for an already-known file hash
 
 ## Persisted Batch Summary
 
@@ -301,6 +347,8 @@ The batch item must include:
 - `existing_session_status`
 
 This rule is valid in v1 precisely because supported batch files are limited to the import-session lane.
+
+The same file-hash rule also applies to the normal single-file PDF upload route.
 
 ## Processing Contract
 
@@ -409,6 +457,16 @@ Run status semantics:
 - `completed` means the route finished scanning and item processing, even if some individual items are `failed`
 - `failed` means the batch itself terminated early because of an uncaught route-level processing error after the run was created
 
+### Single-file duplicate response
+
+`POST /imports/upload` duplicate outcome:
+
+- status code `409`
+- payload fields:
+  - `message: str`
+  - `file_hash: str`
+  - `existing_session: ImportSessionResponse`
+
 ## Frontend UX
 
 ### Entry point
@@ -494,6 +552,7 @@ Add tests for:
 - PDF files are processed and CSV files are reported as unsupported
 - file-hash skipping when an existing import session already has the same PDF content
 - uniqueness-conflict path maps concurrent duplicate creation to `skipped_existing`
+- duplicate single-file `/imports/upload` returns `409` with existing session payload, not `500`
 - successful processing creates sessions only for new PDFs
 - PDF files still run extraction immediately
 - non-`pdf_statement` PDF detection path becomes terminal item `failed`
@@ -503,6 +562,7 @@ Add tests for:
 - latest-batch route returns the most recent run
 - missing folder returns `400`
 - too many files returns `400`
+- migration test covers pre-existing duplicate `file_hash` rows before uniqueness is applied
 
 ### Frontend
 
@@ -531,3 +591,4 @@ Add tests for:
 10. Backend runtime resolves the folder through `MYFINANCE_BATCH_IMPORT_DIR`, not by guessing repo-root paths.
 11. Concurrent batch requests do not create duplicate `ImportSession` rows for the same PDF bytes.
 12. Every persisted batch run ends in terminal state `completed` or `failed`, never stuck indefinitely in `running`.
+13. Duplicate single-file PDF upload returns structured `409` duplicate information instead of creating a second session or returning `500`.
