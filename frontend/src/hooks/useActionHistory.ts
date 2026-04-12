@@ -31,7 +31,7 @@ export const useActionHistory = () => {
           success = await restoreCategory(
             lastAction.transactionId,
             lastAction.oldCategory,
-            lastAction.transactionType
+            lastAction.oldTransactionType
           );
           break;
       }

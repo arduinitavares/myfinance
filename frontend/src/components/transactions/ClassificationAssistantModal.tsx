@@ -8,6 +8,7 @@ import {
   ExpenseCategory,
   IncomeCategory,
   Transaction,
+  TransferCategory,
   TransactionType,
 } from '../../types/transaction';
 
@@ -56,7 +57,7 @@ const currentTransactionCategory = (transaction: Transaction) => {
   if (transaction.transaction_type === TransactionType.INCOME) {
     return transaction.income_category ?? 'Uncategorized';
   }
-  return transaction.expense_category ?? transaction.income_category ?? 'Uncategorized';
+  return transaction.transfer_category ?? 'Uncategorized';
 };
 
 const categoryOptionsForType = (transactionType: TransactionType): string[] => {
@@ -66,7 +67,7 @@ const categoryOptionsForType = (transactionType: TransactionType): string[] => {
   if (transactionType === TransactionType.INCOME) {
     return Object.values(IncomeCategory);
   }
-  return [ExpenseCategory.INTERNAL_TRANSFER];
+  return Object.values(TransferCategory);
 };
 
 export const ClassificationAssistantModal: React.FC<ClassificationAssistantModalProps> = ({
@@ -86,6 +87,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
   const [similarMatches, setSimilarMatches] = useState<
     Array<{ transaction_id: number; description: string; amount: number; currency: string; score: number }>
   >([]);
+  const [selectedSimilarIds, setSelectedSimilarIds] = useState<number[]>([]);
   const [pendingAdvanceToNext, setPendingAdvanceToNext] = useState(false);
   const [recurrenceEnabled, setRecurrenceEnabled] = useState(false);
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<string>('monthly');
@@ -102,6 +104,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
     setFeedbackNote('');
     setSavingError(null);
     setSimilarMatches([]);
+    setSelectedSimilarIds([]);
     setPendingAdvanceToNext(false);
   }, [transaction?.id]);
 
@@ -170,6 +173,9 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
       const preview = await classificationService.previewSimilar(sessionId);
       if (preview.matches.length > 0) {
         setSimilarMatches(preview.matches);
+        setSelectedSimilarIds(
+          preview.matches.map((match: { transaction_id: number }) => match.transaction_id)
+        );
         setPendingAdvanceToNext(advanceToNext);
         setPhase('preview_similar');
         return;
@@ -507,20 +513,32 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                   These uncategorized transactions look close enough to batch with the same answer.
                 </p>
                 <p className="mt-3 text-sm font-medium text-gray-900 dark:text-gray-100">
-                  Apply category: {resolvedCategory}
+                  Apply classification: {selectedType} / {resolvedCategory}
                 </p>
               </div>
               <div className="space-y-2">
                 {similarMatches.map((match) => (
-                  <div
+                  <label
                     key={match.transaction_id}
-                    className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-gray-700"
+                    className="flex items-center gap-3 rounded-md border border-gray-200 px-3 py-2 text-sm dark:border-gray-700"
                   >
-                    <span>{match.description}</span>
+                    <input
+                      type="checkbox"
+                      aria-label={`select ${match.description}`}
+                      checked={selectedSimilarIds.includes(match.transaction_id)}
+                      onChange={(event) => {
+                        setSelectedSimilarIds((current) =>
+                          event.target.checked
+                            ? [...current, match.transaction_id]
+                            : current.filter((id) => id !== match.transaction_id)
+                        );
+                      }}
+                    />
+                    <span className="flex-1">{match.description}</span>
                     <span className="text-xs text-gray-500 dark:text-gray-400">
                       {Math.round(match.score * 100)}%
                     </span>
-                  </div>
+                  </label>
                 ))}
               </div>
               <div className="flex justify-end gap-2">
@@ -535,16 +553,17 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                 </button>
                 <button
                   type="button"
-                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white"
+                  disabled={selectedSimilarIds.length === 0}
+                  className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => {
-                    if (!sessionId) {
+                    if (!sessionId || selectedSimilarIds.length === 0) {
                       return;
                     }
                     void (async () => {
                       try {
                         await classificationService.applyBatch(
                           sessionId,
-                          similarMatches.map((match) => match.transaction_id)
+                          selectedSimilarIds
                         );
                         await finalizeSave(pendingAdvanceToNext);
                       } catch (error) {
@@ -554,7 +573,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                     })();
                   }}
                 >
-                  Apply All
+                  Apply Selected
                 </button>
               </div>
               {savingError && (

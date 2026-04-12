@@ -49,8 +49,6 @@ export enum ExpenseCategory {
   TRAVEL = "Travel",
   ENTERTAINMENT = "Entertainment",
   
-  // Neutral/Operational
-  INTERNAL_TRANSFER = "Internal Transfer",
   OTHERS = "Others"
 }
 
@@ -65,7 +63,6 @@ export enum IncomeCategory {
   GIFTS = "Gifts Received",
   REFUNDS = "Refunds",
   LOAN_DISBURSEMENT = "Loan Disbursement",
-  INTERNAL_TRANSFER = "Internal Transfer",
   OTHER = "Other Income"
 }
 
@@ -158,7 +155,8 @@ export interface UpdateCategoryAction {
   transactionId: number;
   oldCategory: ExpenseCategory | IncomeCategory | TransferCategory | undefined;
   newCategory: ExpenseCategory | IncomeCategory | TransferCategory;
-  transactionType: TransactionType;
+  oldTransactionType: TransactionType;
+  newTransactionType: TransactionType;
 }
 
 export type UndoableAction = DeleteTransactionAction | UpdateCategoryAction;

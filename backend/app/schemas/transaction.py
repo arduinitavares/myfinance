@@ -8,17 +8,6 @@ from ..models.transaction import ExpenseCategory, IncomeCategory, TransactionTyp
 def _matches_enum_value(value, enum_member):
     return value == enum_member or value == enum_member.value
 
-
-def _has_legacy_internal_transfer_categories(values):
-    return any(
-        _matches_enum_value(values.get(field), enum_member)
-        for field, enum_member in (
-            ("expense_category", ExpenseCategory.INTERNAL_TRANSFER),
-            ("income_category", IncomeCategory.INTERNAL_TRANSFER),
-        )
-    )
-
-
 def _coerce_values(values, field_names):
     if isinstance(values, dict):
         return dict(values)
@@ -46,17 +35,10 @@ class TransactionBase(BaseModel):
         transaction_type = values.get("transaction_type")
 
         if _matches_enum_value(transaction_type, TransactionType.TRANSFER):
-            if values.get("transfer_category") is None and _has_legacy_internal_transfer_categories(values):
-                values["transfer_category"] = TransferCategory.INTERNAL_TRANSFER
             return values
 
         if values.get("transfer_category") is not None:
             values["transaction_type"] = TransactionType.TRANSFER
-            return values
-
-        if _has_legacy_internal_transfer_categories(values):
-            values["transaction_type"] = TransactionType.TRANSFER
-            values["transfer_category"] = TransferCategory.INTERNAL_TRANSFER
             return values
 
         amount = values.get("amount")

@@ -275,8 +275,8 @@ describe('ClassificationAssistantModal', () => {
     await screen.findByText(/utilities/i);
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    expect(await screen.findByText(/apply category/i)).toBeInTheDocument();
-    expect(screen.getByText(/utilities/i)).toBeInTheDocument();
+    expect(await screen.findByText(/apply classification/i)).toBeInTheDocument();
+    expect(screen.getByText(/expense \/ utilities/i)).toBeInTheDocument();
   });
 
   test('retries with structured feedback and replaces the proposal', async () => {
@@ -371,6 +371,46 @@ describe('ClassificationAssistantModal', () => {
     expect(mockedService.accept).not.toHaveBeenCalled();
   });
 
+  test('transfer proposals expose real transfer category options', async () => {
+    mockedService.propose.mockResolvedValueOnce({
+      id: 101,
+      session_id: 10,
+      turn_index: 0,
+      transaction_type: 'Transfer',
+      category: 'Internal Transfer',
+      confidence: 0.88,
+      recurrence_frequency: null,
+      rationale: 'Own-account movement.',
+      follow_up_question: null,
+      feedback_tag: null,
+      feedback_note: null,
+      prompt_tokens: 10,
+      completion_tokens: 20,
+      created_at: '2026-04-11T12:00:00Z',
+    } as never);
+
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={{
+          id: 3,
+          description: 'Own account transfer',
+          amount: -1000,
+          currency: 'EUR',
+          transaction_type: 'Transfer',
+          transfer_category: 'Internal Transfer',
+        } as any}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    expect(await screen.findByDisplayValue('Transfer')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('Internal Transfer')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /credit card settlement/i })).toBeInTheDocument();
+  });
+
   test('shows apply-to-similar preview before a batch action', async () => {
     mockedService.previewSimilar.mockResolvedValueOnce({
       session: {
@@ -411,6 +451,69 @@ describe('ClassificationAssistantModal', () => {
 
     expect(await screen.findByText(/apply to similar/i)).toBeInTheDocument();
     expect(screen.getByText(/sepa proximus april/i)).toBeInTheDocument();
+  });
+
+  test('applies only checked similar transactions', async () => {
+    mockedService.previewSimilar.mockResolvedValueOnce({
+      session: {
+        id: 10,
+        transaction_id: 1,
+        status: 'accepted',
+      },
+      seed_transaction_id: 1,
+      matches: [
+        {
+          transaction_id: 11,
+          description: 'SEPA PROXIMUS APRIL',
+          amount: -50.1,
+          currency: 'EUR',
+          score: 0.93,
+        },
+        {
+          transaction_id: 12,
+          description: 'SEPA RANDOM NOISE',
+          amount: -12.0,
+          currency: 'EUR',
+          score: 0.72,
+        },
+      ],
+    } as never);
+    mockedService.applyBatch.mockResolvedValueOnce({
+      session: {
+        id: 10,
+        transaction_id: 1,
+        status: 'accepted',
+      },
+      applied_transaction_ids: [11],
+      skipped_transaction_ids: [],
+    } as never);
+
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={{
+          id: 1,
+          description: 'SEPA PROXIMUS',
+          amount: -45.99,
+          currency: 'EUR',
+          transaction_type: 'Expense',
+        } as any}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    await screen.findByText(/utilities/i);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    const secondMatch = await screen.findByRole('checkbox', { name: /select sepa random noise/i });
+    fireEvent.click(secondMatch);
+    fireEvent.click(screen.getByRole('button', { name: /apply selected/i }));
+
+    await waitFor(() => {
+      expect(mockedService.applyBatch).toHaveBeenCalledWith(10, [11]);
+    });
   });
 
   test('lets you turn off recurrence before saving', async () => {

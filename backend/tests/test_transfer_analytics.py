@@ -44,7 +44,7 @@ def _restore_transaction(client, *, description: str):
         "counterparty_name": "Counterparty",
         "counterparty_account": "BE99000000000002",
         "transaction_type": TransactionType.TRANSFER.value,
-        "expense_category": ExpenseCategory.INTERNAL_TRANSFER.value,
+        "transfer_category": TransferCategory.INTERNAL_TRANSFER.value,
         "source_bank": "ing",
     }
 
@@ -93,7 +93,7 @@ def _clear_transactions_and_statistics():
         db_session.close()
 
 
-def test_manual_transfer_update_uses_transfer_category_and_clears_legacy_categories():
+def test_manual_transfer_update_uses_transfer_category_and_clears_other_category_columns():
     client = TestClient(app)
     _reset_database(client)
     transaction = _restore_transaction(client, description="Belfius card settlement")
@@ -139,8 +139,6 @@ def test_statistics_overview_excludes_transfer_transactions():
             description="Card settlement",
             amount=-240.0,
             transaction_type=TransactionType.TRANSFER,
-            expense_category=ExpenseCategory.INTERNAL_TRANSFER,
-            income_category=IncomeCategory.INTERNAL_TRANSFER,
             transfer_category=TransferCategory.CREDIT_CARD_SETTLEMENT,
         )
         db_session.commit()
@@ -195,8 +193,6 @@ def test_category_statistics_ignore_transfer_rows():
             description="Transfer to savings",
             amount=-240.0,
             transaction_type=TransactionType.TRANSFER,
-            expense_category=ExpenseCategory.INTERNAL_TRANSFER,
-            income_category=IncomeCategory.INTERNAL_TRANSFER,
             transfer_category=TransferCategory.INTERNAL_TRANSFER,
         )
         db_session.commit()
@@ -303,6 +299,12 @@ def test_transfer_summary_empty_state_honors_requested_dates():
     }
 
 
+def test_internal_transfer_exists_only_in_transfer_category_enum():
+    assert "INTERNAL_TRANSFER" not in ExpenseCategory.__members__
+    assert "INTERNAL_TRANSFER" not in IncomeCategory.__members__
+    assert TransferCategory.INTERNAL_TRANSFER.value == "Internal Transfer"
+
+
 def test_transfer_summary_rejects_invalid_dates_when_no_transactions_exist():
     client = TestClient(app)
     _clear_transactions_and_statistics()
@@ -333,7 +335,7 @@ def test_normalized_category_for_validates_transfer_categories():
         )
 
 
-def test_commit_transfer_writes_first_class_transfer_category_and_clears_legacy_fields(db_session):
+def test_commit_transfer_writes_first_class_transfer_category_and_clears_other_category_fields(db_session):
     transaction = Transaction(
         account_number="BE55000000000001",
         transaction_date=date(2025, 1, 15),
@@ -475,7 +477,6 @@ def test_category_suggestion_service_skips_transfer_transactions_for_training_an
         counterparty_name="Counterparty",
         counterparty_account="BE99000000000004",
         transaction_type=TransactionType.TRANSFER,
-        expense_category=ExpenseCategory.INTERNAL_TRANSFER,
         transfer_category=TransferCategory.INTERNAL_TRANSFER,
         source_bank="ing",
     )
@@ -576,8 +577,8 @@ def test_upload_csv_skips_transfer_category_suggestions(monkeypatch):
     assert payload[0]["transfer_category"] is None
 
 
-def test_transfer_schema_normalizes_legacy_transfer_rows_from_orm():
-    class LegacyTransferRow:
+def test_transfer_schema_keeps_uncategorized_transfer_rows_uncategorized():
+    class TransferRow:
         account_number = "BE55000000000001"
         transaction_date = date(2025, 1, 15)
         amount = -240.00
@@ -586,22 +587,22 @@ def test_transfer_schema_normalizes_legacy_transfer_rows_from_orm():
         counterparty_name = "Counterparty"
         counterparty_account = "BE99000000000002"
         transaction_type = TransactionType.TRANSFER
-        expense_category = ExpenseCategory.INTERNAL_TRANSFER
-        income_category = IncomeCategory.INTERNAL_TRANSFER
+        expense_category = None
+        income_category = None
         transfer_category = None
         classification_source = None
         recurrence_pattern_id = None
         source_bank = "ing"
 
-    transaction = TransactionRestore.model_validate(LegacyTransferRow(), from_attributes=True)
+    transaction = TransactionRestore.model_validate(TransferRow(), from_attributes=True)
 
     assert transaction.transaction_type == TransactionType.TRANSFER
-    assert transaction.transfer_category == TransferCategory.INTERNAL_TRANSFER
+    assert transaction.transfer_category is None
     assert transaction.expense_category is None
     assert transaction.income_category is None
 
     payload = transaction.model_dump(mode="json")
     assert payload["transaction_type"] == TransactionType.TRANSFER.value
-    assert payload["transfer_category"] == TransferCategory.INTERNAL_TRANSFER.value
+    assert payload["transfer_category"] is None
     assert payload["expense_category"] is None
     assert payload["income_category"] is None

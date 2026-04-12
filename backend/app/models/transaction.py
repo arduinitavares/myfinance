@@ -12,7 +12,7 @@ class ExpenseType(enum.Enum):
     FIXED_ESSENTIAL = "Fixed Essential"       # Ramit's "Fixed Costs" (50-60%)
     GUILT_FREE_DISCRETIONARY = "Discretionary" # Ramit's "Guilt-Free Spending" (20-35%)
     SAVINGS_INVESTMENT = "Savings & Investment" # Ramit's "Investments" & "Savings" (10-20%)
-    NEUTRAL = "Neutral"                       # For internal transfers/adjustments
+    NEUTRAL = "Neutral"                       # For non-spending operational categories
 
 class ExpenseCategory(enum.Enum):
     # --- 1. Fixed Essentials (Survival & Obligations) ---
@@ -44,7 +44,6 @@ class ExpenseCategory(enum.Enum):
     ENTERTAINMENT = "Entertainment"    # Movies, Netflix, Events
     
     # --- 5. Neutral/Operational ---
-    INTERNAL_TRANSFER = "Internal Transfer" # Moving money to another own account
     OTHERS = "Others"
 
     @property
@@ -72,17 +71,10 @@ class ExpenseCategory(enum.Enum):
             ExpenseCategory.SAVINGS
         ]
         
-        # Neutral (Ignored in budget pie charts)
-        neutral = [
-            ExpenseCategory.INTERNAL_TRANSFER
-        ]
-        
         if self in fixed_essential:
             return ExpenseType.FIXED_ESSENTIAL
         elif self in savings_investments:
             return ExpenseType.SAVINGS_INVESTMENT
-        elif self in neutral:
-            return ExpenseType.NEUTRAL
         else:
             # All remaining are Guilt-Free Discretionary (20-35%)
             return ExpenseType.GUILT_FREE_DISCRETIONARY
@@ -114,7 +106,6 @@ class IncomeCategory(enum.Enum):
     GIFTS = "Gifts Received"
     REFUNDS = "Refunds"               # Tax returns, shop refunds
     LOAN_DISBURSEMENT = "Loan Disbursement" # Incoming money from Credit Line/Loans (NOT EARNINGS)
-    INTERNAL_TRANSFER = "Internal Transfer" # Incoming money from another own account
     OTHER = "Other Income"
 
 class TransferCategory(enum.Enum):

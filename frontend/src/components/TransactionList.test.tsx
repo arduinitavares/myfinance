@@ -61,11 +61,11 @@ jest.mock('@radix-ui/react-select', () => {
   };
 
   const Portal = ({ children }: { children: React.ReactNode }) => <>{children}</>;
-  const Content = ({ children }: { children: React.ReactNode }) => {
+  const Content = ({ children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) => {
     const context = React.useContext(SelectContext);
     return (
       <select
-        aria-label="category-select"
+        aria-label={props['aria-label'] ?? 'category-select'}
         value={context?.value ?? ''}
         onChange={(event) => context?.onValueChange(event.target.value)}
       >
@@ -96,7 +96,7 @@ jest.mock('@radix-ui/react-select', () => {
 });
 
 describe('TransactionList', () => {
-  test('shows Ask AI for categorized and uncategorized expense rows and opens the assistant modal', () => {
+  test('shows Ask AI for every row and keeps action buttons fixed-width', () => {
     render(
       <TransactionList
         transactions={[
@@ -142,14 +142,66 @@ describe('TransactionList', () => {
         onTransactionUpdate={async () => {}}
         onTransactionDelete={async () => {}}
         onTransactionsRefresh={async () => {}}
+        />
+    );
+
+    const askAiButtons = screen.getAllByRole('button', { name: /ask ai/i });
+    expect(askAiButtons).toHaveLength(3);
+    askAiButtons.forEach((button) => {
+      expect(button).toHaveClass('w-[88px]');
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: /ask ai/i })[2]);
+
+    expect(screen.getByTestId('assistant-modal')).toHaveTextContent('Transfer to savings');
+  });
+
+  test('tints uncategorized rows and category trigger to make review targets easy to spot', () => {
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 1,
+            account_number: 'BE001',
+            transaction_date: '2026-04-11',
+            amount: -45.99,
+            currency: 'EUR',
+            description: 'Needs category',
+            transaction_type: TransactionType.EXPENSE,
+            source_bank: 'Belfius',
+          },
+          {
+            id: 2,
+            account_number: 'BE002',
+            transaction_date: '2026-04-12',
+            amount: -12.5,
+            currency: 'EUR',
+            description: 'Already done',
+            transaction_type: TransactionType.EXPENSE,
+            expense_category: ExpenseCategory.EATING_OUT,
+            source_bank: 'Belfius',
+          },
+        ]}
+        totalTransactions={2}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={async () => {}}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
       />
     );
 
-    expect(screen.getAllByRole('button', { name: /ask ai/i })).toHaveLength(2);
+    const uncategorizedRow = screen.getByText('Needs category').closest('tr');
+    const categorizedRow = screen.getByText('Already done').closest('tr');
+    const triggers = screen.getAllByRole('button', { name: /select category|eating out/i });
 
-    fireEvent.click(screen.getAllByRole('button', { name: /ask ai/i })[1]);
-
-    expect(screen.getByTestId('assistant-modal')).toHaveTextContent('Bakery');
+    expect(uncategorizedRow).toHaveClass('bg-amber-50/80');
+    expect(categorizedRow).not.toHaveClass('bg-amber-50/80');
+    expect(triggers[0]).toHaveClass('border-amber-300');
+    expect(triggers[1]).not.toHaveClass('border-amber-300');
   });
 
   test('shows Internal Transfer for transfer rows that store the category on transfer_category', () => {
@@ -213,15 +265,63 @@ describe('TransactionList', () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText('category-select'), {
+    fireEvent.change(screen.getByLabelText('category-select-3'), {
       target: { value: TransferCategory.CREDIT_CARD_SETTLEMENT },
     });
+    fireEvent.click(screen.getByRole('button', { name: /apply row 3/i }));
 
     expect(onTransactionUpdate).toHaveBeenCalledWith(
       3,
       TransferCategory.CREDIT_CARD_SETTLEMENT,
       TransactionType.TRANSFER
     );
+  });
+
+  test('lets a row change type and category together before applying', async () => {
+    const onTransactionUpdate = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 8,
+            account_number: 'BE008',
+            transaction_date: '2026-04-13',
+            amount: -240,
+            currency: 'EUR',
+            description: 'Card settlement row',
+            transaction_type: TransactionType.EXPENSE,
+            expense_category: ExpenseCategory.HEALTH,
+            source_bank: 'Belfius',
+          },
+        ]}
+        totalTransactions={1}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={onTransactionUpdate}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('type-select-8'), {
+      target: { value: TransactionType.TRANSFER },
+    });
+    fireEvent.change(screen.getByLabelText('category-select-8'), {
+      target: { value: TransferCategory.CREDIT_CARD_SETTLEMENT },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /apply row 8/i }));
+
+    await waitFor(() => {
+      expect(onTransactionUpdate).toHaveBeenCalledWith(
+        8,
+        TransferCategory.CREDIT_CARD_SETTLEMENT,
+        TransactionType.TRANSFER
+      );
+    });
   });
 
   test('save and next advances to the next uncategorized non-transfer row', async () => {

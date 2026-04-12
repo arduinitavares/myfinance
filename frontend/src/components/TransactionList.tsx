@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory, SortParams } from '../types/transaction';
 import { format } from 'date-fns';
@@ -25,6 +25,10 @@ interface TransactionListProps {
 }
 
 type SortField = 'date' | 'description' | 'amount' | 'type';
+type RowDraft = {
+  transactionType: TransactionType;
+  category: string;
+};
 
 export const TransactionList: React.FC<TransactionListProps> = ({
   transactions,
@@ -50,14 +54,81 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     return transaction.transfer_category;
   };
 
-  const getCategoryOptions = (transaction: Transaction) => {
+  const isUncategorized = (transaction: Transaction) => {
     if (transaction.transaction_type === TransactionType.EXPENSE) {
-      return Object.values(ExpenseCategory);
+      return !transaction.expense_category;
     }
     if (transaction.transaction_type === TransactionType.INCOME) {
+      return !transaction.income_category;
+    }
+    return !transaction.transfer_category;
+  };
+
+  const getCategoryOptionsForType = (transactionType: TransactionType): string[] => {
+    if (transactionType === TransactionType.EXPENSE) {
+      return Object.values(ExpenseCategory);
+    }
+    if (transactionType === TransactionType.INCOME) {
       return Object.values(IncomeCategory);
     }
     return Object.values(TransferCategory);
+  };
+
+  const buildDraft = (transaction: Transaction): RowDraft => ({
+    transactionType: transaction.transaction_type,
+    category: getDisplayedCategory(transaction) ?? '',
+  });
+
+  const [drafts, setDrafts] = useState<Record<number, RowDraft>>({});
+
+  useEffect(() => {
+    setDrafts(
+      Object.fromEntries(transactions.map((transaction) => [transaction.id, buildDraft(transaction)]))
+    );
+  }, [transactions]);
+
+  const getDraft = (transaction: Transaction): RowDraft => drafts[transaction.id] ?? buildDraft(transaction);
+
+  const isDirty = (transaction: Transaction, draft: RowDraft) =>
+    draft.transactionType !== transaction.transaction_type ||
+    draft.category !== (getDisplayedCategory(transaction) ?? '');
+
+  const updateDraft = (transactionId: number, nextDraft: RowDraft) => {
+    setDrafts((current) => ({
+      ...current,
+      [transactionId]: nextDraft,
+    }));
+  };
+
+  const handleDraftTypeChange = (transaction: Transaction, nextType: TransactionType) => {
+    const currentDraft = getDraft(transaction);
+    const options = getCategoryOptionsForType(nextType);
+    const nextCategory = options.includes(currentDraft.category) ? currentDraft.category : (options[0] ?? '');
+    updateDraft(transaction.id, {
+      transactionType: nextType,
+      category: nextCategory,
+    });
+  };
+
+  const handleDraftCategoryChange = (transaction: Transaction, nextCategory: string) => {
+    const currentDraft = getDraft(transaction);
+    updateDraft(transaction.id, {
+      ...currentDraft,
+      category: nextCategory,
+    });
+  };
+
+  const handleApplyRow = async (transaction: Transaction) => {
+    const draft = getDraft(transaction);
+    if (!draft.category) {
+      return;
+    }
+
+    await onTransactionUpdate(
+      transaction.id,
+      draft.category as ExpenseCategory | IncomeCategory | TransferCategory,
+      draft.transactionType
+    );
   };
 
   const handleSort = (field: SortField) => {
@@ -94,15 +165,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   );
 
   const getNextTransaction = (currentId: number): Transaction | null => {
-    const uncategorized = transactions.filter((item) => {
-      if (item.transaction_type === TransactionType.EXPENSE) {
-        return !item.expense_category;
-      }
-      if (item.transaction_type === TransactionType.INCOME) {
-        return !item.income_category;
-      }
-      return false;
-    });
+    const uncategorized = transactions.filter((item) => isUncategorized(item));
     const currentIndex = uncategorized.findIndex((item) => item.id === currentId);
     if (currentIndex === -1) {
       return null;
@@ -136,81 +199,123 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             </tr>
           </thead>
           <tbody className="bg-white text-xs dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
-            {transactions.map((transaction) => (
-              <tr key={transaction.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
-                  {format(new Date(transaction.transaction_date), 'dd/MM/yyyy')}
-                </td>
-                <td className="px-6 py-4 text-gray-900 dark:text-gray-200">
-                  {transaction.description}
-                </td>
-                <td className={`px-6 py-4 whitespace-nowrap ${
-                  transaction.transaction_type === TransactionType.INCOME 
-                    ? 'text-green-600' 
-                    : 'text-red-600'
-                }`}>
-                  {new Intl.NumberFormat('en-US', {
-                    style: 'currency',
-                    currency: transaction.currency,
-                  }).format(Math.abs(transaction.amount))}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
-                  {transaction.transaction_type}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <Select.Root
-                    value={getDisplayedCategory(transaction) ?? ''}
-                    onValueChange={(value) =>
-                      onTransactionUpdate(
-                        transaction.id,
-                        value as ExpenseCategory | IncomeCategory | TransferCategory,
-                        transaction.transaction_type
-                      )
-                    }
-                  >
-                    <Select.Trigger className="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-xs leading-4 font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800">
-                      <Select.Value placeholder="Select category" />
-                    </Select.Trigger>
+            {transactions.map((transaction) => {
+              const uncategorized = isUncategorized(transaction);
+              const draft = getDraft(transaction);
+              const rowDirty = isDirty(transaction, draft);
 
-                    <Select.Portal>
-                      <Select.Content className="overflow-hidden bg-white dark:bg-gray-800 rounded-md shadow-lg border dark:border-gray-700">
-                        <Select.Viewport className="p-1">
-                          {getCategoryOptions(transaction).map((category) => (
-                            <Select.Item
-                              key={category}
-                              value={category}
-                              className="relative flex items-center px-8 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
-                            >
-                              <Select.ItemText>{category}</Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.Viewport>
-                      </Select.Content>
-                    </Select.Portal>
-                  </Select.Root>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex min-w-[136px] items-center justify-end gap-2">
-                    {transaction.transaction_type !== TransactionType.TRANSFER && (
+              return (
+                <tr
+                  key={transaction.id}
+                  className={
+                    uncategorized
+                      ? 'bg-amber-50/80 hover:bg-amber-50 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
+                      : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
+                  }
+                >
+                  <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
+                    {format(new Date(transaction.transaction_date), 'dd/MM/yyyy')}
+                  </td>
+                  <td className="px-6 py-4 text-gray-900 dark:text-gray-200">
+                    {transaction.description}
+                  </td>
+                  <td className={`px-6 py-4 whitespace-nowrap ${
+                    transaction.transaction_type === TransactionType.INCOME 
+                      ? 'text-green-600' 
+                      : 'text-red-600'
+                  }`}>
+                    {new Intl.NumberFormat('en-US', {
+                      style: 'currency',
+                      currency: transaction.currency,
+                    }).format(Math.abs(transaction.amount))}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
+                    <label className="sr-only" htmlFor={`type-select-${transaction.id}`}>
+                      {`type-select-${transaction.id}`}
+                    </label>
+                    <select
+                      id={`type-select-${transaction.id}`}
+                      aria-label={`type-select-${transaction.id}`}
+                      value={draft.transactionType}
+                      onChange={(event) =>
+                        handleDraftTypeChange(transaction, event.target.value as TransactionType)
+                      }
+                      className="w-[126px] rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                    >
+                      {Object.values(TransactionType).map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <Select.Root
+                      value={draft.category}
+                      onValueChange={(value) => handleDraftCategoryChange(transaction, value)}
+                    >
+                      <Select.Trigger
+                        className={`inline-flex w-[176px] items-center justify-between px-3 py-2 border rounded-md shadow-sm text-xs leading-4 font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
+                          uncategorized
+                            ? 'border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200 focus:ring-amber-500 dark:border-amber-400/60 dark:bg-amber-500/20 dark:text-amber-100 dark:hover:bg-amber-500/30'
+                            : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50 focus:ring-blue-500 dark:border-gray-600 dark:text-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600'
+                        }`}
+                      >
+                        <Select.Value placeholder="Select category" />
+                      </Select.Trigger>
+
+                      <Select.Portal>
+                        <Select.Content
+                          aria-label={`category-select-${transaction.id}`}
+                          className="overflow-hidden bg-white dark:bg-gray-800 rounded-md shadow-lg border dark:border-gray-700"
+                        >
+                          <Select.Viewport className="p-1">
+                            {getCategoryOptionsForType(draft.transactionType).map((category) => (
+                              <Select.Item
+                                key={category}
+                                value={category}
+                                className="relative flex items-center px-8 py-2 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-500 hover:text-white rounded-md outline-none cursor-default"
+                              >
+                                <Select.ItemText>{category}</Select.ItemText>
+                              </Select.Item>
+                            ))}
+                          </Select.Viewport>
+                        </Select.Content>
+                      </Select.Portal>
+                    </Select.Root>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex min-w-[228px] items-center justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => setSelectedTransaction(transaction)}
-                        className="inline-flex min-w-[78px] items-center justify-center gap-1 rounded-md border border-blue-500 px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                        className="inline-flex w-[88px] items-center justify-center gap-1 rounded-md border border-blue-500 px-2 py-1 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-950/40"
                       >
                         <SparklesIcon className="h-3.5 w-3.5" />
                         <span>Ask AI</span>
                       </button>
-                    )}
-                    <button
-                      onClick={() => onTransactionDelete(transaction.id)}
-                      className="text-red-600 hover:text-red-900 dark:text-red-500 dark:hover:text-red-400 p-2 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                    >
-                      <TrashIcon className="h-4 w-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      <button
+                        type="button"
+                        aria-label={`apply row ${transaction.id}`}
+                        disabled={!rowDirty || !draft.category}
+                        onClick={() => {
+                          void handleApplyRow(transaction);
+                        }}
+                        className="inline-flex w-[88px] items-center justify-center rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        Apply
+                      </button>
+                      <button
+                        onClick={() => onTransactionDelete(transaction.id)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full p-2 text-red-600 transition-colors hover:bg-red-100 hover:text-red-900 dark:text-red-500 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

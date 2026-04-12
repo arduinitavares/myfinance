@@ -83,9 +83,9 @@ const fetchData = async (filtersOverride?: {
       const transaction = transactions.find(t => t.id === transactionId);
       if (!transaction) return;
 
-      const oldCategory = transactionType === TransactionType.EXPENSE 
+      const oldCategory = transaction.transaction_type === TransactionType.EXPENSE 
         ? transaction.expense_category 
-        : transactionType === TransactionType.INCOME
+        : transaction.transaction_type === TransactionType.INCOME
           ? transaction.income_category
           : transaction.transfer_category;
 
@@ -95,7 +95,8 @@ const fetchData = async (filtersOverride?: {
         transactionId,
         oldCategory,
         newCategory: category,
-        transactionType
+        oldTransactionType: transaction.transaction_type,
+        newTransactionType: transactionType,
       });
 
       const updatedTransaction = await transactionService.updateCategory(

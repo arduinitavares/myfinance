@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { TransactionList } from './TransactionList';
 import { classificationService } from '../services/classificationService';
@@ -65,7 +65,7 @@ describe('TransactionList integration', () => {
     } as never);
   });
 
-  test('keeps the completion state visible after Save & Next reaches the end of the list', async () => {
+  test('closes the assistant after Save & Next reaches the end of the list', async () => {
     const onTransactionsRefresh = jest.fn().mockResolvedValue(undefined);
 
     render(
@@ -98,9 +98,11 @@ describe('TransactionList integration', () => {
     await screen.findByText(/utilities/i);
     fireEvent.click(screen.getByRole('button', { name: /save & next/i }));
 
-    expect(
-      await screen.findByText(/no more uncategorized transactions/i)
-    ).toBeInTheDocument();
-    expect(onTransactionsRefresh).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onTransactionsRefresh).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
   });
 });
