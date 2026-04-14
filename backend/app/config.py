@@ -12,6 +12,7 @@ class Settings:
     data_dir: Path
     database_path: Path
     imports_dir: Path
+    batch_import_dir: Path
     provider_config_path: Path
     provider_example_path: Path
 
@@ -22,6 +23,8 @@ def load_settings() -> Settings:
 
     imports_dir = data_dir / "imports"
     imports_dir.mkdir(parents=True, exist_ok=True)
+
+    batch_import_dir = Path(os.environ.get("MYFINANCE_BATCH_IMPORT_DIR", "/bank_files")).resolve()
 
     database_path = Path(os.environ.get("MYFINANCE_DB_PATH", data_dir / "myfinance.db")).resolve()
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,6 +37,7 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         database_path=database_path,
         imports_dir=imports_dir,
+        batch_import_dir=batch_import_dir,
         provider_config_path=provider_config_path,
         provider_example_path=provider_example_path,
     )

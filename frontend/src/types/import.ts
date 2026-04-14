@@ -76,3 +76,34 @@ export interface ImportReviewPayload {
   issues: ImportIssue[];
   evidence: ImportEvidence | null;
 }
+
+export interface ImportBatchItem {
+  id: number;
+  filename: string;
+  file_hash: string | null;
+  status: 'processed' | 'skipped_existing' | 'unsupported' | 'failed';
+  message: string | null;
+  session_id: number | null;
+  session_status: string | null;
+  existing_session_id: number | null;
+  existing_session_status: string | null;
+  strategy_key: string | null;
+  extractor_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ImportBatchRun {
+  id: number;
+  folder_path: string;
+  status: 'running' | 'completed' | 'failed';
+  message: string | null;
+  total_files: number;
+  processed_count: number;
+  skipped_existing_count: number;
+  unsupported_count: number;
+  failed_count: number;
+  created_at: string;
+  completed_at: string | null;
+  items: ImportBatchItem[];
+}

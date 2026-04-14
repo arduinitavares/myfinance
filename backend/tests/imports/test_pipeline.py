@@ -1,14 +1,17 @@
+import hashlib
 import json
 from datetime import datetime
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.imports.artifacts import ArtifactStore
 from app.imports.contracts import ExtractionResult
-from app.imports.pipeline import ImportPipelineService
+from app.imports.pipeline import ImportPipelineService, ImportUploadSessionCreationError
 from app.imports.state_machine import ImportSessionStatus
 from app.models.imports import ImportSession
+from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 
 
 def test_pipeline_creates_session_persists_upload_and_records_detection(db_session):
@@ -127,6 +130,85 @@ def test_pipeline_rolls_back_and_marks_failed_when_detected_commit_fails(db_sess
     assert isinstance(meta["stage_timestamps"]["detected"], str)
     datetime.fromisoformat(meta["stage_timestamps"]["uploaded"])
     datetime.fromisoformat(meta["stage_timestamps"]["detected"])
+
+
+def test_pipeline_retries_replaceable_owner_after_integrity_error_and_succeeds(db_session, monkeypatch):
+    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+    first_session, _ = ImportPipelineService(db_session).start_upload(
+        filename="statement.pdf",
+        content_type="application/pdf",
+        file_bytes=b"%PDF-1.7\nhello",
+    )
+
+    failed_session = db_session.get(ImportSession, first_session.id)
+    failed_session.status = ImportSessionStatus.FAILED.value
+    db_session.commit()
+
+    original_file = settings.imports_dir / str(first_session.id) / "original" / "statement.pdf"
+    original_file.unlink()
+
+    real_commit = db_session.commit
+    commit_calls = {"count": 0}
+
+    def flaky_commit():
+        commit_calls["count"] += 1
+        if commit_calls["count"] == 1:
+            raise IntegrityError("insert", {}, Exception("duplicate key"))
+        return real_commit()
+
+    monkeypatch.setattr(db_session, "commit", flaky_commit)
+
+    session, detection = ImportPipelineService(db_session).start_upload(
+        filename="statement.pdf",
+        content_type="application/pdf",
+        file_bytes=b"%PDF-1.7\nhello",
+    )
+
+    assert session.id != first_session.id
+    assert session.status == ImportSessionStatus.DETECTED.value
+    assert detection.strategy_key.value == "pdf_statement"
+    assert commit_calls["count"] == 3
+
+    db_session.expire_all()
+    replaced_session = db_session.get(ImportSession, first_session.id)
+    new_session = db_session.get(ImportSession, session.id)
+    expected_file_hash = hashlib.sha256(b"%PDF-1.7\nhello").hexdigest()
+    assert replaced_session.file_hash == f"{expected_file_hash}#legacy-duplicate#{first_session.id}"
+    assert replaced_session.status == ImportSessionStatus.SUPERSEDED.value
+    assert new_session.file_hash == expected_file_hash
+
+
+def test_pipeline_raises_controlled_error_when_duplicate_resolution_keeps_failing(
+    db_session, monkeypatch
+):
+    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+    first_session, _ = ImportPipelineService(db_session).start_upload(
+        filename="statement.pdf",
+        content_type="application/pdf",
+        file_bytes=b"%PDF-1.7\nhello",
+    )
+
+    failed_session = db_session.get(ImportSession, first_session.id)
+    failed_session.status = ImportSessionStatus.FAILED.value
+    db_session.commit()
+
+    original_file = settings.imports_dir / str(first_session.id) / "original" / "statement.pdf"
+    original_file.unlink()
+
+    def always_fail_commit():
+        raise IntegrityError("insert", {}, Exception("duplicate key"))
+
+    monkeypatch.setattr(db_session, "commit", always_fail_commit)
+
+    with pytest.raises(
+        ImportUploadSessionCreationError,
+        match="Unable to create import session after duplicate resolution retries.",
+    ):
+        ImportPipelineService(db_session).start_upload(
+            filename="statement.pdf",
+            content_type="application/pdf",
+            file_bytes=b"%PDF-1.7\nhello",
+        )
 
 
 def test_artifact_store_writes_normalized_extraction_result_json(db_session):

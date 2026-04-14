@@ -1,24 +1,66 @@
-from datetime import datetime
-
 from sqlalchemy import create_engine, inspect, text
 
 from app.database import engine
 from app.database import Base
 import app.database_manager as database_manager
-from app.models.imports import ImportSession
+import app.config as config_module
+from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
 from app.schemas.transaction import Transaction, TransactionCreate
 
 
-def test_import_tables_exist_after_init_database():
-    database_manager.reset_database()
+def test_settings_exposes_batch_import_dir(monkeypatch, tmp_path):
+    batch_dir = tmp_path / "bank_files"
+    monkeypatch.setenv("MYFINANCE_BATCH_IMPORT_DIR", str(batch_dir))
+
+    loaded = config_module.load_settings()
+
+    assert loaded.batch_import_dir == batch_dir.resolve()
+
+
+def test_import_tables_exist_after_init_database(tmp_path, monkeypatch):
+    db_path = tmp_path / "bootstrap.sqlite"
+    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+
+    monkeypatch.setattr(database_manager, "engine", temp_engine)
     database_manager.init_database()
-    tables = set(inspect(engine).get_table_names())
+
+    with temp_engine.begin() as conn:
+        ImportBatchItem.__table__.drop(bind=conn)
+        ImportBatchRun.__table__.drop(bind=conn)
+
+    database_manager.init_database()
+
+    tables = set(inspect(temp_engine).get_table_names())
     assert {
         "import_sessions",
         "import_statement_drafts",
         "import_transaction_drafts",
         "import_issues",
+        "import_batch_runs",
+        "import_batch_items",
     } <= tables
+
+    batch_item_columns = {column["name"] for column in inspect(temp_engine).get_columns("import_batch_items")}
+    assert {
+        "batch_run_id",
+        "filename",
+        "status",
+        "session_id",
+        "existing_session_id",
+    } <= batch_item_columns
+
+    batch_run_columns = {column["name"] for column in inspect(temp_engine).get_columns("import_batch_runs")}
+    assert {
+        "folder_path",
+        "status",
+        "total_files",
+        "processed_count",
+        "skipped_existing_count",
+        "unsupported_count",
+        "failed_count",
+        "created_at",
+        "completed_at",
+    } <= batch_run_columns
 
 
 def test_import_session_timestamp_columns_are_populated_on_insert(db_session):

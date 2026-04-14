@@ -1,22 +1,26 @@
+import hashlib
+
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft
 from app.models.statistics import FinancialStatistics, StatisticsPeriod
 from app.models.transaction import Transaction, TransactionType
+from app.imports.state_machine import ImportSessionStatus
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 
 
 client = TestClient(app)
 
 
-def _upload_pdf(monkeypatch, page_texts):
+def _upload_pdf(monkeypatch, page_texts, *, file_bytes=b"%PDF-1.7\nstub", expected_status=200):
     monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: page_texts)
     response = client.post(
         "/imports/upload",
-        files={"file": ("statement.pdf", b"%PDF-1.7\nstub", "application/pdf")},
+        files={"file": ("statement.pdf", file_bytes, "application/pdf")},
     )
-    assert response.status_code == 200
+    assert response.status_code == expected_status
     return response.json()
 
 
@@ -45,6 +49,51 @@ def test_upload_endpoint_returns_failed_session_shape_when_extraction_is_not_rev
     assert payload["attempt_count"] == 1
     assert payload["error_stage"] == "extraction"
     assert "supported Beobank Mastercard layout" in payload["error_message"]
+
+
+def test_upload_endpoint_returns_duplicate_conflict_for_usable_existing_pdf_session(db_session, monkeypatch):
+    first_session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
+
+    response = client.post(
+        "/imports/upload",
+        files={"file": ("statement.pdf", b"%PDF-1.7\nstub", "application/pdf")},
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    expected_file_hash = hashlib.sha256(b"%PDF-1.7\nstub").hexdigest()
+    assert payload["message"] == "Import session with this file hash already exists."
+    assert payload["file_hash"] == expected_file_hash
+    assert payload["existing_session"]["id"] == first_session["id"]
+    assert payload["existing_session"]["status"] == "awaiting_review"
+
+
+def test_upload_endpoint_replaces_non_retryable_existing_pdf_session(db_session, monkeypatch):
+    first_session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
+    persisted_session = db_session.get(ImportSession, first_session["id"])
+    persisted_session.status = ImportSessionStatus.FAILED.value
+    db_session.commit()
+
+    original_file = settings.imports_dir / str(first_session["id"]) / "original" / "statement.pdf"
+    original_file.unlink()
+
+    response = client.post(
+        "/imports/upload",
+        files={"file": ("statement.pdf", b"%PDF-1.7\nstub", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] != first_session["id"]
+    assert payload["status"] == "awaiting_review"
+
+    db_session.expire_all()
+    replaced_session = db_session.get(ImportSession, first_session["id"])
+    new_session = db_session.get(ImportSession, payload["id"])
+    expected_file_hash = hashlib.sha256(b"%PDF-1.7\nstub").hexdigest()
+    assert replaced_session.file_hash == f"{expected_file_hash}#legacy-duplicate#{first_session['id']}"
+    assert replaced_session.status == ImportSessionStatus.SUPERSEDED.value
+    assert new_session.file_hash == expected_file_hash
 
 
 def test_get_review_payload_returns_statement_transactions_issues_and_evidence(db_session, monkeypatch):
@@ -144,7 +193,11 @@ def test_approve_returns_conflict_when_any_committed_transaction_would_duplicate
     first_response = client.post(f"/imports/{first_session['id']}/approve")
     assert first_response.status_code == 200
 
-    duplicate_session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
+    duplicate_session = _upload_pdf(
+        monkeypatch,
+        SANITIZED_BEOBANK_PAGE_TEXTS,
+        file_bytes=b"%PDF-1.7\nstub-approval-conflict",
+    )
 
     response = client.post(f"/imports/{duplicate_session['id']}/approve")
 

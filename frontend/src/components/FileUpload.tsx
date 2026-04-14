@@ -29,7 +29,9 @@ type UploadFileKind = 'csv' | 'pdf';
 export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateSessionId, setDuplicateSessionId] = useState<number | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [importedCount, setImportedCount] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -55,6 +57,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
     setLoading(true);
     setError(null);
+    setDuplicateSessionId(null);
 
     try {
       fileKind = getFileKind(file);
@@ -89,7 +92,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
       let message = 'Error uploading file. Please try again.';
       if (axios.isAxiosError(err)) {
         const status = err.response?.status;
-        const detail = (err.response?.data as any)?.detail;
+        const responseData = err.response?.data as any;
+        const detail = responseData?.detail ?? responseData;
         if (status === 413) message = 'File too large. Maximum allowed size is 5 MB.';
         else if (status === 415) {
           message = fileKind === 'pdf'
@@ -97,6 +101,10 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
             : 'Unsupported media type. Please upload a CSV file.';
         }
         else if (status === 429) message = 'Too many uploads in a short time. Please wait and try again.';
+        else if (status === 409 && detail?.existing_session?.id) {
+          setDuplicateSessionId(detail.existing_session.id);
+          message = detail.message || 'This file was already uploaded.';
+        }
         else if (status === 400) {
           message = detail || (
             fileKind === 'pdf'
@@ -119,11 +127,51 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
     }
   };
 
+  const handleBatchImport = async () => {
+    setBatchLoading(true);
+    setError(null);
+    setDuplicateSessionId(null);
+
+    try {
+      const batch = await importService.startBatchFolderImport();
+      navigate(`/imports/batches/${batch.id}`);
+    } catch (err) {
+      let message = 'Could not import bank_files right now.';
+      if (axios.isAxiosError(err)) {
+        const detail = (err.response?.data as any)?.detail;
+        if (typeof detail === 'string' && detail.trim()) {
+          message = detail;
+        } else if (typeof detail?.message === 'string' && detail.message.trim()) {
+          message = detail.message;
+        }
+      } else if (err instanceof Error && err.message.trim()) {
+        message = err.message;
+      }
+      setError(message);
+      console.error(err);
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
   return (
-    <div className="p-4">
+    <div className="flex flex-wrap items-center gap-3 p-4">
+      <button
+        type="button"
+        onClick={() => {
+          void handleBatchImport();
+        }}
+        disabled={loading || batchLoading}
+        className="inline-flex items-center rounded-md border border-blue-600 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-gray-400 disabled:text-gray-400 dark:text-blue-200 dark:hover:bg-blue-500/10"
+      >
+        {batchLoading ? 'Processing bank_files...' : 'Import bank_files'}
+      </button>
       <Dialog.Root>
         <Dialog.Trigger asChild>
-          <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+          <button
+            disabled={loading || batchLoading}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-400"
+          >
             Upload File
           </button>
         </Dialog.Trigger>
@@ -141,7 +189,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
                 accept=".csv,.pdf"
                 aria-label="Upload transaction file"
                 onChange={handleFileChange}
-                disabled={loading}
+                disabled={loading || batchLoading}
                 ref={fileInputRef}
                 className="block w-full text-sm text-slate-500
                   file:mr-4 file:py-2 file:px-4
@@ -169,7 +217,16 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
               )}
             </div>
 
-            <div className="mt-6 flex justify-end">
+            <div className="mt-6 flex items-center justify-end gap-3">
+              {duplicateSessionId ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/imports/${duplicateSessionId}/review`)}
+                  className="inline-flex items-center rounded-md border border-blue-600 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-500/10"
+                >
+                  Open Existing
+                </button>
+              ) : null}
               <Dialog.Close asChild>
                 <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 rounded-md">
                   Close

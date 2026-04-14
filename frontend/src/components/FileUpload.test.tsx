@@ -23,6 +23,9 @@ jest.mock('react-router-dom', () => ({
 jest.mock('../services/importService', () => ({
   importService: {
     uploadStatement: jest.fn(),
+    startBatchFolderImport: jest.fn(),
+    getBatchRun: jest.fn(),
+    getLatestBatchRun: jest.fn(),
     getReview: jest.fn(),
     approve: jest.fn(),
     reject: jest.fn(),
@@ -159,5 +162,51 @@ describe('FileUpload', () => {
 
     expect(await screen.findByText(/please upload a pdf statement/i)).toBeInTheDocument();
     expect(screen.queryByText(/please upload a csv file/i)).not.toBeInTheDocument();
+  });
+
+  test('starts bank_files import and navigates to batch results', async () => {
+    mockedImportService.startBatchFolderImport.mockResolvedValue({
+      id: 5,
+      status: 'completed',
+    } as never);
+
+    render(<FileUpload onUploadSuccess={jest.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /import bank_files/i }));
+
+    await waitFor(() => {
+      expect(mockedImportService.startBatchFolderImport).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/imports/batches/5');
+    });
+  });
+
+  test('offers open existing when pdf upload returns a duplicate session conflict', async () => {
+    mockIsAxiosError = true;
+    mockedImportService.uploadStatement.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          message: 'Import session with this file hash already exists.',
+          file_hash: 'abc123',
+          existing_session: {
+            id: 14,
+          },
+        },
+      },
+    } as never);
+
+    render(<FileUpload onUploadSuccess={jest.fn()} />);
+
+    fireEvent.change(screen.getByLabelText(/upload transaction file/i), {
+      target: {
+        files: [new File(['%PDF-1.7'], 'statement.pdf', { type: 'application/pdf' })],
+      },
+    });
+
+    expect(await screen.findByRole('button', { name: /open existing/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /open existing/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/imports/14/review');
   });
 });
