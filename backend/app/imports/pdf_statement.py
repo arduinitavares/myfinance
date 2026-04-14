@@ -1,13 +1,22 @@
 from pathlib import Path
 
+from .belfius_account_pdf import BelfiusAccountPdfExtractor
+from .belfius_card_pdf import BelfiusCardPdfExtractor
 from .beobank_mastercard_pdf import BeobankMastercardPdfExtractor
 from .contracts import ExtractionResult, ImportIssue, RawEvidence
 from .pdf_text import lineize_pdf_pages, read_pdf_page_text
 
 
 class PdfStatementExtractor:
-    def __init__(self, extractors: list[BeobankMastercardPdfExtractor] | None = None) -> None:
-        self.extractors = extractors or [BeobankMastercardPdfExtractor()]
+    def __init__(
+        self,
+        extractors: list[BelfiusCardPdfExtractor | BelfiusAccountPdfExtractor | BeobankMastercardPdfExtractor] | None = None,
+    ) -> None:
+        self.extractors = extractors or [
+            BelfiusCardPdfExtractor(),
+            BelfiusAccountPdfExtractor(),
+            BeobankMastercardPdfExtractor(),
+        ]
 
     def extract(self, *, file_path: str | Path, session_id: str, attempt_number: int) -> tuple[RawEvidence, ExtractionResult]:
         raw_artifact_ref = f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
@@ -41,8 +50,8 @@ class PdfStatementExtractor:
                 raw_artifact_ref=raw_artifact_ref,
                 issues=[
                     ImportIssue(
-                        code="unsupported_beobank_mastercard_layout",
-                        message="The PDF statement does not match the supported Beobank Mastercard layout.",
+                        code="unsupported_pdf_statement_layout",
+                        message="The PDF statement does not match a supported deterministic PDF layout.",
                         blocking=True,
                     )
                 ],
@@ -86,10 +95,49 @@ class PdfStatementExtractor:
                 )
         return issues
 
-    def _select_extractor(self, pages: list[dict]) -> BeobankMastercardPdfExtractor | None:
-        if self._looks_like_beobank_mastercard(pages):
+    def _select_extractor(
+        self,
+        pages: list[dict],
+    ) -> BelfiusCardPdfExtractor | BelfiusAccountPdfExtractor | BeobankMastercardPdfExtractor | None:
+        if self._looks_like_belfius_card_statement(pages):
             return self.extractors[0]
+        if self._looks_like_belfius_account(pages):
+            return self.extractors[1]
+        if self._looks_like_beobank_mastercard(pages):
+            return self.extractors[2]
         return None
+
+    @staticmethod
+    def _looks_like_belfius_card_statement(pages: list[dict]) -> bool:
+        if not pages:
+            return False
+        first_page_lines = [" ".join(line["text"].split()).casefold() for line in pages[0]["lines"]]
+        first_page_text = "\n".join(first_page_lines)
+        has_belfius = "belfius bank nv" in first_page_text
+        has_card_markers = "uitgavenstaat" in first_page_text and "kaartnummer" in first_page_text
+        has_rows = any(
+            any(
+                line_text[:5].count("/") >= 1 and "eur" in line_text
+                for line_text in (" ".join(line["text"].split()).casefold() for line in page["lines"])
+            )
+            for page in pages
+        )
+        return has_belfius and has_card_markers and has_rows
+
+    @staticmethod
+    def _looks_like_belfius_account(pages: list[dict]) -> bool:
+        if not pages:
+            return False
+        first_page_lines = [" ".join(line["text"].split()).casefold() for line in pages[0]["lines"]]
+        first_page_text = "\n".join(first_page_lines)
+        has_account = any("be" in line and "bic:" in line for line in first_page_lines)
+        has_belfius = "belfius bank nv" in first_page_text
+        has_statement_marker = "datum :" in first_page_text or "beats star-rekening" in first_page_text
+        has_rows = any(
+            any(line["text"].strip()[:4].isdigit() and "(VAL." in line["text"] for line in page["lines"])
+            for page in pages
+        )
+        return has_belfius and has_statement_marker and has_account and has_rows
 
     @staticmethod
     def _looks_like_beobank_mastercard(pages: list[dict]) -> bool:

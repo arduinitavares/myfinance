@@ -23,7 +23,7 @@ def test_parser_extracts_transactions_metadata_and_source_locators():
     }
     assert [tx.source_description for tx in result.transactions] == [
         "MERCADO EXTRA-1776 PRAIA GRANDE BR",
-        "WISSELKOSTEN",
+        "WISSELKOSTEN - MERCADO EXTRA-1776 PRAIA GRANDE BR",
         "CIA DO ESPETO PRAIA GRANDE BR Vervolg beschrijving",
         "TERUGBETALING",
         "ONLINE SHOP BRUSSEL BE",
@@ -160,7 +160,7 @@ def test_parser_accepts_real_world_indented_card_headers_and_continuation_pages(
     assert [tx.source_description for tx in result.transactions] == [
         "DE TRAITEUR BV GENT BE",
         "OPENAI *CHATGPT SUBSCR DUBLIN IE",
-        "WISSELKOSTEN",
+        "WISSELKOSTEN - OPENAI *CHATGPT SUBSCR DUBLIN IE",
     ]
     assert [tx.source_locator for tx in result.transactions] == [
         "pdf:p2:l4",
@@ -203,9 +203,52 @@ def test_parser_carries_transaction_date_to_fee_only_continuation_page():
     ]
     assert [tx.source_description for tx in result.transactions] == [
         "AIRLINE SHOP BRUSSELS BE",
-        "WISSELKOSTEN",
+        "WISSELKOSTEN - AIRLINE SHOP BRUSSELS BE",
     ]
     assert [tx.source_locator for tx in result.transactions] == [
         "pdf:p2:l3",
         "pdf:p3:l3-4",
+    ]
+
+
+def test_parser_splits_inline_wisselkosten_rows_from_real_world_layout():
+    page_texts = [
+        (
+            "BEOBANK\n"
+            "MASTERCARD\n"
+            "Uittreksel van uw kredietkaart\n"
+            "Periode 16/02/2026 - 15/03/2026\n"
+        ),
+        (
+            "Kaart xxxx xxxx xxxx 1111\n"
+            "Uw transacties\n"
+            "Datum Beschrijving Bedrag (in €)\n"
+            "08/03/2026 EBN *ADOBE CURITIBA BR 1,49\n"
+            "9,00 BRL WISSELKOERS 0.165556\n"
+            "WISSELKOSTEN 0,03\n"
+            "09/03/2026 CLUBE BANCORBRAS BRASILIA BR 62,66\n"
+            "379,00 BRL WISSELKOERS 0.165330\n"
+            "WISSELKOSTEN 1,32\n"
+            "Uw miles\n"
+        ),
+    ]
+
+    result = BeobankMastercardPdfExtractor().extract_from_pages(
+        lineize_pdf_pages(page_texts),
+        raw_artifact_ref="imports/session-8/evidence/raw.json",
+    )
+
+    assert result.issues == []
+    assert [tx.source_description for tx in result.transactions] == [
+        "EBN *ADOBE CURITIBA BR",
+        "WISSELKOSTEN - EBN *ADOBE CURITIBA BR",
+        "CLUBE BANCORBRAS BRASILIA BR",
+        "WISSELKOSTEN - CLUBE BANCORBRAS BRASILIA BR",
+    ]
+    assert [tx.signed_amount for tx in result.transactions] == [-1.49, -0.03, -62.66, -1.32]
+    assert [tx.source_locator for tx in result.transactions] == [
+        "pdf:p2:l4",
+        "pdf:p2:l6",
+        "pdf:p2:l7",
+        "pdf:p2:l9",
     ]

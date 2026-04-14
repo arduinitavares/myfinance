@@ -32,6 +32,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
   const [error, setError] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [importedCount, setImportedCount] = useState<number | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const getFileKind = (file: File): UploadFileKind | null => {
@@ -55,6 +56,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
     setLoading(true);
     setError(null);
+    setSelectedFileName(file.name);
 
     try {
       fileKind = getFileKind(file);
@@ -83,6 +85,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
 
       const result = await transactionService.uploadCSV(file);
       setImportedCount(Array.isArray(result) ? result.length : null);
+      setSelectedFileName(null);
       onUploadSuccess();
       setShowToast(true);
     } catch (err) {
@@ -154,6 +157,12 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
               <p className="text-xs text-slate-500">
                 Max size: 5 MB. Accepted types: CSV and PDF. Uploads are rate-limited.
               </p>
+
+              {selectedFileName && (
+                <p className="text-xs text-slate-600 break-all">
+                  Selected file: {selectedFileName}
+                </p>
+              )}
               
               {loading && (
                 <Progress.Root className="relative overflow-hidden bg-blue-100 rounded-full w-full h-2">

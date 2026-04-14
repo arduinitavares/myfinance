@@ -72,6 +72,44 @@ def test_openai_compatible_provider_parses_json_and_exposes_usage():
     assert proposal.completion_tokens == 37
 
 
+def test_openai_compatible_provider_prompt_calls_out_exchange_fee_descriptions():
+    transaction = Transaction(
+        id=2,
+        account_number="BE10000000000001",
+        transaction_date=date(2026, 1, 8),
+        amount=-1.44,
+        currency="EUR",
+        description="WISSELKOSTEN - EBN*ADOBE CURITIBA BR",
+        transaction_type=TransactionType.EXPENSE,
+        source_bank="beobank",
+    )
+
+    client = FakeClient()
+    provider = OpenAICompatibleClassifierProvider(
+        name="openrouter",
+        model_name="openai/gpt-4.1-mini",
+        api_key="test-key",
+        base_url="https://openrouter.ai/api/v1",
+        client=client,
+    )
+
+    with pytest.raises(RuntimeError):
+        provider.propose(
+            transaction=transaction,
+            allowed_options_by_type={
+                "Expense": ["Financial Fees", "Entertainment"],
+            },
+            conversation_history=[],
+            feedback_tag=None,
+            feedback_note=None,
+        )
+
+    assert (
+        "Descriptions containing WISSELKOSTEN indicate a currency-exchange fee."
+        in client.chat.completions.kwargs["messages"][0]["content"]
+    )
+
+
 def test_openai_compatible_provider_raises_runtime_error_on_invalid_json():
     class BrokenCompletions:
         def create(self, **kwargs):

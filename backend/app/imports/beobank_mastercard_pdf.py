@@ -11,6 +11,10 @@ FX_HELPER_RE = re.compile(
     r"^(?P<amount>(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})\s+[A-Z]{3}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
     re.IGNORECASE,
 )
+INLINE_WISSELKOSTEN_RE = re.compile(
+    r"^WISSELKOSTEN\s+(?P<amount>-?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})$",
+    re.IGNORECASE,
+)
 PAGE_FOOTER_RE = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
 CARD_HEADER_RE = re.compile(r"^Kaart\s+(?P<card>.+)$", re.IGNORECASE)
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
@@ -48,6 +52,7 @@ class BeobankMastercardPdfExtractor:
         transactions: list[ExtractedTransaction] = []
         statement_metadata = self._extract_statement_metadata(pages)
         last_transaction_date: str | None = None
+        last_transaction_description: str | None = None
 
         card_headers = self._collect_card_headers(pages)
         if len(card_headers) > 1:
@@ -62,11 +67,12 @@ class BeobankMastercardPdfExtractor:
         for page in pages:
             if page["page_number"] == 1:
                 continue
-            last_transaction_date = self._parse_transaction_page(
+            last_transaction_date, last_transaction_description = self._parse_transaction_page(
                 page,
                 transactions,
                 issues,
                 last_transaction_date,
+                last_transaction_description,
             )
 
         return ExtractionResult(
@@ -113,10 +119,11 @@ class BeobankMastercardPdfExtractor:
         transactions: list[ExtractedTransaction],
         issues: list[ImportIssue],
         last_transaction_date: str | None,
-    ) -> str | None:
+        last_transaction_description: str | None,
+    ) -> tuple[str | None, str | None]:
         lines = page["lines"]
         if not lines:
-            return last_transaction_date
+            return last_transaction_date, last_transaction_description
 
         marker_index = self._find_line_index(lines, "Uw transacties")
         body_start = 0
@@ -124,7 +131,7 @@ class BeobankMastercardPdfExtractor:
         if marker_index is None:
             first_content_index = self._find_first_table_content_index(lines, 0)
             if first_content_index is None:
-                return last_transaction_date
+                return last_transaction_date, last_transaction_description
             if page["page_number"] <= 2 or not self._has_required_headers(lines, -1, first_content_index):
                 issues.append(
                     ImportIssue(
@@ -133,12 +140,12 @@ class BeobankMastercardPdfExtractor:
                         blocking=True,
                     )
                 )
-                return last_transaction_date
+                return last_transaction_date, last_transaction_description
         else:
             body_start = marker_index + 1
             first_content_index = self._find_first_table_content_index(lines, body_start)
             if first_content_index is None:
-                return last_transaction_date
+                return last_transaction_date, last_transaction_description
 
         if not self._has_required_headers(lines, body_start - 1, first_content_index):
             issues.append(
@@ -148,7 +155,7 @@ class BeobankMastercardPdfExtractor:
                     blocking=True,
                 )
             )
-            return last_transaction_date
+            return last_transaction_date, last_transaction_description
 
         current_row: dict | None = None
         body_lines = lines[body_start:]
@@ -162,6 +169,7 @@ class BeobankMastercardPdfExtractor:
                 if current_row is not None:
                     transactions.append(self._build_transaction(page["page_number"], current_row))
                     last_transaction_date = current_row["transaction_date"]
+                    last_transaction_description = self._joined_description(current_row)
                     current_row = None
                 break
             line_class = self._classify_line(text, current_row is not None)
@@ -173,14 +181,17 @@ class BeobankMastercardPdfExtractor:
                     index += 1
                     continue
 
+                fee_context = self._fee_context_description(current_row, last_transaction_description)
                 if current_row is not None:
                     transactions.append(self._build_transaction(page["page_number"], current_row))
                     last_transaction_date = current_row["transaction_date"]
+                    last_transaction_description = self._joined_description(current_row)
                     current_row = None
 
                 fee_amount_line = body_lines[index + 1]
                 fee_row = self._build_standalone_wisselkosten_row(
                     transaction_date=inherited_date,
+                    fee_context=fee_context,
                     start_line=line_number,
                     end_line=fee_amount_line["line_number"],
                     amount_text=fee_amount_line["text"],
@@ -188,6 +199,31 @@ class BeobankMastercardPdfExtractor:
                 transactions.append(self._build_transaction(page["page_number"], fee_row))
                 last_transaction_date = inherited_date
                 index += 2
+                continue
+
+            if self._is_inline_wisselkosten(text):
+                inherited_date = current_row["transaction_date"] if current_row is not None else last_transaction_date
+                if inherited_date is None:
+                    issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
+                    index += 1
+                    continue
+
+                fee_context = self._fee_context_description(current_row, last_transaction_description)
+                if current_row is not None:
+                    transactions.append(self._build_transaction(page["page_number"], current_row))
+                    last_transaction_date = current_row["transaction_date"]
+                    last_transaction_description = self._joined_description(current_row)
+                    current_row = None
+
+                fee_row = self._build_inline_wisselkosten_row(
+                    transaction_date=inherited_date,
+                    fee_context=fee_context,
+                    line_number=line_number,
+                    text=text,
+                )
+                transactions.append(self._build_transaction(page["page_number"], fee_row))
+                last_transaction_date = inherited_date
+                index += 1
                 continue
 
             if line_class in {"card_header", "table_header", "fx_helper", "page_footer_noise"}:
@@ -198,6 +234,7 @@ class BeobankMastercardPdfExtractor:
                 if current_row is not None:
                     transactions.append(self._build_transaction(page["page_number"], current_row))
                     last_transaction_date = current_row["transaction_date"]
+                    last_transaction_description = self._joined_description(current_row)
                 current_row = self._build_row_candidate(line_number, text)
                 index += 1
                 continue
@@ -218,8 +255,9 @@ class BeobankMastercardPdfExtractor:
         if current_row is not None:
             transactions.append(self._build_transaction(page["page_number"], current_row))
             last_transaction_date = current_row["transaction_date"]
+            last_transaction_description = self._joined_description(current_row)
 
-        return last_transaction_date
+        return last_transaction_date, last_transaction_description
 
     def _find_line_index(self, lines: list[dict], token: str) -> int | None:
         needle = _collapse_token(token)
@@ -276,13 +314,27 @@ class BeobankMastercardPdfExtractor:
         stripped = " ".join(text.split())
         if not stripped:
             return False
-        if stripped.casefold() == "wisselkosten":
+        if stripped.casefold().startswith("wisselkosten"):
             return False
         if DATE_RE.match(stripped):
             return False
         if AMOUNT_RE.match(stripped):
             return False
         return True
+
+    def _is_inline_wisselkosten(self, text: str) -> bool:
+        return INLINE_WISSELKOSTEN_RE.match(" ".join(text.split())) is not None
+
+    @staticmethod
+    def _fee_context_description(current_row: dict | None, last_transaction_description: str | None) -> str | None:
+        if current_row is None:
+            return last_transaction_description
+        description = BeobankMastercardPdfExtractor._joined_description(current_row)
+        return description or None
+
+    @staticmethod
+    def _joined_description(row: dict) -> str:
+        return " ".join(row["description_parts"]).strip()
 
     def _is_standalone_wisselkosten(self, body_lines: list[dict], index: int) -> bool:
         if body_lines[index]["text"].strip().casefold() != "wisselkosten":
@@ -311,17 +363,43 @@ class BeobankMastercardPdfExtractor:
     def _build_standalone_wisselkosten_row(
         self,
         transaction_date: str,
+        fee_context: str | None,
         start_line: int,
         end_line: int,
         amount_text: str,
     ) -> dict:
         return {
             "transaction_date": transaction_date,
-            "description_parts": ["WISSELKOSTEN"],
+            "description_parts": [self._wisselkosten_description(fee_context)],
             "amount_text": " ".join(amount_text.split()),
             "start_line": start_line,
             "end_line": end_line,
         }
+
+    def _build_inline_wisselkosten_row(
+        self,
+        *,
+        transaction_date: str,
+        fee_context: str | None,
+        line_number: int,
+        text: str,
+    ) -> dict:
+        normalized = " ".join(text.split())
+        match = INLINE_WISSELKOSTEN_RE.match(normalized)
+        assert match is not None
+        return {
+            "transaction_date": transaction_date,
+            "description_parts": [self._wisselkosten_description(fee_context)],
+            "amount_text": match.group("amount"),
+            "start_line": line_number,
+            "end_line": line_number,
+        }
+
+    @staticmethod
+    def _wisselkosten_description(fee_context: str | None) -> str:
+        if fee_context:
+            return f"WISSELKOSTEN - {fee_context}"
+        return "WISSELKOSTEN"
 
     def _build_transaction(self, page_number: int, row: dict) -> ExtractedTransaction:
         signed_amount, debit_credit = _parse_amount_text(row["amount_text"])

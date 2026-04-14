@@ -44,7 +44,7 @@ def test_upload_endpoint_returns_failed_session_shape_when_extraction_is_not_rev
     assert payload["strategy_key"] == "pdf_statement"
     assert payload["attempt_count"] == 1
     assert payload["error_stage"] == "extraction"
-    assert "supported Beobank Mastercard layout" in payload["error_message"]
+    assert "supported deterministic PDF layout" in payload["error_message"]
 
 
 def test_get_review_payload_returns_statement_transactions_issues_and_evidence(db_session, monkeypatch):
@@ -82,7 +82,7 @@ def test_get_review_payload_for_failed_session_returns_issues_and_evidence_witho
     assert payload["session"]["status"] == "failed"
     assert payload["statement"] is None
     assert payload["transactions"] == []
-    assert payload["issues"][0]["issue_code"] == "unsupported_beobank_mastercard_layout"
+    assert payload["issues"][0]["issue_code"] == "unsupported_pdf_statement_layout"
     assert payload["evidence"]["text_blocks"][0]["raw_text"].startswith("Uittreksel")
 
 

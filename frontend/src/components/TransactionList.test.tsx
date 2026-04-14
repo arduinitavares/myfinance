@@ -379,4 +379,44 @@ describe('TransactionList', () => {
       expect(screen.getByTestId('assistant-modal')).toHaveTextContent('Uncategorized two');
     });
   });
+
+  test('keeps the pagination area in a stable list shell and clamps long descriptions', () => {
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 9,
+            account_number: 'BE009',
+            transaction_date: '2026-01-06',
+            amount: -65,
+            currency: 'EUR',
+            description:
+              'Domiciliëringsopdracht voor SEPA STADIUM COUPURE VIA MOLL AUTOMATIC PAYMENT FOR MEMBER 427817SD24-5290-3117-3890Automatic payment for member 427817-Stadium Coupure and period 13/01',
+            transaction_type: TransactionType.EXPENSE,
+            expense_category: ExpenseCategory.PERSONAL,
+            source_bank: 'Belfius',
+          },
+        ]}
+        totalTransactions={1}
+        currentPage={2}
+        totalPages={25}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={async () => {}}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    expect(screen.getByTestId('transaction-list-scroll-region')).toHaveClass('h-[520px]');
+    expect(screen.getByTestId('transaction-list-pagination')).toHaveClass('mt-4', 'shrink-0');
+
+    const description = screen.getByText(/Domiciliëringsopdracht voor SEPA STADIUM COUPURE/i);
+    expect(description).toHaveAttribute(
+      'title',
+      'Domiciliëringsopdracht voor SEPA STADIUM COUPURE VIA MOLL AUTOMATIC PAYMENT FOR MEMBER 427817SD24-5290-3117-3890Automatic payment for member 427817-Stadium Coupure and period 13/01'
+    );
+    expect(description).toHaveClass('line-clamp-2');
+  });
 });

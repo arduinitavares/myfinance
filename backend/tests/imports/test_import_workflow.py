@@ -10,6 +10,8 @@ from app.imports.state_machine import ImportSessionStatus
 from app.imports.workflow import ImportApprovalConflictError, ImportSessionStateError, ImportWorkflowService
 from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
 from app.models.transaction import Transaction
+from tests.imports.fixtures.belfius_account_pages import SANITIZED_BELFIUS_PAGE_TEXTS
+from tests.imports.fixtures.belfius_card_pages import SANITIZED_BELFIUS_CARD_PAGE_TEXTS
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 
 
@@ -104,6 +106,66 @@ def test_extract_detected_session_moves_pdf_statement_to_awaiting_review_and_per
     assert meta_payload["attempt_count"] == 1
 
 
+def test_extract_detected_session_accepts_belfius_account_pdf_and_commits_with_belfius_hints(
+    db_session, monkeypatch
+):
+    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BELFIUS_PAGE_TEXTS)
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="statement.pdf",
+        content_type="application/pdf",
+        file_bytes=b"%PDF-1.7\nstub",
+    )
+
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+
+    assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
+    assert extracted_session.extractor_id == "belfius_account_pdf_v1"
+
+    statement_draft = db_session.query(ImportStatementDraft).one()
+    assert statement_draft.account_number_hint == "BE46 0636 5194 6836"
+    assert statement_draft.card_number_hint is None
+    assert statement_draft.transaction_count == 4
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+
+    committed = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
+    assert len(committed) == 4
+    assert committed[0].source_bank == "Belfius"
+    assert committed[0].account_number == "BE46 0636 5194 6836"
+    assert committed[0].import_session_id == session.id
+
+
+def test_extract_detected_session_accepts_belfius_card_pdf_and_commits_with_card_hint(
+    db_session, monkeypatch
+):
+    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BELFIUS_CARD_PAGE_TEXTS)
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="statement.pdf",
+        content_type="application/pdf",
+        file_bytes=b"%PDF-1.7\nstub",
+    )
+
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+
+    assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
+    assert extracted_session.extractor_id == "belfius_card_pdf_v1"
+
+    statement_draft = db_session.query(ImportStatementDraft).one()
+    assert statement_draft.card_number_hint == "5440 56XX XXXX 3844"
+    assert statement_draft.account_number_hint is None
+    assert statement_draft.transaction_count == 4
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+
+    committed = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
+    assert len(committed) == 4
+    assert committed[0].source_bank == "Belfius"
+    assert committed[0].account_number == "5440 56XX XXXX 3844"
+    assert committed[0].import_session_id == session.id
+
+
 def test_extract_detected_session_fails_closed_on_unsupported_layout(db_session, monkeypatch):
     monkeypatch.setattr(
         "app.imports.pdf_statement.read_pdf_page_text",
@@ -123,7 +185,7 @@ def test_extract_detected_session_fails_closed_on_unsupported_layout(db_session,
     assert extracted_session.status == ImportSessionStatus.FAILED.value
     issues = db_session.query(ImportIssue).all()
     assert [(issue.issue_code, issue.blocking, issue.severity) for issue in issues] == [
-        ("unsupported_beobank_mastercard_layout", True, "error")
+        ("unsupported_pdf_statement_layout", True, "error")
     ]
     assert db_session.query(ImportStatementDraft).count() == 0
     assert db_session.query(ImportTransactionDraft).count() == 0

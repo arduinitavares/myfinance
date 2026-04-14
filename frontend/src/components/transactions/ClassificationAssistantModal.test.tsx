@@ -87,7 +87,8 @@ describe('ClassificationAssistantModal', () => {
     expect(screen.getByText('SEPA PROXIMUS')).toBeInTheDocument();
     expect(screen.getByText('11/04/2026')).toBeInTheDocument();
     expect(screen.getByText(/-\€45\.99/)).toBeInTheDocument();
-    expect(screen.getByText(/saved now · expense · health/i)).toBeInTheDocument();
+    expect(screen.getByText(/current saved classification · expense \/ health/i)).toBeInTheDocument();
+    expect(await screen.findByText(/ai proposal/i)).toBeInTheDocument();
     expect(await screen.findByText(/utilities/i)).toBeInTheDocument();
     expect(screen.getByText(/ai confidence/i)).toBeInTheDocument();
     expect(screen.getByText(/telecom or household bill/i)).toBeInTheDocument();
@@ -103,6 +104,32 @@ describe('ClassificationAssistantModal', () => {
     expect(screen.getByRole('option', { name: /quarterly/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /save & next/i })).toBeInTheDocument();
+  });
+
+  test('renders exchange-fee transactions with the related merchant context', async () => {
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={{
+          id: 44,
+          transaction_date: '2026-01-08',
+          description: 'WISSELKOSTEN - EBN*ADOBE CURITIBA BR',
+          amount: -1.44,
+          currency: 'EUR',
+          transaction_type: 'Expense',
+          expense_category: 'Uncategorized',
+        } as any}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    expect(await screen.findByText(/transaction under review/i)).toBeInTheDocument();
+    expect(screen.getByText(/currency exchange fee/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/related merchant · ebn\*adobe curitiba br/i)
+    ).toBeInTheDocument();
   });
 
   test('save and next closes the modal when there is no next row', async () => {

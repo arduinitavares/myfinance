@@ -79,6 +79,8 @@ class ImportWorkflowService:
 
             session.extractor_id = result.extractor_id
             session.raw_artifact_ref = result.raw_artifact_ref
+            session.provider_hint = result.source_metadata.get("provider_hint") or session.provider_hint
+            session.language_hint = result.source_metadata.get("language") or session.language_hint
             self._persist_issues(session.id, attempt_number, result)
 
             if any(issue.blocking for issue in result.issues):
@@ -373,7 +375,7 @@ class ImportWorkflowService:
             )
 
         transaction_payload = TransactionCreate(
-            account_number=statement.card_number_hint or "",
+            account_number=self._statement_account_number(statement),
             transaction_date=draft.transaction_date,
             amount=draft.signed_amount,
             currency=draft.currency,
@@ -386,7 +388,7 @@ class ImportWorkflowService:
             transfer_category=None,
             classification_source=None,
             recurrence_pattern_id=None,
-            source_bank="Beobank",
+            source_bank=self._source_bank_name(statement),
         )
         payload = transaction_payload.model_dump()
         payload["import_session_id"] = import_session_id
@@ -406,11 +408,11 @@ class ImportWorkflowService:
             existing_transactions = (
                 self.db.query(Transaction)
                 .filter(
-                    Transaction.account_number == (statement.card_number_hint or ""),
+                    Transaction.account_number == self._statement_account_number(statement),
                     Transaction.transaction_date == draft.transaction_date,
                     Transaction.amount == draft.signed_amount,
                     Transaction.currency == draft.currency,
-                    Transaction.source_bank == "Beobank",
+                    Transaction.source_bank == self._source_bank_name(statement),
                 )
                 .all()
             )
@@ -637,6 +639,30 @@ class ImportWorkflowService:
     def _normalize_description(value: str) -> str:
         collapsed = re.sub(r"[^0-9a-z]+", " ", value.casefold())
         return " ".join(collapsed.split())
+
+    @staticmethod
+    def _statement_account_number(statement: ImportStatementDraft) -> str:
+        return statement.account_number_hint or statement.card_number_hint or ""
+
+    def _source_bank_name(self, statement: ImportStatementDraft) -> str:
+        session_bank_name = self._session_bank_name(statement.import_session_id)
+        if session_bank_name != "Unknown":
+            return session_bank_name
+        if statement.account_number_hint:
+            return "Belfius"
+        if statement.card_number_hint:
+            return "Beobank"
+        return "Unknown"
+
+    def _session_bank_name(self, session_id: int) -> str:
+        session = self.db.get(ImportSession, session_id)
+        provider_hint = (session.provider_hint if session is not None else None) or ""
+        normalized = provider_hint.casefold()
+        if normalized == "belfius":
+            return "Belfius"
+        if normalized == "beobank":
+            return "Beobank"
+        return provider_hint.title() if provider_hint else "Unknown"
 
     def _get_session(self, session_id: int) -> ImportSession:
         session = self.db.get(ImportSession, session_id)

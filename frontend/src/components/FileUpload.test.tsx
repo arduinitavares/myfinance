@@ -160,4 +160,19 @@ describe('FileUpload', () => {
     expect(await screen.findByText(/please upload a pdf statement/i)).toBeInTheDocument();
     expect(screen.queryByText(/please upload a csv file/i)).not.toBeInTheDocument();
   });
+
+  test('keeps selected filename visible after a pdf upload error', async () => {
+    mockedImportService.uploadStatement.mockRejectedValue(new Error('network down') as never);
+
+    render(<FileUpload onUploadSuccess={jest.fn()} />);
+
+    fireEvent.change(screen.getByLabelText(/upload transaction file/i), {
+      target: {
+        files: [new File(['%PDF-1.7'], 'beobank-statement.pdf', { type: 'application/pdf' })],
+      },
+    });
+
+    expect(await screen.findByText(/network down/i)).toBeInTheDocument();
+    expect(screen.getByText(/selected file: beobank-statement\.pdf/i)).toBeInTheDocument();
+  });
 });

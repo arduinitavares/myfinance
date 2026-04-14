@@ -4,13 +4,14 @@ from ...models.classification import ClassificationTurn
 from ...models.transaction import Transaction
 
 
-PROMPT_FINGERPRINT = "classification-v1"
+PROMPT_FINGERPRINT = "classification-v2"
 
 SYSTEM_PROMPT = """You classify personal finance transactions.
 Return JSON only.
 Pick exactly one transaction_type from the allowed types.
 Pick exactly one category from the allowed categories.
 Use Transfer only for own-account movements or clear internal transfers.
+Descriptions containing WISSELKOSTEN indicate a currency-exchange fee. Classify the fee transaction itself, not the related merchant purchase. Prefer Financial Fees when that category is allowed.
 Use recurrence_frequency only when the description strongly suggests a recurring pattern.
 Never invent unsupported categories.
 Keep rationale to one short, user-facing sentence.

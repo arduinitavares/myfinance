@@ -181,19 +181,25 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+    <div
+      data-testid="transaction-list-shell"
+      className="flex min-h-0 flex-col"
+    >
+      <div
+        data-testid="transaction-list-scroll-region"
+        className="h-[520px] overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 lg:h-[620px]"
+      >
+        <table className="min-w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700">
           <thead className="bg-gray-50 dark:bg-gray-800">
             <tr>
               <TableHeader field="date" label="Date" />
               <TableHeader field="description" label="Description" />
               <TableHeader field="amount" label="Amount" />
               <TableHeader field="type" label="Type" />
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <th className="w-[190px] px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 Category
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <th className="w-[220px] px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 Actions
               </th>
             </tr>
@@ -213,13 +219,18 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'
                   }
                 >
-                  <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
+                  <td className="w-[110px] px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200 align-top">
                     {formatDisplayDate(transaction.transaction_date)}
                   </td>
-                  <td className="px-6 py-4 text-gray-900 dark:text-gray-200">
-                    {transaction.description}
+                  <td className="px-6 py-4 text-gray-900 dark:text-gray-200 align-top">
+                    <div
+                      title={transaction.description}
+                      className="line-clamp-2 break-words leading-5"
+                    >
+                      {transaction.description}
+                    </div>
                   </td>
-                  <td className={`px-6 py-4 whitespace-nowrap ${
+                  <td className={`w-[120px] px-6 py-4 whitespace-nowrap align-top ${
                     transaction.transaction_type === TransactionType.INCOME 
                       ? 'text-green-600' 
                       : 'text-red-600'
@@ -229,7 +240,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       currency: transaction.currency,
                     }).format(Math.abs(transaction.amount))}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200">
+                  <td className="w-[150px] px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200 align-top">
                     <label className="sr-only" htmlFor={`type-select-${transaction.id}`}>
                       {`type-select-${transaction.id}`}
                     </label>
@@ -249,7 +260,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       ))}
                     </select>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="w-[190px] px-6 py-4 whitespace-nowrap align-top">
                     <Select.Root
                       value={draft.category}
                       onValueChange={(value) => handleDraftCategoryChange(transaction, value)}
@@ -284,7 +295,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       </Select.Portal>
                     </Select.Root>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="w-[220px] px-6 py-4 whitespace-nowrap align-top">
                     <div className="flex min-w-[228px] items-center justify-end gap-2">
                       <button
                         type="button"
@@ -319,12 +330,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
           </tbody>
         </table>
       </div>
-      <Pagination
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPageChange={onPageChange}
-        mode="simple"
-      />
+      <div data-testid="transaction-list-pagination" className="mt-4 shrink-0">
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+          mode="simple"
+        />
+      </div>
       <ClassificationAssistantModal
         open={selectedTransaction !== null}
         transaction={selectedTransaction}

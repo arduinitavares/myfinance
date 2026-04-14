@@ -13,6 +13,11 @@ TRANSFER_LIKE_TERMS = (
     "internal transfer",
 )
 
+EXCHANGE_FEE_TERMS = (
+    "wisselkosten",
+    "exchange fee",
+)
+
 MERCHANT_OR_BILL_LIKE_TERMS = (
     "energie",
     "proximus",
@@ -33,11 +38,21 @@ def looks_like_bill_or_merchant(description: str) -> bool:
     return any(term in normalized for term in MERCHANT_OR_BILL_LIKE_TERMS)
 
 
+def looks_like_exchange_fee(description: str) -> bool:
+    normalized = normalize_for_matching(description)
+    return any(term in normalized for term in EXCHANGE_FEE_TERMS)
+
+
 def has_conflicting_family(seed: Transaction, candidate: Transaction) -> bool:
     seed_transfer = looks_like_transfer(seed.description)
     candidate_transfer = looks_like_transfer(candidate.description)
     seed_bill = looks_like_bill_or_merchant(seed.description)
     candidate_bill = looks_like_bill_or_merchant(candidate.description)
+    seed_exchange_fee = looks_like_exchange_fee(seed.description)
+    candidate_exchange_fee = looks_like_exchange_fee(candidate.description)
+
+    if seed_exchange_fee != candidate_exchange_fee:
+        return True
 
     return (seed_transfer and candidate_bill) or (seed_bill and candidate_transfer)
 

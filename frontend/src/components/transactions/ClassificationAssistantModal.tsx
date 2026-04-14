@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { format } from 'date-fns';
 
 import { useClassificationSession } from '../../hooks/useClassificationSession';
 import { classificationService } from '../../services/classificationService';
@@ -42,6 +41,15 @@ const formatTransactionAmount = (amount: number, currency: string) =>
     style: 'currency',
     currency,
   }).format(amount);
+
+const exchangeFeeContext = (description?: string) => {
+  if (!description) {
+    return null;
+  }
+
+  const match = description.match(/^WISSELKOSTEN\s*-\s*(.+)$/i);
+  return match?.[1]?.trim() || null;
+};
 
 const currentTransactionCategory = (transaction: Transaction) => {
   if (transaction.transaction_type === TransactionType.EXPENSE) {
@@ -91,6 +99,7 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
   const formattedTransactionAmount = transaction
     ? formatTransactionAmount(transaction.amount, transaction.currency)
     : null;
+  const feeContext = exchangeFeeContext(transaction?.description);
 
   useEffect(() => {
     setFeedbackTag('close');
@@ -235,14 +244,28 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
               <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Transaction under review
               </p>
-              <p className="mt-2 break-words text-sm font-medium text-gray-900 dark:text-gray-100">
-                {transaction.description}
-              </p>
+              {feeContext ? (
+                <>
+                  <p className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+                    Currency exchange fee
+                  </p>
+                  <p className="mt-1 break-words text-sm text-gray-700 dark:text-gray-200">
+                    Related merchant · {feeContext}
+                  </p>
+                  <p className="mt-2 break-words text-xs text-gray-500 dark:text-gray-400">
+                    Imported description · {transaction.description}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 break-words text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {transaction.description}
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
                 {formattedTransactionDate && <span>{formattedTransactionDate}</span>}
                 {formattedTransactionAmount && <span>{formattedTransactionAmount}</span>}
                 <span>
-                  Saved now · {transaction.transaction_type} · {currentTransactionCategory(transaction)}
+                  Current saved classification · {transaction.transaction_type} / {currentTransactionCategory(transaction)}
                 </span>
               </div>
             </div>
@@ -291,6 +314,9 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
           {phase === 'waiting_for_feedback' && proposal && (
             <div className="mt-4 space-y-4">
               <div className="rounded-md border border-gray-200 p-4 dark:border-gray-700">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  AI proposal
+                </p>
                 <div className="flex items-start justify-between gap-4">
                   <div className="grid flex-1 gap-3 md:grid-cols-2">
                     <div>
