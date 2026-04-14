@@ -1,4 +1,6 @@
 import json
+import csv
+import io
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -8,6 +10,7 @@ import app.config as config_module
 from app.imports.contracts import DetectionResult, ImportStrategyKey
 from app.imports.batch_folder import ImportBatchFolderService
 from app.main import app
+from app.models.transaction import Transaction
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 
@@ -21,10 +24,39 @@ def _configure_batch_dir(monkeypatch, batch_dir):
     monkeypatch.setattr("app.imports.batch_folder.settings", patched_settings)
 
 
-def test_batch_folder_endpoint_processes_pdf_and_reports_unsupported_csv(db_session, monkeypatch, tmp_path):
+def _make_minimal_ing_csv(*, description: str = "Test CSV row") -> bytes:
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "Account Number",
+            "Account Name",
+            "Counterparty account",
+            "Booking date",
+            "Amount",
+            "Currency",
+            "Description",
+        ]
+    )
+    writer.writerow(
+        [
+            "BE1234567890",
+            "Main Account",
+            "BE0987654321",
+            "01/01/2025",
+            "1.00",
+            "EUR",
+            description,
+        ]
+    )
+    return output.getvalue().encode("utf-8")
+
+
+def test_batch_folder_endpoint_processes_pdf_and_csv_and_ignores_junk_files(db_session, monkeypatch, tmp_path):
     batch_dir = tmp_path / "bank_files"
     batch_dir.mkdir()
-    (batch_dir / "b-transactions.csv").write_text("date,amount\n2026-01-01,10\n", encoding="utf-8")
+    (batch_dir / ".DS_Store").write_text("junk", encoding="utf-8")
+    (batch_dir / "b-transactions.csv").write_bytes(_make_minimal_ing_csv(description="CSV import row"))
     (batch_dir / "A-statement.PDF").write_bytes(b"%PDF-1.7\nstub")
     _configure_batch_dir(monkeypatch, batch_dir)
     monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
@@ -44,9 +76,9 @@ def test_batch_folder_endpoint_processes_pdf_and_reports_unsupported_csv(db_sess
     assert payload["status"] == "completed"
     assert payload["message"] == "Batch import completed."
     assert payload["total_files"] == 2
-    assert payload["processed_count"] == 1
+    assert payload["processed_count"] == 2
     assert payload["skipped_existing_count"] == 0
-    assert payload["unsupported_count"] == 1
+    assert payload["unsupported_count"] == 0
     assert payload["failed_count"] == 0
     assert seen_batch_statuses == ["running", "running"]
     assert [item["filename"] for item in payload["items"]] == ["A-statement.PDF", "b-transactions.csv"]
@@ -63,8 +95,8 @@ def test_batch_folder_endpoint_processes_pdf_and_reports_unsupported_csv(db_sess
     assert pdf_item["completed_at"] is not None
 
     assert csv_item["id"] is not None
-    assert csv_item["status"] == "unsupported"
-    assert csv_item["message"] == "Unsupported batch file type: .csv"
+    assert csv_item["status"] == "processed"
+    assert csv_item["message"] == "Imported 1 new transaction from CSV; skipped 0 duplicate rows."
     assert csv_item["session_id"] is None
     assert csv_item["session_status"] is None
     assert csv_item["existing_session_id"] is None
@@ -76,6 +108,7 @@ def test_batch_folder_endpoint_processes_pdf_and_reports_unsupported_csv(db_sess
 
     db_session.expire_all()
     assert db_session.query(ImportSession).count() == 1
+    assert db_session.query(Transaction).count() == 1
     persisted_batch = db_session.get(ImportBatchRun, payload["id"])
     assert persisted_batch is not None
     assert db_session.query(ImportBatchItem).filter(ImportBatchItem.batch_run_id == payload["id"]).count() == 2
@@ -84,6 +117,50 @@ def test_batch_folder_endpoint_processes_pdf_and_reports_unsupported_csv(db_sess
     assert persisted_response.status_code == 200
     assert persisted_response.json()["id"] == payload["id"]
     assert persisted_response.json()["items"][0]["id"] == pdf_item["id"]
+
+
+def test_batch_folder_rerun_skips_existing_pdf_and_reports_csv_duplicate_rows(db_session, monkeypatch, tmp_path):
+    batch_dir = tmp_path / "bank_files"
+    batch_dir.mkdir()
+    (batch_dir / "b-transactions.csv").write_bytes(_make_minimal_ing_csv(description="Repeatable CSV row"))
+    (batch_dir / "A-statement.PDF").write_bytes(b"%PDF-1.7\nstub")
+    _configure_batch_dir(monkeypatch, batch_dir)
+    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+
+    first_response = client.post("/imports/batch-folder")
+
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+    assert first_payload["processed_count"] == 2
+    assert first_payload["skipped_existing_count"] == 0
+    assert first_payload["failed_count"] == 0
+
+    second_response = client.post("/imports/batch-folder")
+
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+    assert second_payload["status"] == "completed"
+    assert second_payload["total_files"] == 2
+    assert second_payload["processed_count"] == 1
+    assert second_payload["skipped_existing_count"] == 1
+    assert second_payload["unsupported_count"] == 0
+    assert second_payload["failed_count"] == 0
+
+    pdf_item, csv_item = second_payload["items"]
+    assert pdf_item["filename"] == "A-statement.PDF"
+    assert pdf_item["status"] == "skipped_existing"
+    assert pdf_item["existing_session_id"] is not None
+    assert pdf_item["existing_session_status"] is not None
+
+    assert csv_item["filename"] == "b-transactions.csv"
+    assert csv_item["status"] == "processed"
+    assert csv_item["message"] == "Imported 0 new transactions from CSV; skipped 1 duplicate row."
+    assert csv_item["session_id"] is None
+    assert csv_item["existing_session_id"] is None
+
+    db_session.expire_all()
+    assert db_session.query(ImportSession).count() == 1
+    assert db_session.query(Transaction).count() == 1
 
 
 def test_batch_folder_latest_returns_persisted_failed_run(db_session):

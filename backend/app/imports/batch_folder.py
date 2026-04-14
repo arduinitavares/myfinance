@@ -12,6 +12,7 @@ from app.imports.pipeline import ImportPipelineService, ImportUploadDuplicateErr
 from app.imports.state_machine import ImportSessionStatus, assert_transition_allowed
 from app.imports.workflow import ImportWorkflowService
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
+from app.services.csv_import_service import CsvImportService
 
 from .contracts import ImportStrategyKey
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 MAX_BATCH_FILES = 200
 MAX_SUPPORTED_PDFS = 50
-MAX_PDF_SIZE_BYTES = 5 * 1024 * 1024
+MAX_BATCH_FILE_SIZE_BYTES = 5 * 1024 * 1024
 
 
 class ImportBatchRunNotFoundError(Exception):
@@ -91,7 +92,11 @@ class ImportBatchFolderService:
             raise ValueError(f"Configured batch import folder is not a directory: {folder_path}")
 
         files = sorted(
-            [child for child in folder_path.iterdir() if child.is_file()],
+            [
+                child
+                for child in folder_path.iterdir()
+                if child.is_file() and not self._is_ignored_batch_file(child)
+            ],
             key=lambda child: (child.name.casefold(), child.name),
         )
         if len(files) > MAX_BATCH_FILES:
@@ -101,10 +106,14 @@ class ImportBatchFolderService:
         if len(supported_pdfs) > MAX_SUPPORTED_PDFS:
             raise ValueError(f"Configured batch import folder contains too many PDF files: {len(supported_pdfs)} > {MAX_SUPPORTED_PDFS}")
 
-        oversized_pdf = next((file_path for file_path in supported_pdfs if file_path.stat().st_size > MAX_PDF_SIZE_BYTES), None)
-        if oversized_pdf is not None:
+        supported_files = [file_path for file_path in files if self._is_supported_batch_file(file_path)]
+        oversized_file = next(
+            (file_path for file_path in supported_files if file_path.stat().st_size > MAX_BATCH_FILE_SIZE_BYTES),
+            None,
+        )
+        if oversized_file is not None:
             raise ValueError(
-                f"PDF file exceeds the 5 MB batch import limit: {oversized_pdf.name}"
+                f"Batch import file exceeds the 5 MB limit: {oversized_file.name}"
             )
 
         return folder_path, files
@@ -138,6 +147,10 @@ class ImportBatchFolderService:
         return item
 
     def _process_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
+        if self._is_supported_csv(file_path):
+            self._process_csv_file(batch_run, item, file_path)
+            return
+
         if not self._is_supported_pdf(file_path):
             suffix = file_path.suffix.lower() or "(no extension)"
             self._finalize_item(
@@ -213,6 +226,32 @@ class ImportBatchFolderService:
             session_status=snapshot["status"],
             strategy_key=snapshot["strategy_key"],
             extractor_id=snapshot["extractor_id"],
+        )
+
+    def _process_csv_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
+        try:
+            result = CsvImportService.import_file(
+                self.db,
+                file_path=str(file_path),
+                source_filename=file_path.name,
+            )
+        except Exception as exc:
+            self._finalize_item(
+                batch_run,
+                item,
+                status="failed",
+                message=str(exc),
+            )
+            return
+
+        self._finalize_item(
+            batch_run,
+            item,
+            status="processed",
+            message=self._format_csv_result_message(
+                imported_count=result.imported_count,
+                skipped_duplicate_count=result.skipped_duplicate_count,
+            ),
         )
 
     def _mark_session_failed(self, session_id: int, *, stage: str, message: str) -> ImportSession:
@@ -364,8 +403,33 @@ class ImportBatchFolderService:
             logger.warning("Failed to sync import meta state for session %s", session_id, exc_info=True)
 
     @staticmethod
+    def _is_supported_batch_file(file_path: Path) -> bool:
+        return ImportBatchFolderService._is_supported_pdf(file_path) or ImportBatchFolderService._is_supported_csv(file_path)
+
+    @staticmethod
     def _is_supported_pdf(file_path: Path) -> bool:
         return file_path.suffix.lower() == ".pdf"
+
+    @staticmethod
+    def _is_supported_csv(file_path: Path) -> bool:
+        return file_path.suffix.lower() == ".csv"
+
+    @staticmethod
+    def _is_ignored_batch_file(file_path: Path) -> bool:
+        lowered_name = file_path.name.casefold()
+        return (
+            lowered_name in {".ds_store", "thumbs.db", "desktop.ini"}
+            or lowered_name.startswith("._")
+        )
+
+    @staticmethod
+    def _format_csv_result_message(*, imported_count: int, skipped_duplicate_count: int) -> str:
+        transaction_label = "transaction" if imported_count == 1 else "transactions"
+        duplicate_label = "duplicate row" if skipped_duplicate_count == 1 else "duplicate rows"
+        return (
+            f"Imported {imported_count} new {transaction_label} from CSV; "
+            f"skipped {skipped_duplicate_count} {duplicate_label}."
+        )
 
     @staticmethod
     def _utcnow() -> datetime:

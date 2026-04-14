@@ -37,9 +37,9 @@ const batchPayload = {
   status: 'completed',
   message: 'Batch import completed.',
   total_files: 4,
-  processed_count: 1,
+  processed_count: 2,
   skipped_existing_count: 1,
-  unsupported_count: 1,
+  unsupported_count: 0,
   failed_count: 1,
   created_at: '2026-04-12T17:10:00Z',
   completed_at: '2026-04-12T17:11:00Z',
@@ -93,8 +93,8 @@ const batchPayload = {
       id: 4,
       filename: 'delta.csv',
       file_hash: null,
-      status: 'unsupported',
-      message: 'CSV batch import is not supported in v1; use Upload File.',
+      status: 'processed',
+      message: 'Imported 12 new transactions from CSV; skipped 3 duplicate rows.',
       session_id: null,
       session_status: null,
       existing_session_id: null,
@@ -130,6 +130,7 @@ describe('ImportBatchResultsPage', () => {
     expect(screen.getByText('beta.pdf')).toBeInTheDocument();
     expect(screen.getByText('gamma.pdf')).toBeInTheDocument();
     expect(screen.getByText('delta.csv')).toBeInTheDocument();
+    expect(screen.getByText('Imported 12 new transactions from CSV; skipped 3 duplicate rows.')).toBeInTheDocument();
   });
 
   test('offers row actions for new sessions, existing sessions, and failed sessions', async () => {
