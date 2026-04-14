@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
@@ -15,16 +17,16 @@ class ImportIssue(BaseModel):
     code: str
     message: str
     blocking: bool
-    transaction_ref: str | None = None
+    transaction_ref: Optional[str] = None
 
 
 class DetectionResult(BaseModel):
     strategy_key: ImportStrategyKey
-    provider_hint: str | None = None
-    language_hint: str | None = None
-    charset_hint: str | None = None
+    provider_hint: Optional[str] = None
+    language_hint: Optional[str] = None
+    charset_hint: Optional[str] = None
     confidence: float = 0.0
-    page_count: int | None = None
+    page_count: Optional[int] = None
     password_protected: bool = False
     notes: list[str] = Field(default_factory=list)
 
@@ -38,12 +40,12 @@ class RawEvidence(BaseModel):
 class ExtractedTransaction(BaseModel):
     transaction_date: str
     source_description: str
-    canonical_description_en: str | None = None
+    canonical_description_en: Optional[str] = None
     signed_amount: float
     currency: str
     debit_credit: str
-    inferred_category: str | None = None
-    category_source: str | None = None
+    inferred_category: Optional[str] = None
+    category_source: Optional[str] = None
     confidence: dict[str, float] = Field(default_factory=dict)
     source_locator: str
     edit_source: Literal["deterministic_extracted", "ai_extracted", "user_edited"] = "ai_extracted"

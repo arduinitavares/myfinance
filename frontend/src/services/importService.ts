@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 import { API_BASE_URL } from '../config';
-import { ImportReviewPayload, ImportSession } from '../types/import';
+import { ImportBatchRun, ImportReviewPayload, ImportSession } from '../types/import';
 
 export const importService = {
   async uploadStatement(file: File): Promise<ImportSession> {
@@ -33,6 +33,21 @@ export const importService = {
 
   async retry(sessionId: number): Promise<ImportSession> {
     const response = await axios.post(`${API_BASE_URL}/imports/${sessionId}/retry`);
+    return response.data;
+  },
+
+  async startBatchFolderImport(): Promise<ImportBatchRun> {
+    const response = await axios.post(`${API_BASE_URL}/imports/batch-folder`);
+    return response.data;
+  },
+
+  async getBatchRun(batchId: number): Promise<ImportBatchRun> {
+    const response = await axios.get(`${API_BASE_URL}/imports/batches/${batchId}`);
+    return response.data;
+  },
+
+  async getLatestBatchRun(): Promise<ImportBatchRun> {
+    const response = await axios.get(`${API_BASE_URL}/imports/batches/latest`);
     return response.data;
   },
 };

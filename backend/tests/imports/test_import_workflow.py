@@ -461,7 +461,7 @@ def test_approve_session_rejects_duplicate_committed_transactions(db_session, mo
     duplicate_session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
-        file_bytes=b"%PDF-1.7\nstub",
+        file_bytes=b"%PDF-1.7\nstub-approval-conflict",
     )
     ImportWorkflowService(db_session).extract_detected_session(duplicate_session.id)
 

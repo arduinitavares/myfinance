@@ -84,3 +84,38 @@ class ImportIssue(Base):
     issue_code = Column(String(100), nullable=False)
     issue_message = Column(Text, nullable=False)
     transaction_ref = Column(String(255), nullable=True)
+
+
+class ImportBatchRun(Base):
+    __tablename__ = "import_batch_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    folder_path = Column(String(255), nullable=False)
+    status = Column(String(50), nullable=False, index=True)
+    message = Column(Text, nullable=True)
+    total_files = Column(Integer, nullable=False, default=0)
+    processed_count = Column(Integer, nullable=False, default=0)
+    skipped_existing_count = Column(Integer, nullable=False, default=0)
+    unsupported_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class ImportBatchItem(Base):
+    __tablename__ = "import_batch_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_run_id = Column(Integer, ForeignKey("import_batch_runs.id"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    file_hash = Column(String(128), nullable=True)
+    status = Column(String(50), nullable=False, index=True)
+    message = Column(Text, nullable=True)
+    session_id = Column(Integer, ForeignKey("import_sessions.id"), nullable=True, index=True)
+    session_status = Column(String(50), nullable=True)
+    existing_session_id = Column(Integer, ForeignKey("import_sessions.id"), nullable=True, index=True)
+    existing_session_status = Column(String(50), nullable=True)
+    strategy_key = Column(String(50), nullable=True)
+    extractor_id = Column(String(100), nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)

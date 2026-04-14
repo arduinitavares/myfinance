@@ -24,6 +24,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { AuthWrapper } from './components/auth/AuthWrapper';
 import { CategoryAverages } from './components/dashboard/CategoryAverages';
 import { ImportReviewPage } from './components/imports/ImportReviewPage';
+import { ImportBatchResultsPage } from './components/imports/ImportBatchResultsPage';
 
 // Analytics Dashboard Component
 const AnalyticsDashboard = () => {
@@ -198,6 +199,14 @@ function App() {
               element={
                 <MainLayout onUploadSuccess={handleUploadSuccess}>
                   <ImportReviewPage />
+                </MainLayout>
+              }
+            />
+            <Route
+              path="/imports/batches/:batchId"
+              element={
+                <MainLayout onUploadSuccess={handleUploadSuccess}>
+                  <ImportBatchResultsPage />
                 </MainLayout>
               }
             />

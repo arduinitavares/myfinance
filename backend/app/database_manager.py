@@ -1,13 +1,24 @@
 from sqlalchemy import inspect, text
 import logging
+from pathlib import Path
+
 from .database import engine, Base
+from .config import settings
+from .imports.dedupe import ensure_import_session_file_hash_uniqueness
 from .models.classification import ClassificationSession, ClassificationTurn, RecurrencePattern
 from .models.transaction import Transaction
 from .models.statistics import FinancialStatistics, CategoryStatistics
 from .models.financial_health import FinancialHealth, FinancialRecommendation
 from .models.financial_projection import ProjectionScenario, ProjectionParameter, ProjectionResult
 from .models.anomaly import TransactionAnomaly, AnomalyPattern, AnomalyRule
-from .models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
+from .models.imports import (
+    ImportBatchItem,
+    ImportBatchRun,
+    ImportIssue,
+    ImportSession,
+    ImportStatementDraft,
+    ImportTransactionDraft,
+)
 from .services.statistics_service import StatisticsService
 from .services.financial_health_service import FinancialHealthService
 from .services.projection_service import ProjectionService
@@ -15,6 +26,10 @@ from sqlalchemy.orm import Session
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _import_artifact_root() -> Path:
+    return settings.imports_dir
 
 
 def _ensure_classification_transaction_columns() -> None:
@@ -85,6 +100,8 @@ def init_database():
         "anomaly_patterns",
         "anomaly_rules",
         "import_sessions",
+        "import_batch_runs",
+        "import_batch_items",
         "import_statement_drafts",
         "import_transaction_drafts",
         "import_issues",
@@ -140,12 +157,14 @@ def init_database():
                         logger.info("Creating default projection scenarios...")
                         ProjectionService.create_default_scenarios(db)
                 logger.info("Statistics and financial health initialized successfully!")
-            
+
+            ensure_import_session_file_hash_uniqueness(engine, _import_artifact_root())
         except Exception as e:
             logger.error(f"Error creating database tables: {str(e)}")
             raise
     else:
         logger.info("All required database tables already exist")
+        ensure_import_session_file_hash_uniqueness(engine, _import_artifact_root())
 
 
 def _recreate_tables(*, tables=None) -> None:
@@ -186,6 +205,8 @@ def reset_database(reset_type: str = "all"):
         elif reset_type == "imports":
             _recreate_tables(
                 tables=[
+                    ImportBatchItem.__table__,
+                    ImportBatchRun.__table__,
                     ImportIssue.__table__,
                     ImportTransactionDraft.__table__,
                     ImportStatementDraft.__table__,

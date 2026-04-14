@@ -78,3 +78,40 @@ class ImportReviewResponse(BaseModel):
     transactions: list[ImportTransactionDraftResponse] = Field(default_factory=list)
     issues: list[ImportIssueResponse] = Field(default_factory=list)
     evidence: dict[str, Any] | None = None
+
+
+class ImportUploadConflictResponse(BaseModel):
+    message: str
+    file_hash: str
+    existing_session: ImportSessionResponse
+
+
+class ImportBatchItemResponse(BaseModel):
+    id: int
+    filename: str
+    file_hash: str | None = None
+    status: str
+    message: str | None = None
+    session_id: int | None = None
+    session_status: str | None = None
+    existing_session_id: int | None = None
+    existing_session_status: str | None = None
+    strategy_key: str | None = None
+    extractor_id: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class ImportBatchRunResponse(BaseModel):
+    id: int
+    folder_path: str
+    status: str
+    message: str | None = None
+    total_files: int
+    processed_count: int
+    skipped_existing_count: int
+    unsupported_count: int
+    failed_count: int
+    created_at: datetime
+    completed_at: datetime | None = None
+    items: list[ImportBatchItemResponse] = Field(default_factory=list)
