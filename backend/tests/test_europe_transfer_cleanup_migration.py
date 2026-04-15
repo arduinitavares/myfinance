@@ -320,3 +320,36 @@ def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_chang
         "detached_transactions": 0,
         "recomputed_aggregates": 0,
     }
+
+
+def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_signals(db_session):
+    conflicting = _create_transaction(
+        db_session,
+        account_number="BE11950212984548",
+        description="Statement note mentions IBAN BE74950226230607",
+        amount=-210.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.CREDIT_PAYMENT,
+        counterparty_account="BE36950263030181",
+        import_source_description="Imported text also mentions IBAN BE36950263030181",
+    )
+    db_session.commit()
+
+    summary = migrate_europe_iban_reclassification(db_session)
+    db_session.expire_all()
+
+    refreshed = db_session.get(Transaction, conflicting.id)
+    assert refreshed is not None
+    assert refreshed.transaction_type == TransactionType.EXPENSE
+    assert refreshed.transfer_category is None
+    assert refreshed.expense_category == ExpenseCategory.CREDIT_PAYMENT
+    assert db_session.query(FinancialStatistics).count() == 0
+    assert summary == {
+        "updated_transactions": 0,
+        "skipped_wise": 0,
+        "skipped_ambiguous": 1,
+        "skipped_parser_artifact": 0,
+        "deactivated_patterns": 0,
+        "detached_transactions": 0,
+        "recomputed_aggregates": 0,
+    }

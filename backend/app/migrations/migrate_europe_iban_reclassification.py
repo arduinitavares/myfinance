@@ -37,14 +37,22 @@ def _known_role_for_iban(normalized: str | None) -> str | None:
 
 
 def _contains_known_iban(text: str | None) -> str | None:
+    matches = _known_ibans_in_text(text)
+    if len(matches) == 1:
+        return next(iter(matches))
+    return None
+
+
+def _known_ibans_in_text(text: str | None) -> set[str]:
     normalized_text = _normalize_identifier(text)
     if normalized_text is None:
-        return None
+        return set()
 
+    matches: set[str] = set()
     for iban in KNOWN_IBAN_ROLE_MAP:
         if iban in normalized_text:
-            return iban
-    return None
+            matches.add(iban)
+    return matches
 
 
 def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | None:
@@ -62,19 +70,22 @@ def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | 
 
 
 def _counterparty_role_for_transaction(transaction: Transaction) -> str | None:
-    counterparty_role = _known_role_for_iban(_normalize_identifier(transaction.counterparty_account))
-    if counterparty_role is not None:
-        return counterparty_role
+    counterparty_ibans = _counterparty_signal_ibans(transaction)
+    if len(counterparty_ibans) != 1:
+        return None
+    return _known_role_for_iban(next(iter(counterparty_ibans)))
 
-    import_source_iban = _contains_known_iban(transaction.import_source_description)
-    if import_source_iban is not None:
-        return _known_role_for_iban(import_source_iban)
 
-    description_iban = _contains_known_iban(transaction.description)
-    if description_iban is not None:
-        return _known_role_for_iban(description_iban)
+def _counterparty_signal_ibans(transaction: Transaction) -> set[str]:
+    counterparty_ibans: set[str] = set()
 
-    return None
+    normalized_counterparty = _normalize_identifier(transaction.counterparty_account)
+    if normalized_counterparty in KNOWN_IBAN_ROLE_MAP:
+        counterparty_ibans.add(normalized_counterparty)
+
+    counterparty_ibans.update(_known_ibans_in_text(transaction.import_source_description))
+    counterparty_ibans.update(_known_ibans_in_text(transaction.description))
+    return counterparty_ibans
 
 
 def _desired_transfer_category(
@@ -193,6 +204,11 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
                 continue
 
             local_role = _local_role_for_transaction(db, transaction)
+            counterparty_ibans = _counterparty_signal_ibans(transaction)
+            if len(counterparty_ibans) > 1:
+                summary["skipped_ambiguous"] += 1
+                continue
+
             counterparty_role = _counterparty_role_for_transaction(transaction)
             desired_category = _desired_transfer_category(local_role, counterparty_role)
 
