@@ -165,6 +165,10 @@ describe('ImportReviewPage', () => {
   test('renders issues and evidence on the import review page', async () => {
     render(<ImportReviewPage />);
 
+    expect(
+      await screen.findByText(/not imported yet\. these draft rows will only appear in transactions after you approve this import/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /approve & import 1 transaction/i })).toBeInTheDocument();
     expect(await screen.findByText(/minor metadata gap/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /evidence/i })).toBeInTheDocument();
     expect(screen.getByText('DE TRAITEUR BV GENT BE')).toBeInTheDocument();
@@ -180,7 +184,7 @@ describe('ImportReviewPage', () => {
 
     render(<ImportReviewPage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /approve/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /approve & import 1 transaction/i }));
 
     await waitFor(() => {
       expect(mockedImportService.approve).toHaveBeenCalledWith(12);
@@ -195,7 +199,7 @@ describe('ImportReviewPage', () => {
 
     render(<ImportReviewPage />);
 
-    const approveButton = await screen.findByRole('button', { name: /approve/i });
+    const approveButton = await screen.findByRole('button', { name: /approve & import 1 transaction/i });
     expect(approveButton).toBeDisabled();
 
     fireEvent.click(approveButton);

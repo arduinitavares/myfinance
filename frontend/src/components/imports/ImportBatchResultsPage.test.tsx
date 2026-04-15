@@ -131,15 +131,19 @@ describe('ImportBatchResultsPage', () => {
     expect(screen.getByText('gamma.pdf')).toBeInTheDocument();
     expect(screen.getByText('delta.csv')).toBeInTheDocument();
     expect(screen.getByText('Imported 12 new transactions from CSV; skipped 3 duplicate rows.')).toBeInTheDocument();
+    expect(
+      screen.getByText(/some files are still drafts and will not appear in transactions until you review and approve them/i)
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('Needs Approval').length).toBeGreaterThan(0);
   });
 
   test('offers row actions for new sessions, existing sessions, and failed sessions', async () => {
     render(<ImportBatchResultsPage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /review/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /review & approve/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/imports/101/review');
 
-    fireEvent.click(screen.getByRole('button', { name: /open existing/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue review/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/imports/88/review');
 
     fireEvent.click(screen.getByRole('button', { name: /^open$/i }));

@@ -6,6 +6,8 @@ import { importService } from '../../services/importService';
 import { ImportBatchItem, ImportBatchRun } from '../../types/import';
 import { formatDisplayDate } from '../../utils/date';
 
+type DisplayStatus = ImportBatchRun['status'] | ImportBatchItem['status'] | 'needs_approval';
+
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (axios.isAxiosError(error)) {
     const detail = error.response?.data?.detail;
@@ -26,11 +28,18 @@ const getErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+const itemNeedsApproval = (item: ImportBatchItem) =>
+  item.session_status === 'awaiting_review' || item.existing_session_status === 'awaiting_review';
+
 const getItemAction = (
   item: ImportBatchItem
-): { label: 'Review' | 'Open Existing' | 'Open'; sessionId: number } | null => {
+): { label: 'Review & Approve' | 'Continue Review' | 'Open'; sessionId: number } | null => {
   if (item.status === 'skipped_existing' && item.existing_session_id != null) {
-    return { label: 'Open Existing', sessionId: item.existing_session_id };
+    if (item.existing_session_status === 'awaiting_review') {
+      return { label: 'Continue Review', sessionId: item.existing_session_id };
+    }
+
+    return { label: 'Open', sessionId: item.existing_session_id };
   }
 
   if (item.session_id == null) {
@@ -38,19 +47,51 @@ const getItemAction = (
   }
 
   if (item.session_status === 'awaiting_review') {
-    return { label: 'Review', sessionId: item.session_id };
+    return { label: 'Review & Approve', sessionId: item.session_id };
   }
 
   return { label: 'Open', sessionId: item.session_id };
 };
 
-const statusClasses: Record<ImportBatchRun['status'] | ImportBatchItem['status'], string> = {
+const getItemDisplayStatus = (item: ImportBatchItem): DisplayStatus =>
+  itemNeedsApproval(item) ? 'needs_approval' : item.status;
+
+const formatStatusLabel = (status: DisplayStatus) =>
+  status === 'needs_approval'
+    ? 'Needs Approval'
+    : status
+        .split('_')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
+const getItemMessage = (item: ImportBatchItem) => {
+  if (itemNeedsApproval(item)) {
+    if (item.status === 'skipped_existing') {
+      return 'Existing draft found. Continue review and approve to import these transactions.';
+    }
+
+    return 'Draft extracted. Review and approve to import these transactions.';
+  }
+
+  if (item.message?.trim()) {
+    return item.message;
+  }
+
+  if (item.status === 'processed') {
+    return 'Processed.';
+  }
+
+  return 'Ready for review.';
+};
+
+const statusClasses: Record<DisplayStatus, string> = {
   running: 'bg-blue-50 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
   completed: 'bg-green-50 text-green-700 dark:bg-green-500/20 dark:text-green-200',
   failed: 'bg-red-50 text-red-700 dark:bg-red-500/20 dark:text-red-200',
   processed: 'bg-green-50 text-green-700 dark:bg-green-500/20 dark:text-green-200',
   skipped_existing: 'bg-blue-50 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
   unsupported: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200',
+  needs_approval: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
 };
 
 export const ImportBatchResultsPage: React.FC = () => {
@@ -87,19 +128,25 @@ export const ImportBatchResultsPage: React.FC = () => {
     void loadBatch();
   }, [loadBatch]);
 
-  const summaryItems = useMemo(
-    () =>
-      batch
-        ? [
-            { label: 'Processed', value: batch.processed_count },
-            { label: 'Skipped', value: batch.skipped_existing_count },
-            { label: 'Unsupported', value: batch.unsupported_count },
-            { label: 'Failed', value: batch.failed_count },
-            { label: 'Total', value: batch.total_files },
-          ]
-        : [],
+  const needsApprovalCount = useMemo(
+    () => (batch ? batch.items.filter((item) => itemNeedsApproval(item)).length : 0),
     [batch]
   );
+
+  const summaryItems = useMemo(() => {
+    if (!batch) {
+      return [];
+    }
+
+    return [
+      { label: 'Needs Approval', value: needsApprovalCount },
+      { label: 'Processed', value: batch.processed_count },
+      { label: 'Skipped', value: batch.skipped_existing_count },
+      { label: 'Unsupported', value: batch.unsupported_count },
+      { label: 'Failed', value: batch.failed_count },
+      { label: 'Total', value: batch.total_files },
+    ];
+  }, [batch, needsApprovalCount]);
 
   if (loading) {
     return <div className="py-10 text-sm text-gray-600 dark:text-gray-300">Loading batch results...</div>;
@@ -144,7 +191,12 @@ export const ImportBatchResultsPage: React.FC = () => {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Summary</h2>
-        <dl className="grid gap-3 text-sm text-gray-700 dark:text-gray-300 md:grid-cols-2 xl:grid-cols-5">
+        {needsApprovalCount > 0 ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+            Some files are still drafts and will not appear in Transactions until you review and approve them.
+          </div>
+        ) : null}
+        <dl className="grid gap-3 text-sm text-gray-700 dark:text-gray-300 md:grid-cols-2 xl:grid-cols-6">
           {summaryItems.map((item) => (
             <div key={item.label}>
               <dt className="font-medium text-gray-500 dark:text-gray-400">{item.label}</dt>
@@ -180,16 +232,17 @@ export const ImportBatchResultsPage: React.FC = () => {
             <tbody className="divide-y divide-gray-200 bg-white text-sm dark:divide-gray-700 dark:bg-gray-900">
               {batch.items.map((item) => {
                 const action = getItemAction(item);
+                const displayStatus = getItemDisplayStatus(item);
 
                 return (
                   <tr key={item.id}>
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{item.filename}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ${statusClasses[item.status]}`}>
-                        {item.status}
+                      <span className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ${statusClasses[displayStatus]}`}>
+                        {formatStatusLabel(displayStatus)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{item.message ?? 'Ready for review.'}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{getItemMessage(item)}</td>
                     <td className="px-4 py-3">
                       {action ? (
                         <button

@@ -73,6 +73,11 @@ export const ImportReviewPage: React.FC = () => {
   const hasBlockingIssues = useMemo(() => review?.issues.some((issue) => issue.blocking) ?? false, [review?.issues]);
   const canApprove = awaitingReview && !hasBlockingIssues;
   const retryable = review?.session.status === 'awaiting_review' || review?.session.status === 'failed';
+  const draftTransactionCount = review?.transactions.length ?? 0;
+  const approveLabel =
+    activeAction === 'approve'
+      ? 'Importing...'
+      : `Approve & Import ${draftTransactionCount} ${draftTransactionCount === 1 ? 'Transaction' : 'Transactions'}`;
 
   const handleApprove = async () => {
     if (!canApprove) {
@@ -182,7 +187,7 @@ export const ImportReviewPage: React.FC = () => {
             disabled={!canApprove || activeAction !== null}
             className="inline-flex items-center rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-400"
           >
-            {activeAction === 'approve' ? 'Approving...' : 'Approve'}
+            {approveLabel}
           </button>
           <button
             type="button"
@@ -202,6 +207,12 @@ export const ImportReviewPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {awaitingReview ? (
+        <section className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+          Not imported yet. These draft rows will only appear in Transactions after you approve this import.
+        </section>
+      ) : null}
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Session</h2>
