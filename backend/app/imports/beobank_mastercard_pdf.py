@@ -186,7 +186,7 @@ class BeobankMastercardPdfExtractor:
 
             if self._is_malformed_standalone_wisselkosten(body_lines, index):
                 issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                index += 1
+                index += 2
                 continue
 
             if self._is_standalone_wisselkosten(body_lines, index):
