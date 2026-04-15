@@ -21,6 +21,10 @@ INLINE_WISSELKOSTEN_RE = re.compile(
     rf"^WISSELKOSTEN\s+(?P<amount>{SIGNED_AMOUNT_BODY})$",
     re.IGNORECASE,
 )
+MALFORMED_FX_HELPER_RE = re.compile(
+    r"^(?P<amount>-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})\s+[A-Z]{3}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
+    re.IGNORECASE,
+)
 PAGE_FOOTER_RE = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
 CARD_HEADER_RE = re.compile(r"^Kaart\s+(?P<card>.+)$", re.IGNORECASE)
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
@@ -236,6 +240,11 @@ class BeobankMastercardPdfExtractor:
                 index += 1
                 continue
 
+            if line_class == "malformed_fx_helper_candidate":
+                issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
+                index += 1
+                continue
+
             if line_class == "malformed_row_candidate":
                 issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
                 index += 1
@@ -307,6 +316,8 @@ class BeobankMastercardPdfExtractor:
             return "fx_helper"
         if PAGE_FOOTER_RE.match(normalized):
             return "page_footer_noise"
+        if self._is_malformed_fx_helper_candidate(normalized):
+            return "malformed_fx_helper_candidate"
         if self._is_malformed_row_candidate(normalized):
             return "malformed_row_candidate"
         if self._is_row_start(normalized):
@@ -327,6 +338,9 @@ class BeobankMastercardPdfExtractor:
 
     def _is_malformed_row_candidate(self, text: str) -> bool:
         return MALFORMED_ROW_RE.match(text) is not None
+
+    def _is_malformed_fx_helper_candidate(self, text: str) -> bool:
+        return MALFORMED_FX_HELPER_RE.match(text) is not None
 
     def _is_continuation(self, text: str) -> bool:
         stripped = " ".join(text.split())
