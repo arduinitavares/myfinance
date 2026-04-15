@@ -70,7 +70,8 @@ def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | 
 
 
 def _is_europe_target_transaction(db: Session, transaction: Transaction) -> bool:
-    if transaction.source_bank in {"beobank", "belfius"}:
+    normalized_source_bank = (transaction.source_bank or "").strip().lower()
+    if normalized_source_bank in {"beobank", "belfius"}:
         return True
 
     if transaction.import_session_id is None:
