@@ -186,6 +186,66 @@ def test_parser_accepts_space_grouped_amounts_in_inline_wisselkosten_rows():
     assert [tx.debit_credit for tx in result.transactions] == ["debit", "debit"]
 
 
+def test_parser_accepts_space_grouped_amounts_in_standalone_wisselkosten_rows():
+    page_texts = [
+        (
+            "BEOBANK\n"
+            "MASTERCARD\n"
+            "Uittreksel van uw kredietkaart\n"
+            "Periode 16/02/2026 - 15/03/2026\n"
+        ),
+        (
+            "Kaart xxxx xxxx xxxx 1111\n"
+            "Uw transacties\n"
+            "Datum Beschrijving Bedrag (in €)\n"
+            "08/03/2026 EBN *ADOBE CURITIBA BR 1,49\n"
+            "9 000,00 BRL WISSELKOERS 0.165556\n"
+            "WISSELKOSTEN\n"
+            "1 234,56\n"
+            "Uw miles\n"
+        ),
+    ]
+
+    result = BeobankMastercardPdfExtractor().extract_from_pages(
+        lineize_pdf_pages(page_texts),
+        raw_artifact_ref="imports/session-4e/attempts/1/evidence/raw.json",
+    )
+
+    assert result.issues == []
+    assert [tx.source_description for tx in result.transactions] == [
+        "EBN *ADOBE CURITIBA BR",
+        "WISSELKOSTEN - EBN *ADOBE CURITIBA BR",
+    ]
+    assert [tx.signed_amount for tx in result.transactions] == [-1.49, -1234.56]
+    assert [tx.debit_credit for tx in result.transactions] == ["debit", "debit"]
+
+
+def test_parser_blocks_malformed_mixed_separator_row():
+    page_texts = [
+        (
+            "BEOBANK\n"
+            "MASTERCARD\n"
+            "Uittreksel van uw kredietkaart\n"
+            "Periode 01/02/2026 - 28/02/2026\n"
+        ),
+        (
+            "Kaart xxxx xxxx xxxx 1111\n"
+            "Uw transacties\n"
+            "Datum Beschrijving Bedrag (in €)\n"
+            "12/02/2026 SHOP 1.234 567,89\n"
+            "Uw miles\n"
+        ),
+    ]
+
+    result = BeobankMastercardPdfExtractor().extract_from_pages(
+        lineize_pdf_pages(page_texts),
+        raw_artifact_ref="imports/session-4f/attempts/1/evidence/raw.json",
+    )
+
+    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert result.transactions == []
+
+
 def test_amount_rejects_mixed_grouping_separators():
     assert not AMOUNT_RE.match("1.234 567,89")
     assert not AMOUNT_RE.match("1 234.567,89")

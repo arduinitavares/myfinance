@@ -17,6 +17,7 @@ INLINE_WISSELKOSTEN_RE = re.compile(
     rf"^WISSELKOSTEN\s+(?P<amount>{SIGNED_AMOUNT_BODY})$",
     re.IGNORECASE,
 )
+TRAILING_GROUPED_NUMBER_RE = re.compile(r"(?:\d{1,3}(?:[. ]\d{3})+)$")
 PAGE_FOOTER_RE = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
 CARD_HEADER_RE = re.compile(r"^Kaart\s+(?P<card>.+)$", re.IGNORECASE)
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
@@ -272,6 +273,8 @@ class BeobankMastercardPdfExtractor:
         for index, line in enumerate(lines[start_index:], start=start_index):
             if self._classify_line(line["text"], has_active_row=False) == "row_start":
                 return index
+            if self._looks_like_row_candidate(line["text"]):
+                return index
             if self._is_standalone_wisselkosten(lines, index):
                 return index
         return None
@@ -304,6 +307,18 @@ class BeobankMastercardPdfExtractor:
 
     def _is_row_start(self, text: str) -> bool:
         match = ROW_RE.match(text)
+        if not match:
+            return False
+        try:
+            _parse_amount_text(match.group("amount"))
+        except ValueError:
+            return False
+        if TRAILING_GROUPED_NUMBER_RE.search(" ".join(match.group("description").split())):
+            return False
+        return True
+
+    def _looks_like_row_candidate(self, text: str) -> bool:
+        match = ROW_RE.match(" ".join(text.split()))
         if not match:
             return False
         try:
