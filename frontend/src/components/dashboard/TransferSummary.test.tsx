@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { TransferSummary } from './TransferSummary';
 import { statisticService } from '../../services/statisticService';
@@ -115,7 +115,9 @@ describe('TransferSummary', () => {
     expect(presetSelect).toHaveValue('this_month');
     expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(1);
 
-    fireEvent.change(presetSelect, { target: { value: 'last_month' } });
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'last_month' } });
+    });
 
     await waitFor(() => {
       expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(2, '2026-03-01', '2026-03-31');
@@ -138,13 +140,17 @@ describe('TransferSummary', () => {
     render(<TransferSummary />);
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
-    fireEvent.change(presetSelect, { target: { value: 'specific_month' } });
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'specific_month' } });
+    });
 
     expect(screen.getByLabelText(/transfer summary month/i)).toBeInTheDocument();
     expect(mockedGetTransferSummary).toHaveBeenCalledTimes(1);
 
-    fireEvent.change(screen.getByLabelText(/transfer summary month/i), {
-      target: { value: '2026-02' },
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/transfer summary month/i), {
+        target: { value: '2026-02' },
+      });
     });
 
     await waitFor(() => {

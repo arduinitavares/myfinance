@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { statisticService, TransferSummaryResponse } from '../../services/statisticService';
 import { Loading } from '../common/Loading';
 import { formatDisplayDate } from '../../utils/date';
@@ -22,22 +22,27 @@ export const TransferSummary: React.FC = () => {
   const [anchorDate, setAnchorDate] = useState<string | null>(null);
   const [preset, setPreset] = useState<TransferSummaryPreset>(DEFAULT_TRANSFER_SUMMARY_PRESET);
   const [specificMonth, setSpecificMonth] = useState('');
+  const isMountedRef = useRef(true);
 
   const loadTransferSummary = async (startDate?: string, endDate?: string) => {
     const data = await statisticService.getTransferSummary(startDate, endDate);
+    if (!isMountedRef.current) {
+      return;
+    }
+
     setSummary(data);
     setAnchorDate((current) => current ?? data.end_date);
     setError(null);
   };
 
   useEffect(() => {
-    let isMounted = true;
+    isMountedRef.current = true;
 
     const loadInitialTransferSummary = async () => {
       try {
         setLoading(true);
         const data = await statisticService.getTransferSummary();
-        if (!isMounted) {
+        if (!isMountedRef.current) {
           return;
         }
 
@@ -46,14 +51,14 @@ export const TransferSummary: React.FC = () => {
         setError(null);
       } catch (err) {
         console.error('Error fetching transfer summary:', err);
-        if (!isMounted) {
+        if (!isMountedRef.current) {
           return;
         }
 
         setError('Failed to load transfer summary');
         setSummary(null);
       } finally {
-        if (isMounted) {
+        if (isMountedRef.current) {
           setLoading(false);
         }
       }
@@ -62,7 +67,7 @@ export const TransferSummary: React.FC = () => {
     loadInitialTransferSummary();
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
     };
   }, []);
 
@@ -85,11 +90,17 @@ export const TransferSummary: React.FC = () => {
       const range = buildTransferSummaryRange(nextPreset, anchorDate);
       await loadTransferSummary(range.startDate, range.endDate);
     } catch (err) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
       console.error('Error fetching transfer summary:', err);
       setError('Failed to load transfer summary');
       setSummary(null);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -110,11 +121,17 @@ export const TransferSummary: React.FC = () => {
     try {
       await loadTransferSummary(range.startDate, range.endDate);
     } catch (err) {
+      if (!isMountedRef.current) {
+        return;
+      }
+
       console.error('Error fetching transfer summary:', err);
       setError('Failed to load transfer summary');
       setSummary(null);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
