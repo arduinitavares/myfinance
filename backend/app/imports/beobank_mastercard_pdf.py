@@ -290,6 +290,8 @@ class BeobankMastercardPdfExtractor:
         for index, line in enumerate(lines[start_index:], start=start_index):
             if self._classify_line(line["text"], has_active_row=False) == "row_start":
                 return index
+            if self._classify_line(line["text"], has_active_row=False) == "malformed_fx_helper_candidate":
+                return index
             if self._classify_line(line["text"], has_active_row=False) == "malformed_row_candidate":
                 return index
             if self._is_standalone_wisselkosten(lines, index):

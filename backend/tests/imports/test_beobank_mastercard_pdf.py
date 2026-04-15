@@ -328,6 +328,39 @@ def test_parser_blocks_malformed_fx_helper_line_after_active_row():
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
+def test_parser_blocks_malformed_fx_helper_line_on_continuation_page():
+    page_texts = [
+        (
+            "BEOBANK\n"
+            "MASTERCARD\n"
+            "Uittreksel van uw kredietkaart\n"
+            "Periode 01/02/2026 - 28/02/2026\n"
+        ),
+        (
+            "Kaart xxxx xxxx xxxx 1111\n"
+            "Uw transacties\n"
+            "Datum Beschrijving Bedrag (in €)\n"
+            "11/02/2026 SHOP 18,19\n"
+        ),
+        (
+            "Datum Beschrijving Bedrag (in €)\n"
+            "1.234 567,89 BRL WISSELKOERS 0.165556\n"
+            "WISSELKOSTEN\n"
+            "0,03\n"
+            "Uw miles\n"
+        ),
+    ]
+
+    result = BeobankMastercardPdfExtractor().extract_from_pages(
+        lineize_pdf_pages(page_texts),
+        raw_artifact_ref="imports/session-4k/attempts/1/evidence/raw.json",
+    )
+
+    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert [tx.source_description for tx in result.transactions] == ["SHOP"]
+    assert [tx.signed_amount for tx in result.transactions] == [-18.19]
+
+
 def test_parser_blocks_signed_malformed_mixed_separator_row_after_active_row():
     page_texts = [
         (
