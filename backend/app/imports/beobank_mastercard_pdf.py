@@ -9,6 +9,10 @@ AMOUNT_RE = re.compile(rf"^{SIGNED_AMOUNT_BODY}$")
 ROW_RE = re.compile(
     rf"^(?P<date>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<description>.+?)\s+(?P<amount>{SIGNED_AMOUNT_BODY})$"
 )
+MALFORMED_ROW_RE = re.compile(
+    r"^(?P<date>\d{2}/\d{2}/\d{4})\s+(?P<description>.+?)\s+"
+    r"(?P<amount>(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})$"
+)
 FX_HELPER_RE = re.compile(
     rf"^(?P<amount>{AMOUNT_BODY})\s+[A-Z]{{3}}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
     re.IGNORECASE,
@@ -17,7 +21,6 @@ INLINE_WISSELKOSTEN_RE = re.compile(
     rf"^WISSELKOSTEN\s+(?P<amount>{SIGNED_AMOUNT_BODY})$",
     re.IGNORECASE,
 )
-TRAILING_GROUPED_NUMBER_RE = re.compile(r"(?:\d{1,3}(?:[. ]\d{3})+)$")
 PAGE_FOOTER_RE = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
 CARD_HEADER_RE = re.compile(r"^Kaart\s+(?P<card>.+)$", re.IGNORECASE)
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
@@ -233,6 +236,11 @@ class BeobankMastercardPdfExtractor:
                 index += 1
                 continue
 
+            if line_class == "malformed_row_candidate":
+                issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
+                index += 1
+                continue
+
             if line_class == "row_start":
                 if current_row is not None:
                     transactions.append(self._build_transaction(page["page_number"], current_row))
@@ -273,7 +281,7 @@ class BeobankMastercardPdfExtractor:
         for index, line in enumerate(lines[start_index:], start=start_index):
             if self._classify_line(line["text"], has_active_row=False) == "row_start":
                 return index
-            if self._looks_like_row_candidate(line["text"]):
+            if self._classify_line(line["text"], has_active_row=False) == "malformed_row_candidate":
                 return index
             if self._is_standalone_wisselkosten(lines, index):
                 return index
@@ -299,6 +307,8 @@ class BeobankMastercardPdfExtractor:
             return "fx_helper"
         if PAGE_FOOTER_RE.match(normalized):
             return "page_footer_noise"
+        if self._is_malformed_row_candidate(normalized):
+            return "malformed_row_candidate"
         if self._is_row_start(normalized):
             return "row_start"
         if has_active_row and self._is_continuation(normalized):
@@ -313,19 +323,10 @@ class BeobankMastercardPdfExtractor:
             _parse_amount_text(match.group("amount"))
         except ValueError:
             return False
-        if TRAILING_GROUPED_NUMBER_RE.search(" ".join(match.group("description").split())):
-            return False
         return True
 
-    def _looks_like_row_candidate(self, text: str) -> bool:
-        match = ROW_RE.match(" ".join(text.split()))
-        if not match:
-            return False
-        try:
-            _parse_amount_text(match.group("amount"))
-        except ValueError:
-            return False
-        return True
+    def _is_malformed_row_candidate(self, text: str) -> bool:
+        return MALFORMED_ROW_RE.match(text) is not None
 
     def _is_continuation(self, text: str) -> bool:
         stripped = " ".join(text.split())
