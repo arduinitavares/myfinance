@@ -39,6 +39,8 @@ describe('transferSummaryRange', () => {
   test('returns null for missing or invalid specific month input', () => {
     expect(buildSpecificMonthRange('')).toBeNull();
     expect(buildSpecificMonthRange('2026-2')).toBeNull();
+    expect(buildSpecificMonthRange('2026-00')).toBeNull();
+    expect(buildSpecificMonthRange('2026-13')).toBeNull();
     expect(buildSpecificMonthRange('wat')).toBeNull();
   });
 });
