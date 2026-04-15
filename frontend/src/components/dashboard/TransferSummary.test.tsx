@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { TransferSummary } from './TransferSummary';
 import { statisticService } from '../../services/statisticService';
@@ -94,5 +94,61 @@ describe('TransferSummary', () => {
     await waitFor(() => expect(mockedGetTransferSummary).toHaveBeenCalledTimes(1));
 
     consoleSpy.mockRestore();
+  });
+
+  test('boots with backend defaults, then requests last month with explicit dates', async () => {
+    mockedGetTransferSummary
+      .mockResolvedValueOnce({
+        start_date: '2026-04-01',
+        end_date: '2026-04-10',
+        items: [],
+      })
+      .mockResolvedValueOnce({
+        start_date: '2026-03-01',
+        end_date: '2026-03-31',
+        items: [],
+      });
+
+    render(<TransferSummary />);
+
+    const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
+    expect(presetSelect).toHaveValue('this_month');
+    expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(1);
+
+    fireEvent.change(presetSelect, { target: { value: 'last_month' } });
+
+    await waitFor(() => {
+      expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(2, '2026-03-01', '2026-03-31');
+    });
+  });
+
+  test('shows the month picker for specific month and waits for a valid month before fetching', async () => {
+    mockedGetTransferSummary
+      .mockResolvedValueOnce({
+        start_date: '2026-04-01',
+        end_date: '2026-04-10',
+        items: [],
+      })
+      .mockResolvedValueOnce({
+        start_date: '2026-02-01',
+        end_date: '2026-02-28',
+        items: [],
+      });
+
+    render(<TransferSummary />);
+
+    const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
+    fireEvent.change(presetSelect, { target: { value: 'specific_month' } });
+
+    expect(screen.getByLabelText(/transfer summary month/i)).toBeInTheDocument();
+    expect(mockedGetTransferSummary).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText(/transfer summary month/i), {
+      target: { value: '2026-02' },
+    });
+
+    await waitFor(() => {
+      expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(2, '2026-02-01', '2026-02-28');
+    });
   });
 });

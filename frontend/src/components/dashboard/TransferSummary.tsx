@@ -2,6 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { statisticService, TransferSummaryResponse } from '../../services/statisticService';
 import { Loading } from '../common/Loading';
 import { formatDisplayDate } from '../../utils/date';
+import {
+  buildSpecificMonthRange,
+  buildTransferSummaryRange,
+  DEFAULT_TRANSFER_SUMMARY_PRESET,
+  TransferSummaryPreset,
+} from './transferSummaryRange';
 
 const EUR_FORMATTER = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -13,11 +19,21 @@ export const TransferSummary: React.FC = () => {
   const [summary, setSummary] = useState<TransferSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [anchorDate, setAnchorDate] = useState<string | null>(null);
+  const [preset, setPreset] = useState<TransferSummaryPreset>(DEFAULT_TRANSFER_SUMMARY_PRESET);
+  const [specificMonth, setSpecificMonth] = useState('');
+
+  const loadTransferSummary = async (startDate?: string, endDate?: string) => {
+    const data = await statisticService.getTransferSummary(startDate, endDate);
+    setSummary(data);
+    setAnchorDate((current) => current ?? data.end_date);
+    setError(null);
+  };
 
   useEffect(() => {
     let isMounted = true;
 
-    const loadTransferSummary = async () => {
+    const loadInitialTransferSummary = async () => {
       try {
         setLoading(true);
         const data = await statisticService.getTransferSummary();
@@ -26,6 +42,7 @@ export const TransferSummary: React.FC = () => {
         }
 
         setSummary(data);
+        setAnchorDate(data.end_date);
         setError(null);
       } catch (err) {
         console.error('Error fetching transfer summary:', err);
@@ -42,7 +59,7 @@ export const TransferSummary: React.FC = () => {
       }
     };
 
-    loadTransferSummary();
+    loadInitialTransferSummary();
 
     return () => {
       isMounted = false;
@@ -50,6 +67,56 @@ export const TransferSummary: React.FC = () => {
   }, []);
 
   const formatCurrency = (amount: number) => EUR_FORMATTER.format(amount);
+
+  const handlePresetChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextPreset = event.target.value as TransferSummaryPreset;
+    setPreset(nextPreset);
+
+    if (!anchorDate) {
+      return;
+    }
+
+    if (nextPreset === 'specific_month') {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const range = buildTransferSummaryRange(nextPreset, anchorDate);
+      await loadTransferSummary(range.startDate, range.endDate);
+    } catch (err) {
+      console.error('Error fetching transfer summary:', err);
+      setError('Failed to load transfer summary');
+      setSummary(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSpecificMonthChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextMonth = event.target.value;
+    setSpecificMonth(nextMonth);
+
+    if (preset !== 'specific_month') {
+      return;
+    }
+
+    const range = buildSpecificMonthRange(nextMonth);
+    if (!range) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await loadTransferSummary(range.startDate, range.endDate);
+    } catch (err) {
+      console.error('Error fetching transfer summary:', err);
+      setError('Failed to load transfer summary');
+      setSummary(null);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (loading) {
     return <Loading variant="progress" size="medium" />;
@@ -85,6 +152,44 @@ export const TransferSummary: React.FC = () => {
         <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
           {items.length} subtype{items.length === 1 ? '' : 's'}
         </div>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="transfer-summary-preset" className="text-xs font-medium text-gray-600 dark:text-gray-300">
+            Transfer summary preset
+          </label>
+          <select
+            id="transfer-summary-preset"
+            aria-label="transfer summary preset"
+            className="min-w-[180px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            value={preset}
+            onChange={handlePresetChange}
+            disabled={!anchorDate}
+          >
+            <option value="this_month">This month</option>
+            <option value="last_month">Last month</option>
+            <option value="last_3_months">Last 3 months</option>
+            <option value="year_to_date">Year to date</option>
+            <option value="specific_month">Specific month</option>
+          </select>
+        </div>
+
+        {preset === 'specific_month' && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="transfer-summary-month" className="text-xs font-medium text-gray-600 dark:text-gray-300">
+              Transfer summary month
+            </label>
+            <input
+              id="transfer-summary-month"
+              aria-label="transfer summary month"
+              type="month"
+              value={specificMonth}
+              onChange={handleSpecificMonthChange}
+              className="min-w-[180px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            />
+          </div>
+        )}
       </div>
 
       {items.length === 0 ? (
