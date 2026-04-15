@@ -184,6 +184,11 @@ class BeobankMastercardPdfExtractor:
                 break
             line_class = self._classify_line(text, current_row is not None)
 
+            if self._is_malformed_standalone_wisselkosten(body_lines, index):
+                issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
+                index += 1
+                continue
+
             if self._is_standalone_wisselkosten(body_lines, index):
                 inherited_date = current_row["transaction_date"] if current_row is not None else last_transaction_date
                 if inherited_date is None:
@@ -294,6 +299,8 @@ class BeobankMastercardPdfExtractor:
                 return index
             if self._classify_line(line["text"], has_active_row=False) == "malformed_row_candidate":
                 return index
+            if self._is_malformed_standalone_wisselkosten(lines, index):
+                return index
             if self._is_standalone_wisselkosten(lines, index):
                 return index
         return None
@@ -343,6 +350,18 @@ class BeobankMastercardPdfExtractor:
 
     def _is_malformed_fx_helper_candidate(self, text: str) -> bool:
         return MALFORMED_FX_HELPER_RE.match(text) is not None
+
+    def _is_malformed_standalone_wisselkosten(self, body_lines: list[dict], index: int) -> bool:
+        if body_lines[index]["text"].strip().casefold() != "wisselkosten":
+            return False
+        if index == 0 or index + 1 >= len(body_lines):
+            return False
+        if not FX_HELPER_RE.match(" ".join(body_lines[index - 1]["text"].split())):
+            return False
+        next_line = " ".join(body_lines[index + 1]["text"].split())
+        if AMOUNT_RE.match(next_line):
+            return False
+        return re.match(r"^-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2}$", next_line) is not None
 
     def _is_continuation(self, text: str) -> bool:
         stripped = " ".join(text.split())
