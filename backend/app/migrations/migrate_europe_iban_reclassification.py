@@ -36,13 +36,6 @@ def _known_role_for_iban(normalized: str | None) -> str | None:
     return KNOWN_IBAN_ROLE_MAP.get(normalized)
 
 
-def _contains_known_iban(text: str | None) -> str | None:
-    matches = _known_ibans_in_text(text)
-    if len(matches) == 1:
-        return next(iter(matches))
-    return None
-
-
 def _known_ibans_in_text(text: str | None) -> set[str]:
     normalized_text = _normalize_identifier(text)
     if normalized_text is None:
@@ -67,6 +60,19 @@ def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | 
     if import_session and import_session.extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID:
         return "credit_reimbursement_account"
     return None
+
+
+def _is_europe_target_transaction(db: Session, transaction: Transaction) -> bool:
+    if transaction.source_bank in {"beobank", "belfius"}:
+        return True
+
+    if transaction.import_session_id is None:
+        return False
+
+    import_session = db.get(ImportSession, transaction.import_session_id)
+    return bool(
+        import_session and import_session.extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID
+    )
 
 
 def _counterparty_role_for_transaction(transaction: Transaction) -> str | None:
@@ -192,70 +198,71 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
     corrected_transaction_ids: list[int] = []
 
     try:
-        transactions = db.query(Transaction).order_by(Transaction.id.asc()).all()
+        with db.begin():
+            transactions = db.query(Transaction).order_by(Transaction.id.asc()).all()
 
-        for transaction in transactions:
-            if _contains_wise_signal(transaction):
-                summary["skipped_wise"] += 1
-                continue
+            for transaction in transactions:
+                if not _is_europe_target_transaction(db, transaction):
+                    continue
 
-            if _has_parser_artifact(transaction, db):
-                summary["skipped_parser_artifact"] += 1
-                continue
+                if _contains_wise_signal(transaction):
+                    summary["skipped_wise"] += 1
+                    continue
 
-            local_role = _local_role_for_transaction(db, transaction)
-            counterparty_ibans = _counterparty_signal_ibans(transaction)
-            if len(counterparty_ibans) > 1:
-                summary["skipped_ambiguous"] += 1
-                continue
+                if _has_parser_artifact(transaction, db):
+                    summary["skipped_parser_artifact"] += 1
+                    continue
 
-            counterparty_role = _counterparty_role_for_transaction(transaction)
-            desired_category = _desired_transfer_category(local_role, counterparty_role)
+                local_role = _local_role_for_transaction(db, transaction)
+                counterparty_ibans = _counterparty_signal_ibans(transaction)
+                if len(counterparty_ibans) > 1:
+                    summary["skipped_ambiguous"] += 1
+                    continue
 
-            if desired_category is None:
-                summary["skipped_ambiguous"] += 1
-                continue
+                counterparty_role = _counterparty_role_for_transaction(transaction)
+                desired_category = _desired_transfer_category(local_role, counterparty_role)
 
-            if transaction.transfer_category == desired_category:
-                continue
+                if desired_category is None:
+                    summary["skipped_ambiguous"] += 1
+                    continue
 
-            transaction.transaction_type = TransactionType.TRANSFER
-            transaction.transfer_category = desired_category
-            transaction.expense_category = None
-            transaction.income_category = None
-            summary["updated_transactions"] += 1
-            corrected_transaction_ids.append(transaction.id)
+                if transaction.transfer_category == desired_category:
+                    continue
 
-            pattern = None
-            if transaction.recurrence_pattern_id is not None:
-                pattern = db.get(RecurrencePattern, transaction.recurrence_pattern_id)
+                transaction.transaction_type = TransactionType.TRANSFER
+                transaction.transfer_category = desired_category
+                transaction.expense_category = None
+                transaction.income_category = None
+                summary["updated_transactions"] += 1
+                corrected_transaction_ids.append(transaction.id)
 
-            if _pattern_conflicts_with_transfer_semantics(pattern, desired_category):
-                pattern.active = False
-                transaction.recurrence_pattern_id = None
-                summary["deactivated_patterns"] += 1
-                summary["detached_transactions"] += 1
+                pattern = None
+                if transaction.recurrence_pattern_id is not None:
+                    pattern = db.get(RecurrencePattern, transaction.recurrence_pattern_id)
 
-        db.flush()
+                if _pattern_conflicts_with_transfer_semantics(pattern, desired_category):
+                    pattern.active = False
+                    transaction.recurrence_pattern_id = None
+                    summary["deactivated_patterns"] += 1
+                    summary["detached_transactions"] += 1
 
-        conflicts = _post_pass_conflict_details(db, corrected_transaction_ids)
-        if conflicts:
-            raise RuntimeError(
-                "Corrected transactions still reference conflicting active recurrence patterns: "
-                f"{conflicts}"
-            )
+            db.flush()
 
-        data_changed = summary["updated_transactions"] > 0 or summary["deactivated_patterns"] > 0
-        db.commit()
+            conflicts = _post_pass_conflict_details(db, corrected_transaction_ids)
+            if conflicts:
+                raise RuntimeError(
+                    "Corrected transactions still reference conflicting active recurrence patterns: "
+                    f"{conflicts}"
+                )
 
-        if data_changed:
-            StatisticsService.initialize_statistics(db)
-            StatisticsService.initialize_category_statistics(db)
-            FinancialHealthService.initialize_financial_health(db)
-            summary["recomputed_aggregates"] = 1
+            data_changed = summary["updated_transactions"] > 0 or summary["deactivated_patterns"] > 0
+            if data_changed:
+                StatisticsService.initialize_statistics(db, commit=False)
+                StatisticsService.initialize_category_statistics(db, commit=False)
+                FinancialHealthService.initialize_financial_health(db, commit=False)
+                summary["recomputed_aggregates"] = 1
 
         return summary
     except Exception:
-        db.rollback()
         logger.exception("Europe IBAN cleanup migration failed")
         raise

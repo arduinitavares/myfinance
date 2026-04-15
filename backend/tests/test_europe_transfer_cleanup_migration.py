@@ -1,5 +1,8 @@
 from datetime import date
 
+import pytest
+
+import app.migrations.migrate_europe_iban_reclassification as migration_module
 from app.models.classification import (
     ClassificationSession,
     ClassificationSessionStatus,
@@ -39,6 +42,7 @@ def _create_transaction(
     counterparty_account: str | None = None,
     import_source_description: str | None = None,
     import_session_id: int | None = None,
+    source_bank: str = "beobank",
 ) -> Transaction:
     transaction = Transaction(
         account_number=account_number,
@@ -53,7 +57,7 @@ def _create_transaction(
         transaction_type=transaction_type,
         expense_category=expense_category,
         transfer_category=transfer_category,
-        source_bank="europe",
+        source_bank=source_bank,
     )
     db_session.add(transaction)
     db_session.flush()
@@ -116,6 +120,7 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction_type=TransactionType.EXPENSE,
         expense_category=ExpenseCategory.CREDIT_PAYMENT,
         counterparty_account="BE36950263030181",
+        source_bank="belfius",
     )
     recurrence_pattern = _attach_active_legacy_recurrence(
         db_session,
@@ -131,6 +136,7 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction_type=TransactionType.EXPENSE,
         expense_category=ExpenseCategory.DEBT,
         counterparty_account="BE74950226230607",
+        source_bank="beobank",
     )
     internal_transfer = _create_transaction(
         db_session,
@@ -140,6 +146,7 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction_type=TransactionType.TRANSFER,
         transfer_category=TransferCategory.INTERNAL_TRANSFER,
         counterparty_account="BE46063651946836",
+        source_bank="beobank",
     )
     mastercard_payment = _create_transaction(
         db_session,
@@ -149,6 +156,7 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction_type=TransactionType.EXPENSE,
         expense_category=ExpenseCategory.CREDIT_PAYMENT,
         import_session_id=mastercard_session.id,
+        source_bank="beobank",
     )
     wise_row = _create_transaction(
         db_session,
@@ -158,6 +166,7 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction_type=TransactionType.EXPENSE,
         expense_category=ExpenseCategory.CREDIT_PAYMENT,
         counterparty_account="BE36950263030181",
+        source_bank="belfius",
     )
     parser_artifact = _create_transaction(
         db_session,
@@ -167,6 +176,7 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction_type=TransactionType.EXPENSE,
         expense_category=ExpenseCategory.CREDIT_PAYMENT,
         import_session_id=parser_session.id,
+        source_bank="beobank",
     )
 
     db_session.add(
@@ -300,6 +310,7 @@ def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_chang
         transaction_type=TransactionType.TRANSFER,
         transfer_category=TransferCategory.INTERNAL_TRANSFER,
         counterparty_account="BE46063651946836",
+        source_bank="beobank",
     )
     db_session.commit()
 
@@ -332,6 +343,7 @@ def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_si
         expense_category=ExpenseCategory.CREDIT_PAYMENT,
         counterparty_account="BE36950263030181",
         import_source_description="Imported text also mentions IBAN BE36950263030181",
+        source_bank="beobank",
     )
     db_session.commit()
 
@@ -353,3 +365,73 @@ def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_si
         "detached_transactions": 0,
         "recomputed_aggregates": 0,
     }
+
+
+def test_migrate_europe_iban_reclassification_skips_non_europe_row_even_with_known_iban_pair(db_session):
+    non_europe = _create_transaction(
+        db_session,
+        account_number="BE46063651946836",
+        description="ING note for IBAN pair already known",
+        amount=-240.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.CREDIT_PAYMENT,
+        counterparty_account="BE36950263030181",
+        source_bank="ing",
+    )
+    db_session.commit()
+
+    summary = migrate_europe_iban_reclassification(db_session)
+    db_session.expire_all()
+
+    refreshed = db_session.get(Transaction, non_europe.id)
+    assert refreshed is not None
+    assert refreshed.transaction_type == TransactionType.EXPENSE
+    assert refreshed.transfer_category is None
+    assert refreshed.expense_category == ExpenseCategory.CREDIT_PAYMENT
+    assert db_session.query(FinancialStatistics).count() == 0
+    assert summary == {
+        "updated_transactions": 0,
+        "skipped_wise": 0,
+        "skipped_ambiguous": 0,
+        "skipped_parser_artifact": 0,
+        "deactivated_patterns": 0,
+        "detached_transactions": 0,
+        "recomputed_aggregates": 0,
+    }
+
+
+def test_migrate_europe_iban_reclassification_rolls_back_when_recompute_fails(
+    db_session,
+    monkeypatch,
+):
+    settlement = _create_transaction(
+        db_session,
+        account_number="BE46063651946836",
+        description="Monthly reimbursement to Belfius card",
+        amount=-240.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.CREDIT_PAYMENT,
+        counterparty_account="BE36950263030181",
+        source_bank="belfius",
+    )
+    db_session.commit()
+
+    def fail_initialize_statistics(*args, **kwargs):
+        raise RuntimeError("forced recompute failure")
+
+    monkeypatch.setattr(
+        migration_module.StatisticsService,
+        "initialize_statistics",
+        fail_initialize_statistics,
+    )
+
+    with pytest.raises(RuntimeError, match="forced recompute failure"):
+        migrate_europe_iban_reclassification(db_session)
+
+    db_session.expire_all()
+    refreshed = db_session.get(Transaction, settlement.id)
+    assert refreshed is not None
+    assert refreshed.transaction_type == TransactionType.EXPENSE
+    assert refreshed.transfer_category is None
+    assert refreshed.expense_category == ExpenseCategory.CREDIT_PAYMENT
+    assert db_session.query(FinancialStatistics).count() == 0

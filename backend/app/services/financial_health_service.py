@@ -72,7 +72,13 @@ class FinancialHealthService:
     }
     
     @staticmethod
-    def calculate_health_score(db: Session, target_date: date = None, force: bool = False) -> FinancialHealth:
+    def calculate_health_score(
+        db: Session,
+        target_date: date = None,
+        force: bool = False,
+        *,
+        commit: bool = True,
+    ) -> FinancialHealth:
         """Calculate the financial health score for a given date
         
         Args:
@@ -130,7 +136,10 @@ class FinancialHealthService:
                 recommendations=[]
             )
             db.add(health_score)
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             db.refresh(health_score)
             return health_score
         
@@ -232,7 +241,10 @@ class FinancialHealthService:
         )
         
         db.add(health_score)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(health_score)
         
         # Clear existing recommendations for this month if we're recalculating
@@ -264,7 +276,10 @@ class FinancialHealthService:
             db.add(recommendation)
         
         # Commit the recommendations
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         
         return health_score
     
@@ -338,12 +353,13 @@ class FinancialHealthService:
         return recommendation
         
     @staticmethod
-    def initialize_financial_health(db: Session):
+    def initialize_financial_health(db: Session, *, commit: bool = True):
         """Initialize financial health scores for all historical months with transactions"""
         try:
             logger.info("Initializing financial health scores for all historical data...")
             # Lock the database to prevent any concurrent modifications during initialization
-            db.execute(text("BEGIN"))
+            if commit:
+                db.execute(text("BEGIN"))
             
             # Clear existing financial health scores
             db.query(FinancialHealth).delete()
@@ -357,7 +373,10 @@ class FinancialHealthService:
             
             if not months:
                 logger.info("No transaction data found for financial health initialization")
-                db.commit()
+                if commit:
+                    db.commit()
+                else:
+                    db.flush()
                 return
                 
             logger.info(f"Found {len(months)} months with transaction data")
@@ -373,16 +392,27 @@ class FinancialHealthService:
                 try:
                     # Calculate health score for this month
                     # We're passing force=True to ensure calculation even if statistics aren't perfect
-                    FinancialHealthService.calculate_health_score(db, last_day, force=True)
+                    FinancialHealthService.calculate_health_score(
+                        db,
+                        last_day,
+                        force=True,
+                        commit=commit,
+                    )
                 except Exception as e:
+                    if not commit:
+                        raise
                     logger.warning(f"Error calculating health score for {last_day}: {str(e)}")
                     # Continue with other months even if one fails
                     continue
             
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             logger.info("Financial health initialization completed successfully")
         except Exception as e:
-            db.rollback()
+            if commit:
+                db.rollback()
             logger.error(f"Error initializing financial health scores: {str(e)}")
             raise e
     

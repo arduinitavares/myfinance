@@ -521,12 +521,13 @@ class StatisticsService:
             raise e
 
     @staticmethod
-    def initialize_statistics(db: Session):
+    def initialize_statistics(db: Session, *, commit: bool = True):
         """Initialize financial statistics for all existing transactions"""
         try:
             # Lock the database to prevent any concurrent modifications during initialization
             # This is an administrative operation that should run when the system is not heavily used
-            db.execute(text("BEGIN"))
+            if commit:
+                db.execute(text("BEGIN"))
             
             # Clear existing financial statistics
             db.query(FinancialStatistics).delete()
@@ -589,19 +590,24 @@ class StatisticsService:
             for key, value in all_time_data.items():
                 setattr(all_time_stats, key, value)
             
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
         except Exception as e:
-            db.rollback()
+            if commit:
+                db.rollback()
             logger.error(f"Error initializing financial statistics: {str(e)}")
             raise e
             
     @staticmethod
-    def initialize_category_statistics(db: Session):
+    def initialize_category_statistics(db: Session, *, commit: bool = True):
         """Initialize category statistics for all existing transactions"""
         try:
             # Lock the database to prevent any concurrent modifications during initialization
             # This is an administrative operation that should run when the system is not heavily used
-            db.execute(text("BEGIN"))
+            if commit:
+                db.execute(text("BEGIN"))
             
             # Clear existing category statistics
             db.query(CategoryStatistics).delete()
@@ -671,9 +677,13 @@ class StatisticsService:
                     )
                     db.add(cat_stat)
             
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             logger.info("Category statistics initialized successfully")
         except Exception as e:
-            db.rollback()
+            if commit:
+                db.rollback()
             logger.error(f"Error initializing category statistics: {str(e)}")
             raise e
