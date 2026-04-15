@@ -13,6 +13,7 @@ from app.models.statistics import FinancialStatistics, StatisticsPeriod
 from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
 
 from app.migrations.migrate_europe_iban_reclassification import (
+    _contains_known_iban,
     migrate_europe_iban_reclassification,
 )
 
@@ -98,6 +99,12 @@ def _attach_active_legacy_recurrence(
     transaction.recurrence_pattern_id = pattern.id
     db_session.flush()
     return pattern
+
+
+def test_contains_known_iban_returns_single_match_only():
+    assert _contains_known_iban("IBAN BE36950263030181") == "BE36950263030181"
+    assert _contains_known_iban("IBAN BE36950263030181 and BE74950226230607") is None
+    assert _contains_known_iban("nothing to see here") is None
 
 
 def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(db_session):

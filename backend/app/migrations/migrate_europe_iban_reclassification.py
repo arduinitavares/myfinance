@@ -36,6 +36,13 @@ def _known_role_for_iban(normalized: str | None) -> str | None:
     return KNOWN_IBAN_ROLE_MAP.get(normalized)
 
 
+def _contains_known_iban(text: str | None) -> str | None:
+    matches = _known_ibans_in_text(text)
+    if len(matches) != 1:
+        return None
+    return next(iter(matches))
+
+
 def _known_ibans_in_text(text: str | None) -> set[str]:
     normalized_text = _normalize_identifier(text)
     if normalized_text is None:
