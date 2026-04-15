@@ -270,6 +270,8 @@ Implementation may satisfy this by:
 
 The important invariant is that deterministic Europe settlement rows stay corrected after the pass.
 
+If the implementation deactivates or detaches conflicting patterns rather than migrating them, it must verify that no active recurrence pattern pointing at corrected rows remains after the pass completes. A post-pass assertion is required.
+
 ## Analytics Consequences
 
 After this cleanup:
