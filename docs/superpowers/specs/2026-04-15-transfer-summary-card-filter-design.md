@@ -70,6 +70,8 @@ Design principles:
 
 The transfer summary card owns its own local filter state.
 
+The default selected preset is `This month`.
+
 Open-ended presets are anchored to the dataset's latest transaction date, not the browser's current date.
 
 The component establishes this anchor from the first successful `GET /statistics/transfers/summary` response:
@@ -134,6 +136,8 @@ Example:
 - derived `end_date`
 
 On first mount, the component performs its current default fetch with no explicit dates. That response provides the anchor date through `response.end_date`.
+
+Until that first successful response establishes the anchor date, the existing loading state remains active and the filter controls stay disabled or hidden, so preset changes cannot run against a null anchor.
 
 After the anchor date is known:
 
