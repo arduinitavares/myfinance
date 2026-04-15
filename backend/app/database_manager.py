@@ -5,6 +5,7 @@ from pathlib import Path
 from .database import engine, Base
 from .config import settings
 from .imports.dedupe import ensure_import_session_file_hash_uniqueness
+from .migrations.migrate_europe_iban_reclassification import migrate_europe_iban_reclassification
 from .models.classification import ClassificationSession, ClassificationTurn, RecurrencePattern
 from .models.transaction import Transaction
 from .models.statistics import FinancialStatistics, CategoryStatistics
@@ -72,6 +73,11 @@ def _ensure_import_traceability_transaction_columns() -> None:
             text("CREATE INDEX IF NOT EXISTS ix_transactions_import_session_id ON transactions (import_session_id)")
         )
 
+
+def ensure_runtime_schema_compatibility() -> None:
+    _ensure_classification_transaction_columns()
+    _ensure_import_traceability_transaction_columns()
+
 def init_database():
     """Initialize the database and create all tables"""
     logger.info("Initializing database...")
@@ -81,8 +87,7 @@ def init_database():
     existing_tables = inspector.get_table_names()
     logger.info(f"Existing tables: {existing_tables}")
 
-    _ensure_classification_transaction_columns()
-    _ensure_import_traceability_transaction_columns()
+    ensure_runtime_schema_compatibility()
 
     tables_to_check = [
         "transactions",
@@ -108,6 +113,8 @@ def init_database():
     ]
     missing_tables = [table for table in tables_to_check if table not in existing_tables]
 
+    migration_summary = None
+
     if missing_tables:
         logger.info(f"Creating missing tables: {missing_tables}")
         try:
@@ -125,7 +132,8 @@ def init_database():
                 columns = [c['name'] for c in inspector.get_columns(table)]
                 logger.info(f"Columns in {table} table: {columns}")
 
-            # Initialize statistics if transactions table already existed
+            # Initialize derived tables if transactions table already existed and the
+            # Europe cleanup pass does not already recompute them.
             need_stats_init = False
             need_category_stats_init = False
             need_financial_health_init = False
@@ -141,30 +149,37 @@ def init_database():
                 if "projection_scenarios" in missing_tables:
                     need_projection_init = True
             
-            if need_stats_init or need_category_stats_init or need_financial_health_init or need_projection_init:
-                logger.info("Initializing statistics and financial health for existing transactions...")
-                with Session(engine) as db:
-                    if need_stats_init:
+            ensure_import_session_file_hash_uniqueness(engine, _import_artifact_root())
+
+            with Session(engine) as db:
+                migration_summary = migrate_europe_iban_reclassification(db)
+                logger.info("Europe IBAN cleanup migration summary: %s", migration_summary)
+
+                aggregates_already_refreshed = migration_summary.get("recomputed_aggregates", 0) > 0
+                if need_stats_init or need_category_stats_init or need_financial_health_init or need_projection_init:
+                    logger.info("Initializing derived data for existing transactions...")
+                    if need_stats_init and not aggregates_already_refreshed:
                         logger.info("Initializing financial statistics...")
                         StatisticsService.initialize_statistics(db)
-                    if need_category_stats_init:
+                    if need_category_stats_init and not aggregates_already_refreshed:
                         logger.info("Initializing category statistics...")
                         StatisticsService.initialize_category_statistics(db)
-                    if need_financial_health_init:
+                    if need_financial_health_init and not aggregates_already_refreshed:
                         logger.info("Initializing financial health scores...")
                         FinancialHealthService.initialize_financial_health(db)
                     if need_projection_init:
                         logger.info("Creating default projection scenarios...")
                         ProjectionService.create_default_scenarios(db)
-                logger.info("Statistics and financial health initialized successfully!")
-
-            ensure_import_session_file_hash_uniqueness(engine, _import_artifact_root())
+                    logger.info("Derived data initialization completed successfully!")
         except Exception as e:
             logger.error(f"Error creating database tables: {str(e)}")
             raise
     else:
         logger.info("All required database tables already exist")
         ensure_import_session_file_hash_uniqueness(engine, _import_artifact_root())
+        with Session(engine) as db:
+            migration_summary = migrate_europe_iban_reclassification(db)
+            logger.info("Europe IBAN cleanup migration summary: %s", migration_summary)
 
 
 def _recreate_tables(*, tables=None) -> None:

@@ -19,6 +19,7 @@ from app.schemas.transaction import TransactionRestore
 from app.services import classification_commit_service as classification_commit_module
 from app.services.classification_commit_service import commit_category_change, normalized_category_for
 from app.services.classification_session_service import ClassificationSessionService
+from app.services import csv_import_service as csv_import_module
 from app.routers.suggestions import category_suggestion_service
 
 
@@ -539,7 +540,7 @@ def test_upload_csv_skips_transfer_category_suggestions(monkeypatch):
     _reset_database(client)
 
     monkeypatch.setattr(
-        tx_router.CSVParser,
+        csv_import_module.CSVParser,
         "parse_csv",
         lambda file_path, source_filename=None: [
             TransactionCreate(
@@ -556,14 +557,18 @@ def test_upload_csv_skips_transfer_category_suggestions(monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        tx_router.category_suggestion_service,
+        category_suggestion_service,
         "suggest_category",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("upload should skip category suggestions for transfer rows")
         ),
     )
-    monkeypatch.setattr(tx_router.StatisticsService, "update_statistics", lambda *args, **kwargs: None)
-    monkeypatch.setattr(tx_router.AnomalyDetectionService, "detect_anomalies", lambda *args, **kwargs: None)
+    monkeypatch.setattr(csv_import_module.StatisticsService, "update_statistics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        csv_import_module.AnomalyDetectionService,
+        "detect_anomalies",
+        lambda *args, **kwargs: None,
+    )
 
     response = client.post(
         "/transactions/upload/",
