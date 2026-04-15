@@ -94,6 +94,37 @@ def test_parser_blocks_other_standalone_wisselkosten_shapes():
     assert "WISSELKOSTEN" not in [tx.source_description for tx in result.transactions]
 
 
+def test_parser_accepts_betaling_rows_with_space_separated_thousands():
+    page_texts = [
+        (
+            "BEOBANK\n"
+            "MASTERCARD\n"
+            "Uittreksel van uw kredietkaart\n"
+            "Periode 01/02/2026 - 28/02/2026\n"
+        ),
+        (
+            "Kaart xxxx xxxx xxxx 1111\n"
+            "Uw transacties\n"
+            "Datum Beschrijving Bedrag (in €)\n"
+            "12/02/2026 BETALING IBAN BE11950212984548 Mr ALEXANDRE ARDUINI TAVARES -2 677,24\n"
+            "Uw miles\n"
+        ),
+    ]
+
+    result = BeobankMastercardPdfExtractor().extract_from_pages(
+        lineize_pdf_pages(page_texts),
+        raw_artifact_ref="imports/session-4b/attempts/1/evidence/raw.json",
+    )
+
+    assert result.issues == []
+    assert len(result.transactions) == 1
+    assert result.transactions[0].source_description == (
+        "BETALING IBAN BE11950212984548 Mr ALEXANDRE ARDUINI TAVARES"
+    )
+    assert result.transactions[0].signed_amount == 2677.24
+    assert result.transactions[0].debit_credit == "credit"
+
+
 def test_parser_blocks_pages_with_row_candidates_but_without_transaction_marker():
     page_texts = deepcopy(SANITIZED_BEOBANK_PAGE_TEXTS)
     page_texts[2] = (

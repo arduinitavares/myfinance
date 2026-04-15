@@ -3,9 +3,10 @@ from datetime import datetime
 
 from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
 
-AMOUNT_RE = re.compile(r"^-?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}$")
+AMOUNT_BODY = r"(?:\d{1,3}(?:[. ]\d{3})*|\d+),\d{2}"
+AMOUNT_RE = re.compile(rf"^-?{AMOUNT_BODY}$")
 ROW_RE = re.compile(
-    r"^(?P<date>\d{2}/\d{2}/\d{4})\s+(?P<description>.+?)\s+(?P<amount>-?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})$"
+    rf"^(?P<date>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<description>.+?)\s+(?P<amount>-?{AMOUNT_BODY})$"
 )
 FX_HELPER_RE = re.compile(
     r"^(?P<amount>(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})\s+[A-Z]{3}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
@@ -35,7 +36,7 @@ def _parse_amount_text(amount_text: str) -> tuple[float, str]:
     if not AMOUNT_RE.match(amount_text):
         raise ValueError(f"invalid amount: {amount_text}")
 
-    absolute_amount = float(amount_text.lstrip("-").replace(".", "").replace(",", "."))
+    absolute_amount = float(amount_text.lstrip("-").replace(" ", "").replace(".", "").replace(",", "."))
     if absolute_amount == 0:
         raise ValueError(f"zero amount not allowed: {amount_text}")
 
