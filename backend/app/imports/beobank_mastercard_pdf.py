@@ -11,7 +11,7 @@ ROW_RE = re.compile(
 )
 MALFORMED_ROW_RE = re.compile(
     r"^(?P<date>\d{2}/\d{2}/\d{4})\s+(?P<description>.+?)\s+"
-    r"(?P<amount>(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})$"
+    r"(?P<amount>-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})$"
 )
 FX_HELPER_RE = re.compile(
     rf"^(?P<amount>{AMOUNT_BODY})\s+[A-Z]{{3}}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
