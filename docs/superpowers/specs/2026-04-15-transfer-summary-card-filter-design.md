@@ -51,7 +51,7 @@ The right side of the header shows:
 
 - a preset dropdown
 - a month picker input only when `Specific month` is active
-- the subtype count
+- a small subtype count label beneath the controls in the same right-side cluster
 
 The card must remain layout-stable when switching presets. The header should not jump vertically or push surrounding content around in distracting ways.
 
@@ -70,36 +70,46 @@ Design principles:
 
 The transfer summary card owns its own local filter state.
 
+Open-ended presets are anchored to the dataset's latest transaction date, not the browser's current date.
+
+The component establishes this anchor from the first successful `GET /statistics/transfers/summary` response:
+
+- on initial mount, fetch with no explicit dates
+- read `end_date` from the backend response
+- store that `end_date` as the card's local anchor date
+
+All preset ranges are then computed relative to that anchor date.
+
 ### `This month`
 
-- `start_date`: first day of the current month
-- `end_date`: latest transaction date in the dataset
+- `start_date`: first day of the anchor date's month
+- `end_date`: anchor date
 
-This keeps the card aligned with current-month context while still using explicit dates.
+This keeps the card aligned with the freshest imported data instead of the browser calendar.
 
 ### `Last month`
 
-- full previous calendar month
+- full previous calendar month relative to the anchor date's month
 
 Example:
 
-- if latest transaction date is `2026-04-10`
+- if anchor date is `2026-04-10`
 - range becomes `2026-03-01` through `2026-03-31`
 
 ### `Last 3 months`
 
-- `start_date`: first day of the month two months before the current month
-- `end_date`: latest transaction date in the dataset
+- `start_date`: first day of the month two months before the anchor date's month
+- `end_date`: anchor date
 
 Example:
 
-- if latest transaction date is `2026-04-10`
+- if anchor date is `2026-04-10`
 - range becomes `2026-02-01` through `2026-04-10`
 
 ### `Year to date`
 
-- `start_date`: January 1 of the current year
-- `end_date`: latest transaction date in the dataset
+- `start_date`: January 1 of the anchor date's year
+- `end_date`: anchor date
 
 ### `Specific month`
 
@@ -117,12 +127,19 @@ Example:
 
 `TransferSummary.tsx` manages:
 
+- anchor date derived from the backend's first response
 - selected preset
 - selected month when `Specific month` is active
 - derived `start_date`
 - derived `end_date`
 
-Whenever the local filter changes, the component fetches transfer summary data using explicit dates.
+On first mount, the component performs its current default fetch with no explicit dates. That response provides the anchor date through `response.end_date`.
+
+After the anchor date is known:
+
+- preset changes compute explicit `start_date` and `end_date` from the anchor date
+- `Specific month` computes explicit month start and month end dates
+- every non-default filtered request uses explicit date params
 
 ### Backend
 
@@ -176,12 +193,15 @@ If `Specific month` is selected but the month input is empty or invalid:
 Add or update tests to cover:
 
 - default preset rendering
+- initial mount deriving the anchor date from the backend response
 - switching from `This month` to `Last month`
 - switching to `Last 3 months`
 - switching to `Year to date`
 - selecting `Specific month` and sending the expected range
 - empty-state rendering for a valid range with no transfer rows
 - stable subtitle updates that match the selected range
+
+Existing tests that assert `getTransferSummary()` is called exactly once on mount should be updated to assert the expected request arguments after filter changes.
 
 ## Acceptance Criteria
 
