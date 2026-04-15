@@ -25,10 +25,19 @@ export const TransferSummary: React.FC = () => {
   const [preset, setPreset] = useState<TransferSummaryPreset>(DEFAULT_TRANSFER_SUMMARY_PRESET);
   const [specificMonth, setSpecificMonth] = useState('');
   const isMountedRef = useRef(true);
+  const requestSequenceRef = useRef(0);
 
-  const loadTransferSummary = async (startDate?: string, endDate?: string) => {
+  const startTransferSummaryRequest = () => {
+    requestSequenceRef.current += 1;
+    return requestSequenceRef.current;
+  };
+
+  const isLatestTransferSummaryRequest = (requestId: number) =>
+    isMountedRef.current && requestSequenceRef.current === requestId;
+
+  const loadTransferSummary = async (requestId: number, startDate?: string, endDate?: string) => {
     const data = await statisticService.getTransferSummary(startDate, endDate);
-    if (!isMountedRef.current) {
+    if (!isLatestTransferSummaryRequest(requestId)) {
       return;
     }
 
@@ -42,10 +51,11 @@ export const TransferSummary: React.FC = () => {
     isMountedRef.current = true;
 
     const loadInitialTransferSummary = async () => {
+      const requestId = startTransferSummaryRequest();
       try {
         setLoading(true);
         const data = await statisticService.getTransferSummary();
-        if (!isMountedRef.current) {
+        if (!isLatestTransferSummaryRequest(requestId)) {
           return;
         }
 
@@ -54,15 +64,15 @@ export const TransferSummary: React.FC = () => {
         setError(null);
         setHasLoadedOnce(true);
       } catch (err) {
-        console.error('Error fetching transfer summary:', err);
-        if (!isMountedRef.current) {
+        if (!isLatestTransferSummaryRequest(requestId)) {
           return;
         }
 
+        console.error('Error fetching transfer summary:', err);
         setError('Failed to load transfer summary');
         setSummary(null);
       } finally {
-        if (isMountedRef.current) {
+        if (isLatestTransferSummaryRequest(requestId)) {
           setLoading(false);
         }
       }
@@ -89,20 +99,21 @@ export const TransferSummary: React.FC = () => {
       return;
     }
 
+    const requestId = startTransferSummaryRequest();
     setRefreshing(true);
     setError(null);
     try {
       const range = buildTransferSummaryRange(nextPreset, anchorDate);
-      await loadTransferSummary(range.startDate, range.endDate);
+      await loadTransferSummary(requestId, range.startDate, range.endDate);
     } catch (err) {
-      if (!isMountedRef.current) {
+      if (!isLatestTransferSummaryRequest(requestId)) {
         return;
       }
 
       console.error('Error fetching transfer summary:', err);
       setError('Failed to load transfer summary');
     } finally {
-      if (isMountedRef.current) {
+      if (isLatestTransferSummaryRequest(requestId)) {
         setRefreshing(false);
       }
     }
@@ -121,19 +132,20 @@ export const TransferSummary: React.FC = () => {
       return;
     }
 
+    const requestId = startTransferSummaryRequest();
     setRefreshing(true);
     setError(null);
     try {
-      await loadTransferSummary(range.startDate, range.endDate);
+      await loadTransferSummary(requestId, range.startDate, range.endDate);
     } catch (err) {
-      if (!isMountedRef.current) {
+      if (!isLatestTransferSummaryRequest(requestId)) {
         return;
       }
 
       console.error('Error fetching transfer summary:', err);
       setError('Failed to load transfer summary');
     } finally {
-      if (isMountedRef.current) {
+      if (isLatestTransferSummaryRequest(requestId)) {
         setRefreshing(false);
       }
     }

@@ -238,4 +238,91 @@ describe('TransferSummary', () => {
 
     consoleSpy.mockRestore();
   });
+
+  test('keeps the newest filtered response when overlapping requests resolve out of order', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    let resolveLastMonth:
+      | ((value: Awaited<ReturnType<typeof statisticService.getTransferSummary>>) => void)
+      | undefined;
+    let resolveLast3Months:
+      | ((value: Awaited<ReturnType<typeof statisticService.getTransferSummary>>) => void)
+      | undefined;
+
+    mockedGetTransferSummary
+      .mockResolvedValueOnce({
+        start_date: '2026-04-01',
+        end_date: '2026-04-10',
+        items: [
+          {
+            subtype: 'Initial summary',
+            transaction_count: 1,
+            total_outgoing_eur: 100,
+            total_incoming_eur: 50,
+          },
+        ],
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLastMonth = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLast3Months = resolve;
+          })
+      );
+
+    render(<TransferSummary />);
+
+    const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
+    expect(await screen.findByText('Initial summary')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'last_month' } });
+    });
+
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'last_3_months' } });
+    });
+
+    await act(async () => {
+      resolveLast3Months?.({
+        start_date: '2026-02-01',
+        end_date: '2026-04-10',
+        items: [
+          {
+            subtype: 'Latest summary',
+            transaction_count: 4,
+            total_outgoing_eur: 400,
+            total_incoming_eur: 250,
+          },
+        ],
+      });
+    });
+
+    expect(await screen.findByText('Latest summary')).toBeInTheDocument();
+    expect(screen.getByText(/showing 01\/02\/2026 to 10\/04\/2026/i)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveLastMonth?.({
+        start_date: '2026-03-01',
+        end_date: '2026-03-31',
+        items: [
+          {
+            subtype: 'Stale summary',
+            transaction_count: 2,
+            total_outgoing_eur: 200,
+            total_incoming_eur: 150,
+          },
+        ],
+      });
+    });
+
+    expect(screen.getByText('Latest summary')).toBeInTheDocument();
+    expect(screen.queryByText('Stale summary')).not.toBeInTheDocument();
+
+    consoleSpy.mockRestore();
+  });
 });
