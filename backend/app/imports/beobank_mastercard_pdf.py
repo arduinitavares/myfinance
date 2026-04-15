@@ -3,17 +3,18 @@ from datetime import datetime
 
 from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
 
-AMOUNT_BODY = r"(?:\d{1,3}(?:[. ]\d{3})*|\d+),\d{2}"
-AMOUNT_RE = re.compile(rf"^-?{AMOUNT_BODY}$")
+AMOUNT_BODY = r"(?:\d{1,3}(?:\.\d{3})+|\d{1,3}(?: \d{3})+|\d+),\d{2}"
+SIGNED_AMOUNT_BODY = rf"-?{AMOUNT_BODY}"
+AMOUNT_RE = re.compile(rf"^{SIGNED_AMOUNT_BODY}$")
 ROW_RE = re.compile(
-    rf"^(?P<date>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<description>.+?)\s+(?P<amount>-?{AMOUNT_BODY})$"
+    rf"^(?P<date>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<description>.+?)\s+(?P<amount>{SIGNED_AMOUNT_BODY})$"
 )
 FX_HELPER_RE = re.compile(
-    r"^(?P<amount>(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})\s+[A-Z]{3}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
+    rf"^(?P<amount>{AMOUNT_BODY})\s+[A-Z]{{3}}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
     re.IGNORECASE,
 )
 INLINE_WISSELKOSTEN_RE = re.compile(
-    r"^WISSELKOSTEN\s+(?P<amount>-?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})$",
+    rf"^WISSELKOSTEN\s+(?P<amount>{SIGNED_AMOUNT_BODY})$",
     re.IGNORECASE,
 )
 PAGE_FOOTER_RE = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
