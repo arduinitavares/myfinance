@@ -137,12 +137,21 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
 
     europe_loan_payment = _create_transaction(
         db_session,
-        account_number="BE11950212984548",
+        account_number="50212984548",
         description="Europe payment to loan account",
         amount=-175.0,
         transaction_type=TransactionType.EXPENSE,
         expense_category=ExpenseCategory.DEBT,
         counterparty_account="BE74950226230607",
+        source_bank="Beobank",
+    )
+    compact_beobank_settlement = _create_transaction(
+        db_session,
+        account_number="50212984548",
+        description="Compact cash account reimbursement BE36950263030181",
+        amount=-320.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.CREDIT_PAYMENT,
         source_bank="Beobank",
     )
     internal_transfer = _create_transaction(
@@ -251,6 +260,11 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
     assert refreshed_internal_transfer.transaction_type == TransactionType.TRANSFER
     assert refreshed_internal_transfer.transfer_category == TransferCategory.INTERNAL_TRANSFER
 
+    refreshed_compact_settlement = db_session.get(Transaction, compact_beobank_settlement.id)
+    assert refreshed_compact_settlement is not None
+    assert refreshed_compact_settlement.transaction_type == TransactionType.TRANSFER
+    assert refreshed_compact_settlement.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
+
     refreshed_mastercard_payment = db_session.get(Transaction, mastercard_payment.id)
     assert refreshed_mastercard_payment is not None
     assert refreshed_mastercard_payment.transaction_type == TransactionType.TRANSFER
@@ -298,8 +312,9 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
     assert all_time_stats.total_expenses == 150.0
 
     assert summary == {
-        "updated_transactions": 3,
+        "updated_transactions": 4,
         "skipped_wise": 1,
+        "skipped_no_signal": 0,
         "skipped_ambiguous": 0,
         "skipped_parser_artifact": 1,
         "deactivated_patterns": 1,
@@ -332,6 +347,7 @@ def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_chang
     assert summary == {
         "updated_transactions": 0,
         "skipped_wise": 0,
+        "skipped_no_signal": 0,
         "skipped_ambiguous": 0,
         "skipped_parser_artifact": 0,
         "deactivated_patterns": 0,
@@ -366,6 +382,7 @@ def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_si
     assert summary == {
         "updated_transactions": 0,
         "skipped_wise": 0,
+        "skipped_no_signal": 0,
         "skipped_ambiguous": 1,
         "skipped_parser_artifact": 0,
         "deactivated_patterns": 0,
@@ -399,6 +416,39 @@ def test_migrate_europe_iban_reclassification_skips_non_europe_row_even_with_kno
     assert summary == {
         "updated_transactions": 0,
         "skipped_wise": 0,
+        "skipped_no_signal": 0,
+        "skipped_ambiguous": 0,
+        "skipped_parser_artifact": 0,
+        "deactivated_patterns": 0,
+        "detached_transactions": 0,
+        "recomputed_aggregates": 0,
+    }
+
+
+def test_migrate_europe_iban_reclassification_counts_missing_pair_as_no_signal(db_session):
+    no_pair = _create_transaction(
+        db_session,
+        account_number="50212984548",
+        description="Cash account row without owned counterparty evidence",
+        amount=-240.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.CREDIT_PAYMENT,
+        source_bank="Beobank",
+    )
+    db_session.commit()
+
+    summary = migrate_europe_iban_reclassification(db_session)
+    db_session.expire_all()
+
+    refreshed = db_session.get(Transaction, no_pair.id)
+    assert refreshed is not None
+    assert refreshed.transaction_type == TransactionType.EXPENSE
+    assert refreshed.transfer_category is None
+    assert refreshed.expense_category == ExpenseCategory.CREDIT_PAYMENT
+    assert summary == {
+        "updated_transactions": 0,
+        "skipped_wise": 0,
+        "skipped_no_signal": 1,
         "skipped_ambiguous": 0,
         "skipped_parser_artifact": 0,
         "deactivated_patterns": 0,

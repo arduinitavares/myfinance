@@ -20,6 +20,11 @@ KNOWN_IBAN_ROLE_MAP = {
     "BE74950226230607": "loan_account",
 }
 
+KNOWN_LOCAL_ACCOUNT_ROLE_MAP = {
+    **KNOWN_IBAN_ROLE_MAP,
+    "50212984548": "cash_account",
+}
+
 BEOBANK_MASTERCARD_EXTRACTOR_ID = "beobank_mastercard_pdf_v1"
 
 
@@ -34,6 +39,12 @@ def _known_role_for_iban(normalized: str | None) -> str | None:
     if normalized is None:
         return None
     return KNOWN_IBAN_ROLE_MAP.get(normalized)
+
+
+def _known_role_for_local_identifier(normalized: str | None) -> str | None:
+    if normalized is None:
+        return None
+    return KNOWN_LOCAL_ACCOUNT_ROLE_MAP.get(normalized)
 
 
 def _contains_known_iban(text: str | None) -> str | None:
@@ -56,7 +67,7 @@ def _known_ibans_in_text(text: str | None) -> set[str]:
 
 
 def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | None:
-    local_role = _known_role_for_iban(_normalize_identifier(transaction.account_number))
+    local_role = _known_role_for_local_identifier(_normalize_identifier(transaction.account_number))
     if local_role is not None:
         return local_role
 
@@ -197,6 +208,7 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
     summary = {
         "updated_transactions": 0,
         "skipped_wise": 0,
+        "skipped_no_signal": 0,
         "skipped_ambiguous": 0,
         "skipped_parser_artifact": 0,
         "deactivated_patterns": 0,
@@ -228,6 +240,10 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
                     continue
 
                 counterparty_role = _counterparty_role_for_transaction(transaction)
+                if local_role is None or counterparty_role is None:
+                    summary["skipped_no_signal"] += 1
+                    continue
+
                 desired_category = _desired_transfer_category(local_role, counterparty_role)
 
                 if desired_category is None:
