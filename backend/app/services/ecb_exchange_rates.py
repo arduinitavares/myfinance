@@ -50,26 +50,18 @@ class ECBExchangeRateService:
     def has_historical_seed_coverage(self, *, today: date | None = None) -> bool:
         end_date = today or self._today()
         required_start_date = self._historical_seed_start_date(end_date)
-        earliest_rows = self.db.execute(
-            select(
-                FXDailyReferenceRate.quoted_currency,
-                func.min(FXDailyReferenceRate.rate_date),
-            ).where(
+        expected_row_count = self._expected_observation_count(required_start_date, end_date)
+        actual_row_count = self.db.execute(
+            select(func.count(FXDailyReferenceRate.id)).where(
                 FXDailyReferenceRate.source_name == self.SOURCE_NAME,
                 FXDailyReferenceRate.base_currency == self.BASE_CURRENCY,
                 FXDailyReferenceRate.quoted_currency.in_(self.SUPPORTED_QUOTES),
-            ).group_by(FXDailyReferenceRate.quoted_currency)
-        ).all()
-        earliest_by_quote = {
-            quoted_currency: earliest_rate_date
-            for quoted_currency, earliest_rate_date in earliest_rows
-        }
+                FXDailyReferenceRate.rate_date >= required_start_date,
+                FXDailyReferenceRate.rate_date <= end_date,
+            )
+        ).scalar_one()
 
-        return all(
-            earliest_by_quote.get(quoted_currency) is not None
-            and earliest_by_quote[quoted_currency] <= required_start_date
-            for quoted_currency in self.SUPPORTED_QUOTES
-        )
+        return actual_row_count == expected_row_count
 
     def seed_historical_rates(self, *, today: date | None = None) -> FXRefreshResult:
         end_date = today or self._today()
@@ -264,6 +256,16 @@ class ECBExchangeRateService:
             current_date += timedelta(days=1)
 
         return missing_publication_days, missing_working_days
+
+    def _expected_observation_count(self, start_date: date, end_date: date) -> int:
+        publication_day_count = 0
+        current_date = start_date
+        while current_date <= end_date:
+            if self._is_ecb_publication_day(current_date):
+                publication_day_count += 1
+            current_date += timedelta(days=1)
+
+        return publication_day_count * len(self.SUPPORTED_QUOTES)
 
     def _is_ecb_publication_day(self, day: date) -> bool:
         return day.weekday() < 5 and day not in self._target_closing_days(day.year)

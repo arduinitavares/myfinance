@@ -19,6 +19,19 @@ def _stored_rates(db_session):
 
 
 def test_has_historical_seed_coverage_requires_boundary_coverage_for_both_supported_quotes(db_session):
+    db_session.add(
+        Transaction(
+            account_number="BE10000000000001",
+            transaction_date=date(2026, 4, 16),
+            amount=-42.50,
+            currency="EUR",
+            description="quote coverage boundary transaction",
+            transaction_type=TransactionType.EXPENSE,
+            source_bank="ing",
+        )
+    )
+    db_session.commit()
+
     service = ECBExchangeRateService(
         db_session,
         now_provider=lambda: datetime(2026, 4, 17, 8, 30, 0),
@@ -51,13 +64,13 @@ def test_has_historical_seed_coverage_requires_boundary_coverage_for_both_suppor
 
     db_session.add(
         FXDailyReferenceRate(
-            rate_date=date(2021, 4, 17),
+            rate_date=date(2026, 4, 17),
             base_currency="EUR",
             quoted_currency="USD",
             units_per_base=Decimal("1.0500"),
             source_name="ECB_EXR",
-            fetched_at=datetime(2021, 4, 17, 8, 30, 0),
-            updated_at=datetime(2021, 4, 17, 8, 30, 0),
+            fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+            updated_at=datetime(2026, 4, 17, 8, 30, 0),
         )
     )
     db_session.commit()
@@ -66,14 +79,70 @@ def test_has_historical_seed_coverage_requires_boundary_coverage_for_both_suppor
 
     db_session.add(
         FXDailyReferenceRate(
-            rate_date=date(2021, 4, 17),
+            rate_date=date(2026, 4, 17),
             base_currency="EUR",
             quoted_currency="BRL",
             units_per_base=Decimal("5.5000"),
             source_name="ECB_EXR",
-            fetched_at=datetime(2021, 4, 17, 8, 30, 0),
-            updated_at=datetime(2021, 4, 17, 8, 30, 0),
+            fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+            updated_at=datetime(2026, 4, 17, 8, 30, 0),
         )
+    )
+    db_session.commit()
+
+    assert service.has_historical_seed_coverage(today=date(2026, 4, 17)) is True
+
+
+def test_has_historical_seed_coverage_detects_mid_history_gap_between_boundaries(db_session):
+    db_session.add(
+        Transaction(
+            account_number="BE10000000000001",
+            transaction_date=date(2026, 4, 14),
+            amount=-42.50,
+            currency="EUR",
+            description="historical coverage boundary transaction",
+            transaction_type=TransactionType.EXPENSE,
+            source_bank="ing",
+        )
+    )
+    db_session.commit()
+
+    service = ECBExchangeRateService(
+        db_session,
+        now_provider=lambda: datetime(2026, 4, 17, 8, 30, 0),
+    )
+    db_session.add_all(
+        [
+            FXDailyReferenceRate(
+                rate_date=rate_date,
+                base_currency="EUR",
+                quoted_currency=quoted_currency,
+                units_per_base=Decimal("1.1100") if quoted_currency == "USD" else Decimal("6.0100"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+                updated_at=datetime(2026, 4, 17, 8, 30, 0),
+            )
+            for rate_date in (date(2026, 4, 14), date(2026, 4, 16), date(2026, 4, 17))
+            for quoted_currency in ("USD", "BRL")
+        ]
+    )
+    db_session.commit()
+
+    assert service.has_historical_seed_coverage(today=date(2026, 4, 17)) is False
+
+    db_session.add_all(
+        [
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 15),
+                base_currency="EUR",
+                quoted_currency=quoted_currency,
+                units_per_base=Decimal("1.1200") if quoted_currency == "USD" else Decimal("6.0200"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 17, 9, 0, 0),
+                updated_at=datetime(2026, 4, 17, 9, 0, 0),
+            )
+            for quoted_currency in ("USD", "BRL")
+        ]
     )
     db_session.commit()
 
