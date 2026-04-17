@@ -88,21 +88,15 @@ class StatisticsService:
         }
 
     @staticmethod
-    def calculate_statistics(
+    def _financial_stat_queries(
         db: Session,
         period: StatisticsPeriod,
         target_date: date = None,
-        reporting_currency: str = "EUR",
     ):
-        # Base query for period-specific stats
         period_query = db.query(Transaction)
-        
-        # Base query for cumulative stats
         cumulative_query = db.query(Transaction)
-        
-        # New: Base query for yearly stats
         yearly_query = db.query(Transaction)
-        
+
         if period != StatisticsPeriod.ALL_TIME:
             if period == StatisticsPeriod.MONTHLY:
                 period_query = period_query.filter(
@@ -125,7 +119,89 @@ class StatisticsService:
                 cumulative_query = cumulative_query.filter(
                     Transaction.transaction_date <= date(target_date.year, 12, 31)
                 )
-        
+
+        return period_query, cumulative_query, yearly_query
+
+    @staticmethod
+    def calculate_statistics(
+        db: Session,
+        period: StatisticsPeriod,
+        target_date: date = None,
+    ):
+        period_query, cumulative_query, yearly_query = StatisticsService._financial_stat_queries(
+            db,
+            period,
+            target_date,
+        )
+
+        # Calculate period-specific stats
+        period_transactions = period_query.all()
+        period_stats = {
+            'period_income': 0,
+            'period_expenses': 0,
+            'income_count': 0,
+            'expense_count': 0
+        }
+
+        for trans in period_transactions:
+            if trans.transaction_type == TransactionType.INCOME:
+                period_stats['period_income'] += trans.amount
+                period_stats['income_count'] += 1
+            elif trans.transaction_type == TransactionType.EXPENSE:
+                period_stats['period_expenses'] += abs(trans.amount)
+                period_stats['expense_count'] += 1
+
+        # Calculate cumulative stats
+        cumulative_transactions = cumulative_query.all()
+        cumulative_stats = {
+            'total_income': 0,
+            'total_expenses': 0
+        }
+
+        for trans in cumulative_transactions:
+            if trans.transaction_type == TransactionType.INCOME:
+                cumulative_stats['total_income'] += trans.amount
+            elif trans.transaction_type == TransactionType.EXPENSE:
+                cumulative_stats['total_expenses'] += abs(trans.amount)
+
+        # Calculate yearly stats
+        yearly_transactions = yearly_query.all()
+        yearly_stats = {
+            'yearly_income': 0,
+            'yearly_expenses': 0
+        }
+
+        for trans in yearly_transactions:
+            if trans.transaction_type == TransactionType.INCOME:
+                yearly_stats['yearly_income'] += trans.amount
+            elif trans.transaction_type == TransactionType.EXPENSE:
+                yearly_stats['yearly_expenses'] += abs(trans.amount)
+
+        # Calculate derived statistics
+        period_stats['period_net_savings'] = period_stats['period_income'] - period_stats['period_expenses']
+        period_stats['savings_rate'] = (period_stats['period_net_savings'] / period_stats['period_income'] * 100) if period_stats['period_income'] > 0 else 0
+
+        cumulative_stats['total_net_savings'] = cumulative_stats['total_income'] - cumulative_stats['total_expenses']
+
+        # Calculate averages
+        period_stats['average_income'] = period_stats['period_income'] / period_stats['income_count'] if period_stats['income_count'] > 0 else 0
+        period_stats['average_expense'] = period_stats['period_expenses'] / period_stats['expense_count'] if period_stats['expense_count'] > 0 else 0
+
+        return {**period_stats, **cumulative_stats, **yearly_stats}
+
+    @staticmethod
+    def calculate_statistics_for_reporting_currency(
+        db: Session,
+        period: StatisticsPeriod,
+        target_date: date = None,
+        reporting_currency: str = "EUR",
+    ):
+        period_query, cumulative_query, yearly_query = StatisticsService._financial_stat_queries(
+            db,
+            period,
+            target_date,
+        )
+
         conversion_service = CurrencyConversionService(db)
 
         period_transactions = period_query.all()

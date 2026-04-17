@@ -311,6 +311,24 @@ def _build_overview_item(
     }
 
 
+def _calculate_overview_stats(
+    db: Session,
+    *,
+    period: StatisticsPeriod,
+    target_date: date | None,
+    reporting_currency: str,
+):
+    if reporting_currency == "EUR":
+        return StatisticsService.calculate_statistics(db, period, target_date)
+
+    return StatisticsService.calculate_statistics_for_reporting_currency(
+        db,
+        period,
+        target_date,
+        reporting_currency=reporting_currency,
+    )
+
+
 @router.get("/overview", response_model=StatisticsOverviewResponse)
 def get_statistics_overview(
     db: Session = Depends(get_db),
@@ -353,18 +371,18 @@ def get_statistics_overview(
             day=calendar.monthrange(latest_transaction.transaction_date.year, latest_transaction.transaction_date.month)[1]
         )
 
-        current_month_stats = StatisticsService.calculate_statistics(
+        current_month_stats = _calculate_overview_stats(
             db,
-            StatisticsPeriod.MONTHLY,
-            current_month,
+            period=StatisticsPeriod.MONTHLY,
+            target_date=current_month,
             reporting_currency=reporting_currency,
         )
         
         last_month = current_month - timedelta(days=calendar.monthrange(current_month.year, current_month.month)[1])
-        last_month_stats = StatisticsService.calculate_statistics(
+        last_month_stats = _calculate_overview_stats(
             db,
-            StatisticsPeriod.MONTHLY,
-            last_month,
+            period=StatisticsPeriod.MONTHLY,
+            target_date=last_month,
             reporting_currency=reporting_currency,
         )
 
@@ -381,17 +399,18 @@ def get_statistics_overview(
                 period=StatisticsPeriod.MONTHLY,
                 anchor_date=previous_year_last_month,
                 reporting_currency=reporting_currency,
-                stats=StatisticsService.calculate_statistics(
+                stats=_calculate_overview_stats(
                     db,
-                    StatisticsPeriod.MONTHLY,
-                    previous_year_last_month,
+                    period=StatisticsPeriod.MONTHLY,
+                    target_date=previous_year_last_month,
                     reporting_currency=reporting_currency,
                 ),
             )
 
-        all_time_stats = StatisticsService.calculate_statistics(
+        all_time_stats = _calculate_overview_stats(
             db,
-            StatisticsPeriod.ALL_TIME,
+            period=StatisticsPeriod.ALL_TIME,
+            target_date=None,
             reporting_currency=reporting_currency,
         )
         

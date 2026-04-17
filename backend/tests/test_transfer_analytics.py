@@ -300,6 +300,61 @@ def test_statistics_overview_excludes_transfer_transactions():
         db_session.close()
 
 
+def test_calculate_statistics_keeps_raw_persisted_totals_for_mixed_currency_rows():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+
+    try:
+        _store_rate(
+            db_session,
+            rate_date=date(2025, 1, 15),
+            quoted_currency="USD",
+            units_per_base="1.2500",
+        )
+
+        _create_transaction(
+            db_session,
+            description="Salary",
+            amount=5000.0,
+            transaction_type=TransactionType.INCOME,
+            income_category=IncomeCategory.SALARY,
+        )
+        _create_transaction(
+            db_session,
+            description="Groceries",
+            amount=-100.0,
+            transaction_type=TransactionType.EXPENSE,
+            expense_category=ExpenseCategory.GROCERIES,
+        )
+        usd_expense = _create_transaction(
+            db_session,
+            description="USD subscription",
+            amount=-80.0,
+            transaction_type=TransactionType.EXPENSE,
+            expense_category=ExpenseCategory.UTILITIES,
+        )
+        usd_expense.currency = "USD"
+        db_session.commit()
+
+        from app.services.statistics_service import StatisticsService
+        from app.models.statistics import StatisticsPeriod
+
+        stats = StatisticsService.calculate_statistics(
+            db_session,
+            StatisticsPeriod.MONTHLY,
+            date(2025, 1, 31),
+        )
+
+        assert stats["period_income"] == 5000.0
+        assert stats["period_expenses"] == 180.0
+        assert stats["total_expenses"] == 180.0
+        assert stats["period_net_savings"] == 4820.0
+        assert stats["average_expense"] == 90.0
+    finally:
+        db_session.close()
+
+
 def test_category_statistics_ignore_transfer_rows():
     client = TestClient(app)
     _reset_database(client)

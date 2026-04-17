@@ -48,17 +48,17 @@ describe('TransferSummary', () => {
         {
           subtype: 'Internal Transfer',
           transaction_count: 3,
-          total_outgoing_eur: 1200,
-          total_incoming_eur: 950,
+          total_outgoing: 1200,
+          total_incoming: 950,
         },
         {
           subtype: 'Credit Card Settlement',
           transaction_count: 2,
-          total_outgoing_eur: 500,
-          total_incoming_eur: 0,
+          total_outgoing: 500,
+          total_incoming: 0,
         },
       ],
-    });
+    } as any);
 
     render(<TransferSummary />);
 

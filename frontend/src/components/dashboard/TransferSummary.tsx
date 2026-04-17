@@ -107,6 +107,10 @@ export const TransferSummary: React.FC = () => {
   }, []);
 
   const formatCurrency = (amount: number) => EUR_FORMATTER.format(amount);
+  const getOutgoingAmount = (item: { total_outgoing?: number; total_outgoing_eur?: number }) =>
+    item.total_outgoing ?? item.total_outgoing_eur ?? 0;
+  const getIncomingAmount = (item: { total_incoming?: number; total_incoming_eur?: number }) =>
+    item.total_incoming ?? item.total_incoming_eur ?? 0;
 
   const handlePresetChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const nextPreset = event.target.value as TransferSummaryPreset;
@@ -189,10 +193,10 @@ export const TransferSummary: React.FC = () => {
                 {item.subtype}
               </td>
               <td className="py-3 px-4 text-right text-gray-600 dark:text-gray-300">
-                {formatCurrency(item.total_outgoing_eur)}
+                {formatCurrency(getOutgoingAmount(item))}
               </td>
               <td className="py-3 px-4 text-right text-gray-600 dark:text-gray-300">
-                {formatCurrency(item.total_incoming_eur)}
+                {formatCurrency(getIncomingAmount(item))}
               </td>
               <td className="py-3 pl-4 text-right text-gray-600 dark:text-gray-300">
                 {item.transaction_count}
