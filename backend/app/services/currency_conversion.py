@@ -14,6 +14,7 @@ from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
 
 DISPLAY_PRECISION = Decimal("0.01")
 IDENTITY_FX_RATE = Decimal("1.0")
+RawAmount = Decimal | float
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class CurrencyConversionService:
     def convert(
         self,
         *,
-        raw_amount: Decimal,
+        raw_amount: RawAmount,
         raw_currency: str,
         reporting_currency: str,
         transaction_date: date,
