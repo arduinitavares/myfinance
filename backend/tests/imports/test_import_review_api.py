@@ -1,9 +1,12 @@
+from datetime import date, datetime
+from decimal import Decimal
 import hashlib
 
 from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
+from app.models.fx import FXDailyReferenceRate
 from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft
 from app.models.statistics import FinancialStatistics, StatisticsPeriod
 from app.models.transaction import Transaction, TransactionType
@@ -12,6 +15,27 @@ from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PA
 
 
 client = TestClient(app)
+
+
+def _store_rate(
+    db_session,
+    *,
+    rate_date: date,
+    quoted_currency: str,
+    units_per_base: str,
+):
+    db_session.add(
+        FXDailyReferenceRate(
+            rate_date=rate_date,
+            base_currency="EUR",
+            quoted_currency=quoted_currency,
+            units_per_base=Decimal(units_per_base),
+            source_name="ECB_EXR",
+            fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+            updated_at=datetime(2026, 4, 17, 8, 30, 0),
+        )
+    )
+    db_session.commit()
 
 
 def _upload_pdf(monkeypatch, page_texts, *, file_bytes=b"%PDF-1.7\nstub", expected_status=200):
@@ -113,6 +137,50 @@ def test_get_review_payload_returns_statement_transactions_issues_and_evidence(d
     assert payload["transactions"][0]["raw_fields"]["source_locator"] == "pdf:p2:l4"
     assert payload["issues"] == []
     assert payload["evidence"]["text_blocks"][0]["page_number"] == 1
+
+
+def test_get_review_payload_includes_display_fields_for_selected_reporting_currency(db_session, monkeypatch):
+    _store_rate(
+        db_session,
+        rate_date=date(2025, 12, 20),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
+
+    response = client.get(
+        f"/imports/{session['id']}",
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_transaction = payload["transactions"][0]
+    assert first_transaction["signed_amount"] == -18.19
+    assert first_transaction["currency"] == "EUR"
+    assert first_transaction["display_amount"] == -21.83
+    assert first_transaction["display_currency"] == "USD"
+    assert first_transaction["display_fx_rate"] == 1.2
+    assert first_transaction["display_rate_date"] == "2025-12-20"
+
+
+def test_get_review_payload_keeps_unavailable_display_shape_when_rate_missing(db_session, monkeypatch):
+    session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
+
+    response = client.get(
+        f"/imports/{session['id']}",
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_transaction = payload["transactions"][0]
+    assert first_transaction["signed_amount"] == -18.19
+    assert first_transaction["currency"] == "EUR"
+    assert first_transaction["display_amount"] is None
+    assert first_transaction["display_currency"] == "USD"
+    assert first_transaction["display_fx_rate"] is None
+    assert first_transaction["display_rate_date"] is None
 
 
 def test_get_review_payload_for_failed_session_returns_issues_and_evidence_without_statement(db_session, monkeypatch):

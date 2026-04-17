@@ -14,6 +14,7 @@ from ..imports.workflow import (
     ImportSessionStateError,
     ImportWorkflowService,
 )
+from ..services.reporting_currency import get_reporting_currency
 from ..schemas.imports import (
     ImportBatchRunResponse,
     ImportReviewResponse,
@@ -114,10 +115,11 @@ async def upload_import(
 def get_import_review(
     session_id: int,
     db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
 ):
     workflow = ImportWorkflowService(db)
     try:
-        return workflow.get_review_payload(session_id)
+        return workflow.get_review_payload(session_id, reporting_currency=reporting_currency)
     except ImportSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

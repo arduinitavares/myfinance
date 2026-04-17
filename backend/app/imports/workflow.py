@@ -15,7 +15,9 @@ from app.models.imports import (
 )
 from app.models.statistics import CategoryStatistics, FinancialStatistics, StatisticsPeriod
 from app.models.transaction import Transaction
+from app.schemas.imports import build_import_transaction_draft_response_payload
 from app.schemas.transaction import TransactionCreate
+from app.services.currency_conversion import CurrencyConversionService, DisplayMoney
 from app.services.statistics_service import StatisticsService
 
 from .artifacts import ArtifactStore
@@ -140,17 +142,25 @@ class ImportWorkflowService:
         session = self._get_session(session_id)
         return self._serialize_session(session)
 
-    def get_review_payload(self, session_id: int) -> dict:
+    def get_review_payload(self, session_id: int, *, reporting_currency: str) -> dict:
         session = self._get_session(session_id)
         attempt_number = self._latest_attempt_number(session.id)
         statement = self._latest_statement_draft(session.id, attempt_number) if attempt_number else None
         transactions = self._statement_transactions(statement.id) if statement is not None else []
         issues = self._issues_for_attempt(session.id, attempt_number) if attempt_number else []
+        conversion_service = CurrencyConversionService(self.db)
 
         return {
             "session": self._serialize_session(session),
             "statement": self._serialize_statement(statement) if statement is not None else None,
-            "transactions": [self._serialize_transaction_draft(transaction) for transaction in transactions],
+            "transactions": [
+                self._serialize_transaction_draft(
+                    transaction,
+                    conversion_service=conversion_service,
+                    reporting_currency=reporting_currency,
+                )
+                for transaction in transactions
+            ],
             "issues": [self._serialize_issue(issue) for issue in issues],
             "evidence": self._read_raw_evidence(session.id, attempt_number),
         }
@@ -480,23 +490,28 @@ class ImportWorkflowService:
         }
 
     @staticmethod
-    def _serialize_transaction_draft(transaction: ImportTransactionDraft) -> dict:
-        return {
-            "id": transaction.id,
-            "transaction_date": transaction.transaction_date,
-            "source_description": transaction.source_description,
-            "canonical_description_en": transaction.canonical_description_en,
-            "signed_amount": transaction.signed_amount,
-            "currency": transaction.currency,
-            "debit_credit": transaction.debit_credit,
-            "source_locator": transaction.source_locator,
-            "inferred_category": transaction.inferred_category,
-            "category_source": transaction.category_source,
-            "confidence": transaction.confidence,
-            "field_confidence": json.loads(transaction.field_confidence) if transaction.field_confidence else None,
-            "raw_fields": json.loads(transaction.raw_fields) if transaction.raw_fields else None,
-            "edit_source": transaction.edit_source,
-        }
+    def _serialize_transaction_draft(
+        transaction: ImportTransactionDraft,
+        *,
+        conversion_service: CurrencyConversionService,
+        reporting_currency: str,
+    ) -> dict:
+        if transaction.transaction_date is None:
+            display_money = DisplayMoney.unavailable(
+                display_currency=reporting_currency,
+                reason="missing_transaction_date",
+            )
+        else:
+            display_money = conversion_service.convert(
+                raw_amount=transaction.signed_amount,
+                raw_currency=transaction.currency,
+                reporting_currency=reporting_currency,
+                transaction_date=transaction.transaction_date,
+            )
+        payload = build_import_transaction_draft_response_payload(transaction, display_money)
+        payload["field_confidence"] = json.loads(transaction.field_confidence) if transaction.field_confidence else None
+        payload["raw_fields"] = json.loads(transaction.raw_fields) if transaction.raw_fields else None
+        return payload
 
     @staticmethod
     def _serialize_issue(issue: ImportIssueModel) -> dict:

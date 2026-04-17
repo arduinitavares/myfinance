@@ -1,7 +1,9 @@
-from pydantic import BaseModel, root_validator, validator
 from datetime import date
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 from enum import Enum
+from pydantic import BaseModel, root_validator, validator
+
+from ..services.currency_conversion import DisplayMoney
 from ..models.transaction import ExpenseCategory, IncomeCategory, TransactionType, TransferCategory
 
 
@@ -82,6 +84,10 @@ class Transaction(TransactionBase):
     import_source_locator: Optional[str] = None
     import_source_description: Optional[str] = None
     canonical_description_en: Optional[str] = None
+    display_amount: Optional[float] = None
+    display_currency: Optional[str] = None
+    display_fx_rate: Optional[float] = None
+    display_rate_date: Optional[date] = None
 
     class Config:
         orm_mode = True
@@ -111,3 +117,18 @@ class TimePeriod(str, Enum):
     ONE_YEAR = "1Y"
     TWO_YEARS = "2Y"
     ALL_TIME = "ALL_TIME"
+
+
+def serialize_display_money(display_money: DisplayMoney) -> dict[str, Any]:
+    return {
+        "display_amount": display_money.display_amount,
+        "display_currency": display_money.display_currency,
+        "display_fx_rate": display_money.display_fx_rate,
+        "display_rate_date": display_money.display_rate_date,
+    }
+
+
+def build_transaction_response_payload(transaction: Any, display_money: DisplayMoney) -> dict[str, Any]:
+    payload = Transaction.model_validate(transaction, from_attributes=True).model_dump()
+    payload.update(serialize_display_money(display_money))
+    return payload

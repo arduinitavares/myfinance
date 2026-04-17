@@ -22,6 +22,8 @@ from ..services.csv_import_service import (
     MAX_NEW_TRANSACTIONS_PER_CSV_IMPORT,
     MAX_ROWS_PER_CSV_IMPORT,
 )
+from ..services.currency_conversion import CurrencyConversionService
+from ..services.reporting_currency import get_reporting_currency
 from ..services.statistics_service import StatisticsService
 from ..services.anomaly_detection_service import AnomalyDetectionService
 from ..services.classification_commit_service import commit_category_change
@@ -76,10 +78,26 @@ SORT_FIELD_MAPPING = {
 }
 
 
+def _serialize_transaction_for_response(
+    transaction: Transaction,
+    *,
+    conversion_service: CurrencyConversionService,
+    reporting_currency: str,
+):
+    display_money = conversion_service.convert(
+        raw_amount=transaction.amount,
+        raw_currency=transaction.currency,
+        reporting_currency=reporting_currency,
+        transaction_date=transaction.transaction_date,
+    )
+    return schemas.build_transaction_response_payload(transaction, display_money)
+
+
 @router.post("/upload/", response_model=List[schemas.Transaction])
 async def upload_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
     request: Request = None,
 ):
     if not file.filename.endswith('.csv'):
@@ -122,7 +140,15 @@ async def upload_csv(
             if not db_transactions:
                 return []
 
-            return db_transactions
+            conversion_service = CurrencyConversionService(db)
+            return [
+                _serialize_transaction_for_response(
+                    transaction,
+                    conversion_service=conversion_service,
+                    reporting_currency=reporting_currency,
+                )
+                for transaction in db_transactions
+            ]
             
         except ValueError as e:  # CSV format/parse errors
             raise HTTPException(status_code=400, detail=str(e))
@@ -135,6 +161,7 @@ async def upload_csv(
 @router.get("/", response_model=schemas.TransactionPage)
 def get_transactions(
     db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
     page: int = Query(1, gt=0),
     page_size: int = Query(10, gt=0, le=100),
     sort_field: str = Query('date', regex='^(date|description|amount|type)$'),
@@ -282,8 +309,18 @@ def get_transactions(
         offset = (page - 1) * page_size
         transactions = query.offset(offset).limit(page_size).all()
         
+        conversion_service = CurrencyConversionService(db)
+        serialized_transactions = [
+            _serialize_transaction_for_response(
+                transaction,
+                conversion_service=conversion_service,
+                reporting_currency=reporting_currency,
+            )
+            for transaction in transactions
+        ]
+
         return {
-            "items": transactions,
+            "items": serialized_transactions,
             "total": total_count,
             "page": page,
             "page_size": page_size,
@@ -359,7 +396,8 @@ def update_transaction_category(
 @router.post("/restore", response_model=schemas.Transaction)
 def restore_transaction(
     transaction_data: schemas.TransactionRestore = Body(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
 ):
     try:
         # Create a new transaction with the provided data
@@ -382,7 +420,12 @@ def restore_transaction(
         except Exception as e:
             logger.warning(f"Anomaly detection failed for restored transaction: {str(e)}")
         
-        return new_transaction
+        conversion_service = CurrencyConversionService(db)
+        return _serialize_transaction_for_response(
+            new_transaction,
+            conversion_service=conversion_service,
+            reporting_currency=reporting_currency,
+        )
         
     except Exception as e:
         logger.error(f"Error restoring transaction: {str(e)}")

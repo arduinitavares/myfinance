@@ -3,6 +3,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .transaction import serialize_display_money
+from ..services.currency_conversion import DisplayMoney
+
 
 class ImportSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -56,6 +59,10 @@ class ImportTransactionDraftResponse(BaseModel):
     field_confidence: dict[str, float] | None = None
     raw_fields: dict[str, Any] | None = None
     edit_source: str
+    display_amount: float | None = None
+    display_currency: str | None = None
+    display_fx_rate: float | None = None
+    display_rate_date: date | None = None
 
 
 class ImportIssueResponse(BaseModel):
@@ -115,3 +122,27 @@ class ImportBatchRunResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     items: list[ImportBatchItemResponse] = Field(default_factory=list)
+
+
+def build_import_transaction_draft_response_payload(
+    transaction_draft: Any,
+    display_money: DisplayMoney,
+) -> dict[str, Any]:
+    payload = {
+        "id": transaction_draft.id,
+        "transaction_date": transaction_draft.transaction_date,
+        "source_description": transaction_draft.source_description,
+        "canonical_description_en": transaction_draft.canonical_description_en,
+        "signed_amount": transaction_draft.signed_amount,
+        "currency": transaction_draft.currency,
+        "debit_credit": transaction_draft.debit_credit,
+        "source_locator": transaction_draft.source_locator,
+        "inferred_category": transaction_draft.inferred_category,
+        "category_source": transaction_draft.category_source,
+        "confidence": transaction_draft.confidence,
+        "field_confidence": None,
+        "raw_fields": None,
+        "edit_source": transaction_draft.edit_source,
+    }
+    payload.update(serialize_display_money(display_money))
+    return payload
