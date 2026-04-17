@@ -1,0 +1,16 @@
+[project]
+name = "myfinance"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "bandit[toml]>=1.8.6",
+    "importlib-metadata>=8.7.1",
+    "ruff>=0.15.11",
+    "ty>=0.0.31",
+]
+
+[tool.ty.environment]
+python = ".venv"

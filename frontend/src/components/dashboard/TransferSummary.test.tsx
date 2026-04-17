@@ -113,6 +113,7 @@ describe('TransferSummary', () => {
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(presetSelect).toHaveValue('this_month');
+    // The backend should be invoked with no explicit date arguments here so defaults are used.
     expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(1);
 
     await act(async () => {

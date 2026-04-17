@@ -1,13 +1,13 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import text
 import logging
 
-from app.models.transaction import Transaction, ExpenseCategory
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
 from app.database import SQLALCHEMY_DATABASE_URL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 def migrate_categories():
     """
@@ -22,28 +22,33 @@ def migrate_categories():
     try:
         # Use raw SQL updates to bypass enum validation
         logger.info("Updating HEALTHCARE and CLOTHING categories to PERSONAL...")
-        db.execute(text("""
+        db.execute(
+            text("""
             UPDATE transactions 
             SET expense_category = 'PERSONAL' 
             WHERE expense_category IN ('HEALTHCARE', 'CLOTHING')
-        """))
+        """)
+        )
 
         logger.info("Updating FOOD category to GROCERIES...")
-        db.execute(text("""
+        db.execute(
+            text("""
             UPDATE transactions 
             SET expense_category = 'GROCERIES' 
             WHERE expense_category = 'FOOD'
-        """))
-        
+        """)
+        )
+
         db.commit()
         logger.info("Successfully migrated categories")
-        
+
     except Exception as e:
         db.rollback()
-        logger.error(f"Error during migration: {str(e)}")
+        logger.error(f"Error during migration: {e!s}")
         raise
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     migrate_categories()

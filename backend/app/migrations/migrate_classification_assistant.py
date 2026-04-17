@@ -4,14 +4,20 @@ import sys
 
 from sqlalchemy import inspect, text
 
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 from app.database import Base, engine
-from app.models.classification import ClassificationSession, ClassificationTurn, RecurrencePattern
+from app.models.classification import (
+    ClassificationSession,
+    ClassificationTurn,
+    RecurrencePattern,
+)
 
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -22,13 +28,18 @@ def _has_recurrence_pattern_foreign_key() -> bool:
     inspector = inspect(engine)
     for foreign_key in inspector.get_foreign_keys("transactions"):
         constrained_columns = foreign_key.get("constrained_columns") or []
-        if constrained_columns == ["recurrence_pattern_id"] and foreign_key.get("referred_table") == "recurrence_patterns":
+        if (
+            constrained_columns == ["recurrence_pattern_id"]
+            and foreign_key.get("referred_table") == "recurrence_patterns"
+        ):
             return True
     return False
 
 
 def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) -> None:
-    logger.info("Rebuilding transactions table to add recurrence_pattern_id foreign key")
+    logger.info(
+        "Rebuilding transactions table to add recurrence_pattern_id foreign key"
+    )
     raw_connection = engine.raw_connection()
     try:
         cursor = raw_connection.cursor()
@@ -58,9 +69,21 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             """
         )
 
-        transfer_category_sql = "transfer_category" if "transfer_category" in transaction_columns else "NULL"
-        classification_source_sql = "classification_source" if "classification_source" in transaction_columns else "NULL"
-        recurrence_pattern_id_sql = "recurrence_pattern_id" if "recurrence_pattern_id" in transaction_columns else "NULL"
+        transfer_category_sql = (
+            "transfer_category"
+            if "transfer_category" in transaction_columns
+            else "NULL"
+        )
+        classification_source_sql = (
+            "classification_source"
+            if "classification_source" in transaction_columns
+            else "NULL"
+        )
+        recurrence_pattern_id_sql = (
+            "recurrence_pattern_id"
+            if "recurrence_pattern_id" in transaction_columns
+            else "NULL"
+        )
         cursor.execute(
             f"""
             INSERT INTO {TRANSACTIONS_MIGRATION_TABLE} (
@@ -100,11 +123,21 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             """
         )
         cursor.execute("DROP TABLE transactions")
-        cursor.execute(f"ALTER TABLE {TRANSACTIONS_MIGRATION_TABLE} RENAME TO transactions")
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_transactions_id ON transactions (id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_transactions_account_number ON transactions (account_number)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_transactions_transaction_date ON transactions (transaction_date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS ix_transactions_recurrence_pattern_id ON transactions (recurrence_pattern_id)")
+        cursor.execute(
+            f"ALTER TABLE {TRANSACTIONS_MIGRATION_TABLE} RENAME TO transactions"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS ix_transactions_id ON transactions (id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS ix_transactions_account_number ON transactions (account_number)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS ix_transactions_transaction_date ON transactions (transaction_date)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS ix_transactions_recurrence_pattern_id ON transactions (recurrence_pattern_id)"
+        )
         raw_connection.commit()
     finally:
         try:
@@ -125,12 +158,13 @@ def migrate_classification_assistant():
         ],
     )
     inspector = inspect(engine)
-    transaction_columns = {column["name"] for column in inspector.get_columns("transactions")}
+    transaction_columns = {
+        column["name"] for column in inspector.get_columns("transactions")
+    }
 
     needs_rebuild = (
         "transfer_category" not in transaction_columns
-        or
-        "classification_source" not in transaction_columns
+        or "classification_source" not in transaction_columns
         or "recurrence_pattern_id" not in transaction_columns
         or not _has_recurrence_pattern_foreign_key()
     )

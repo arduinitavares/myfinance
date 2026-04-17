@@ -242,6 +242,7 @@ V1 rules:
 - `base_currency` is always `EUR`
 - `source_name` is always `ECB_EXR`
 - no stored row is required for `EUR -> EUR`; that is handled as a built-in identity conversion
+- conversion clients may rely on `source == target` identity behavior returning `rate = 1.0` even when no persisted row exists
 
 Timestamp semantics:
 
@@ -263,6 +264,10 @@ If raw currency and reporting currency are the same:
 - `display_amount = raw_amount`
 - `display_currency = raw_currency`
 - `display_fx_rate = 1.0`
+
+Validation note:
+
+- the conversion service contract must enforce this identity path explicitly at runtime (or by an equivalent seeded `1.0` identity-record policy) so consumers can assert deterministic `source == target` behavior
 - `display_rate_date = transaction_date`
 
 ### Effective-date rule
@@ -273,10 +278,15 @@ If no rate exists for the exact date:
 
 - use the most recent prior available daily rate
 
+Clarification:
+
+- ECB reference rates are not published on weekends and bank holidays, so this fallback intentionally covers weekend/holiday transactions (for example, a Saturday transaction uses the prior Friday rate)
+
 If no prior rate exists:
 
 - conversion fails explicitly
 - the UI must show an unavailable state instead of fake math
+- no interpolation, forward-fill from future dates, or synthetic rate generation is allowed
 
 ### Pairwise derivation rule
 
@@ -302,6 +312,15 @@ For a raw amount `raw_amount` in `raw_currency`, displayed in `reporting_currenc
 - preserve the original sign
 - perform calculation with `Decimal`
 - round only at the display boundary, not in internal conversion steps
+
+Deterministic display-rounding policy:
+
+- internal calculations remain unrounded `Decimal` values through all conversion steps
+- apply `ROUND_HALF_UP` only when producing display values
+- use per-currency display precision at the formatting boundary:
+  - `EUR`: 2 decimal places
+  - `USD`: 2 decimal places
+  - `BRL`: 2 decimal places
 - expose the effective rate date actually used as `display_rate_date`
 
 ### Precision rule
@@ -309,6 +328,11 @@ For a raw amount `raw_amount` in `raw_currency`, displayed in `reporting_currenc
 Even though existing transaction amounts are currently stored as floating-point values, all FX rates and all conversion math in the new service must use `Decimal` internally after coercion from raw values.
 
 This avoids compounding binary-floating precision issues across chained conversions.
+
+Known v1 limitation:
+
+- coercing existing float-backed transaction amounts to `Decimal` preserves any binary-floating artifacts already present in source values
+- a future migration should store raw monetary amounts as `DECIMAL`/`NUMERIC` at rest to eliminate inherited precision artifacts
 
 ## Backend Conversion Service
 
@@ -322,6 +346,12 @@ Introduce one dedicated currency-conversion module responsible for:
 This service must be the only backend path allowed to perform FX math for user-facing data.
 
 No endpoint or serializer may implement ad hoc conversion logic inline.
+
+Performance considerations (non-blocking for v1, recommended for scale):
+
+- cache recently used FX rates in memory with a short TTL and explicit invalidation when seed/refresh jobs write newer data
+- provide a batch-conversion API/handler so lists of transactions can be converted in one service call instead of repeated per-item invocations
+- for large analytic workloads, prefer DB-side conversion or pre-aggregated reporting-currency values instead of per-row application-side conversion loops
 
 ## Reporting Currency Resolution
 
@@ -353,6 +383,12 @@ For every request:
    - `error = "invalid_reporting_currency"`
    - `allowed = ["EUR", "USD", "BRL"]`
 5. do not silently coerce, lowercase-normalize, or guess unsupported values
+
+Tradeoff and rollout note:
+
+- strict validation is the default v1 behavior and should be used unless there is a staged rollout need
+- an optional tolerant mode may temporarily default invalid values to `EUR` while emitting a warning/log signal for monitoring
+- whichever mode is chosen, clients must handle invalid-currency outcomes explicitly and servers must log invalid `X-Reporting-Currency` occurrences for observability
 
 ## API Contract Design
 
@@ -496,13 +532,17 @@ V1 needs both:
 
 Recommended behavior:
 
-- seed historical `USD` and `BRL` ECB daily rates for the date span covered by existing transactions
-- run an idempotent startup catch-up that fetches recent missing supported working-day rates over the last `45` calendar days
+- seed historical `USD` and `BRL` ECB daily rates from the earliest transaction date through today (or seed the last `5` years when transaction history is unavailable)
+- run a dedicated maintenance-path refresh daily at `02:00 UTC` to fill recent missing supported working-day rates
+- run an idempotent app startup check that performs bounded catch-up for recent missing supported working-day rates over the last `45` calendar days
+- treat the scheduled refresh as the primary mechanism and startup catch-up as a safety net, not an all-day on-demand replacement
+- for dates before ECB coverage, use the closest prior available ECB date when possible; if none exists, log explicit missing coverage and return conversion-unavailable
 
 V1 delivery shape:
 
 1. a re-runnable historical seed path for the existing transaction date span
 2. a bounded startup catch-up for recent missing supported rates over the last `45` calendar days
+3. a scheduled dedicated maintenance-path refresh at `02:00 UTC`
 
 The seed and refresh mechanism must be deterministic and re-runnable.
 

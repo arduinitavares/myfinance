@@ -9,7 +9,6 @@ from app.models.transaction import Transaction, TransactionType, TransferCategor
 from app.services.financial_health_service import FinancialHealthService
 from app.services.statistics_service import StatisticsService
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -67,7 +66,9 @@ def _known_ibans_in_text(text: str | None) -> set[str]:
 
 
 def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | None:
-    local_role = _known_role_for_local_identifier(_normalize_identifier(transaction.account_number))
+    local_role = _known_role_for_local_identifier(
+        _normalize_identifier(transaction.account_number)
+    )
     if local_role is not None:
         return local_role
 
@@ -75,7 +76,10 @@ def _local_role_for_transaction(db: Session, transaction: Transaction) -> str | 
         return None
 
     import_session = db.get(ImportSession, transaction.import_session_id)
-    if import_session and import_session.extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID:
+    if (
+        import_session
+        and import_session.extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID
+    ):
         return "credit_reimbursement_account"
     return None
 
@@ -90,7 +94,8 @@ def _is_europe_target_transaction(db: Session, transaction: Transaction) -> bool
 
     import_session = db.get(ImportSession, transaction.import_session_id)
     return bool(
-        import_session and import_session.extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID
+        import_session
+        and import_session.extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID
     )
 
 
@@ -108,7 +113,9 @@ def _counterparty_signal_ibans(transaction: Transaction) -> set[str]:
     if normalized_counterparty in KNOWN_IBAN_ROLE_MAP:
         counterparty_ibans.add(normalized_counterparty)
 
-    counterparty_ibans.update(_known_ibans_in_text(transaction.import_source_description))
+    counterparty_ibans.update(
+        _known_ibans_in_text(transaction.import_source_description)
+    )
     counterparty_ibans.update(_known_ibans_in_text(transaction.description))
     return counterparty_ibans
 
@@ -146,10 +153,11 @@ def _has_parser_artifact(transaction: Transaction, db: Session) -> bool:
 
     extractor_id = import_session.extractor_id if import_session else None
     normalized_description = _normalize_identifier(transaction.description) or ""
-    normalized_source = _normalize_identifier(transaction.import_source_description) or ""
-    return (
-        extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID
-        and ("BETALING" in normalized_description or "BETALING" in normalized_source)
+    normalized_source = (
+        _normalize_identifier(transaction.import_source_description) or ""
+    )
+    return extractor_id == BEOBANK_MASTERCARD_EXTRACTOR_ID and (
+        "BETALING" in normalized_description or "BETALING" in normalized_source
     )
 
 
@@ -165,14 +173,21 @@ def _pattern_conflicts_with_transfer_semantics(
     )
 
 
-def _post_pass_conflict_details(db: Session, corrected_transaction_ids: list[int]) -> list[dict[str, Any]]:
+def _post_pass_conflict_details(
+    db: Session, corrected_transaction_ids: list[int]
+) -> list[dict[str, Any]]:
     if not corrected_transaction_ids:
         return []
 
     conflicting_rows = (
         db.query(Transaction, RecurrencePattern)
-        .join(RecurrencePattern, Transaction.recurrence_pattern_id == RecurrencePattern.id)
-        .filter(Transaction.id.in_(corrected_transaction_ids), RecurrencePattern.active.is_(True))
+        .join(
+            RecurrencePattern, Transaction.recurrence_pattern_id == RecurrencePattern.id
+        )
+        .filter(
+            Transaction.id.in_(corrected_transaction_ids),
+            RecurrencePattern.active.is_(True),
+        )
         .all()
     )
 
@@ -244,7 +259,9 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
                     summary["skipped_no_signal"] += 1
                     continue
 
-                desired_category = _desired_transfer_category(local_role, counterparty_role)
+                desired_category = _desired_transfer_category(
+                    local_role, counterparty_role
+                )
 
                 if desired_category is None:
                     summary["skipped_ambiguous"] += 1
@@ -262,9 +279,13 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
 
                 pattern = None
                 if transaction.recurrence_pattern_id is not None:
-                    pattern = db.get(RecurrencePattern, transaction.recurrence_pattern_id)
+                    pattern = db.get(
+                        RecurrencePattern, transaction.recurrence_pattern_id
+                    )
 
-                if _pattern_conflicts_with_transfer_semantics(pattern, desired_category):
+                if _pattern_conflicts_with_transfer_semantics(
+                    pattern, desired_category
+                ):
                     pattern.active = False
                     transaction.recurrence_pattern_id = None
                     summary["deactivated_patterns"] += 1
@@ -279,7 +300,10 @@ def migrate_europe_iban_reclassification(db: Session) -> dict[str, int]:
                     f"{conflicts}"
                 )
 
-            data_changed = summary["updated_transactions"] > 0 or summary["deactivated_patterns"] > 0
+            data_changed = (
+                summary["updated_transactions"] > 0
+                or summary["deactivated_patterns"] > 0
+            )
             if data_changed:
                 StatisticsService.initialize_statistics(db, commit=False)
                 StatisticsService.initialize_category_statistics(db, commit=False)
