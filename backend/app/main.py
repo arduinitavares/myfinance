@@ -1,4 +1,9 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,48 +25,70 @@ from .services.fx_refresh_scheduler import build_fx_refresh_scheduler
 fx_scheduler = None
 
 
-def _run_startup_fx_refresh() -> None:
-    try:
-        with SessionLocal() as db:
-            service = ECBExchangeRateService(db)
-            if not service.has_seed_data():
-                seed_result = service.seed_historical_rates()
-                logger.info(
-                    "FX historical seed completed for %s to %s: %s rows upserted",
-                    seed_result.start_date,
-                    seed_result.end_date,
-                    seed_result.inserted_or_updated_rows,
-                )
+@contextmanager
+def _fx_refresh_lock():
+    lock_path = Path(f"{settings.database_path}.fx-refresh.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("a+", encoding="utf-8")
+    acquired = False
 
-            result = service.catch_up_recent_days(
-                window_days=settings.fx_startup_catchup_days
-            )
-            logger.info(
-                "FX startup catch-up completed for %s to %s: %s rows upserted, %s working-day gaps",
-                result.start_date,
-                result.end_date,
-                result.inserted_or_updated_rows,
-                len(result.missing_working_days),
-            )
+    try:
+        if fcntl is None:
+            acquired = True
+        else:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except BlockingIOError:
+                yield False
+                return
+
+        yield True
+    finally:
+        if acquired and fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def _run_fx_refresh(*, reason: str, allow_historical_seed: bool) -> None:
+    try:
+        with _fx_refresh_lock() as acquired:
+            if not acquired:
+                logger.info("Skipping FX %s refresh because another process holds the lock", reason)
+                return
+
+            with SessionLocal() as db:
+                service = ECBExchangeRateService(db)
+                if allow_historical_seed and not service.has_historical_seed_coverage():
+                    seed_result = service.seed_historical_rates()
+                    logger.info(
+                        "FX historical seed completed for %s to %s: %s rows upserted",
+                        seed_result.start_date,
+                        seed_result.end_date,
+                        seed_result.inserted_or_updated_rows,
+                    )
+
+                result = service.catch_up_recent_days(
+                    window_days=settings.fx_startup_catchup_days
+                )
+                logger.info(
+                    "FX %s catch-up completed for %s to %s: %s rows upserted, %s working-day gaps",
+                    reason,
+                    result.start_date,
+                    result.end_date,
+                    result.inserted_or_updated_rows,
+                    len(result.missing_working_days),
+                )
     except Exception:
-        logger.exception("FX startup catch-up failed")
+        logger.exception("FX %s refresh failed", reason)
+
+
+def _run_startup_fx_refresh() -> None:
+    _run_fx_refresh(reason="startup", allow_historical_seed=True)
 
 
 def _run_scheduled_fx_refresh() -> None:
-    try:
-        with SessionLocal() as db:
-            result = ECBExchangeRateService(db).catch_up_recent_days(
-                window_days=settings.fx_startup_catchup_days
-            )
-            logger.info(
-                "FX scheduled refresh completed for %s to %s: %s rows upserted, %s working-day gaps",
-                result.start_date,
-                result.end_date,
-                result.inserted_or_updated_rows,
-                len(result.missing_working_days),
-            )
-    except Exception:
-        logger.exception("FX scheduled refresh failed")
+    _run_fx_refresh(reason="scheduled", allow_historical_seed=False)
 
 
 @asynccontextmanager

@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from contextlib import contextmanager
 
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction, TransactionType
@@ -15,6 +16,68 @@ def _stored_rates(db_session):
         .order_by(FXDailyReferenceRate.rate_date, FXDailyReferenceRate.quoted_currency)
         .all()
     )
+
+
+def test_has_historical_seed_coverage_requires_boundary_coverage_for_both_supported_quotes(db_session):
+    service = ECBExchangeRateService(
+        db_session,
+        now_provider=lambda: datetime(2026, 4, 17, 8, 30, 0),
+    )
+    db_session.add_all(
+        [
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 16),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.1100"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 16, 8, 30, 0),
+                updated_at=datetime(2026, 4, 16, 8, 30, 0),
+            ),
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 16),
+                base_currency="EUR",
+                quoted_currency="BRL",
+                units_per_base=Decimal("6.0100"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 16, 8, 30, 0),
+                updated_at=datetime(2026, 4, 16, 8, 30, 0),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    assert service.has_historical_seed_coverage(today=date(2026, 4, 17)) is False
+
+    db_session.add(
+        FXDailyReferenceRate(
+            rate_date=date(2021, 4, 17),
+            base_currency="EUR",
+            quoted_currency="USD",
+            units_per_base=Decimal("1.0500"),
+            source_name="ECB_EXR",
+            fetched_at=datetime(2021, 4, 17, 8, 30, 0),
+            updated_at=datetime(2021, 4, 17, 8, 30, 0),
+        )
+    )
+    db_session.commit()
+
+    assert service.has_historical_seed_coverage(today=date(2026, 4, 17)) is False
+
+    db_session.add(
+        FXDailyReferenceRate(
+            rate_date=date(2021, 4, 17),
+            base_currency="EUR",
+            quoted_currency="BRL",
+            units_per_base=Decimal("5.5000"),
+            source_name="ECB_EXR",
+            fetched_at=datetime(2021, 4, 17, 8, 30, 0),
+            updated_at=datetime(2021, 4, 17, 8, 30, 0),
+        )
+    )
+    db_session.commit()
+
+    assert service.has_historical_seed_coverage(today=date(2026, 4, 17)) is True
 
 
 def test_seed_historical_rates_uses_last_five_years_when_no_transactions(db_session, monkeypatch):
@@ -190,9 +253,30 @@ def test_catch_up_recent_days_ignores_weekend_gaps(db_session, monkeypatch):
     assert result.start_date == start_date
     assert result.end_date == today
     assert result.inserted_or_updated_rows == len(series) * 2
-    assert date(2026, 2, 14) in result.missing_publication_days
-    assert date(2026, 2, 15) in result.missing_publication_days
+    assert (date(2026, 2, 14), "USD") in result.missing_publication_days
+    assert (date(2026, 2, 14), "BRL") in result.missing_publication_days
+    assert (date(2026, 2, 15), "USD") in result.missing_publication_days
+    assert (date(2026, 2, 15), "BRL") in result.missing_publication_days
     assert result.missing_working_days == []
+
+
+def test_refresh_range_reports_working_day_gap_for_missing_supported_quote(db_session, monkeypatch):
+    monkeypatch.setattr(
+        ECBExchangeRateService,
+        "_fetch_series",
+        lambda self, start_date, end_date: {
+            date(2026, 4, 16): {"USD": Decimal("1.1100")},
+        },
+    )
+
+    result = ECBExchangeRateService(
+        db_session,
+        now_provider=lambda: datetime(2026, 4, 16, 8, 30, 0),
+    ).refresh_range(date(2026, 4, 16), date(2026, 4, 16))
+
+    assert result.inserted_or_updated_rows == 1
+    assert result.missing_publication_days == []
+    assert result.missing_working_days == [(date(2026, 4, 16), "BRL")]
 
 
 def test_build_fx_refresh_scheduler_registers_daily_utc_job():
@@ -216,6 +300,10 @@ def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empt
 
     calls = []
 
+    @contextmanager
+    def fake_acquired_lock():
+        yield True
+
     class FakeSessionContext:
         def __enter__(self):
             return object()
@@ -227,8 +315,8 @@ def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empt
         def __init__(self, db):
             calls.append("init")
 
-        def has_seed_data(self):
-            calls.append("has_seed_data")
+        def has_historical_seed_coverage(self):
+            calls.append("has_historical_seed_coverage")
             return False
 
         def seed_historical_rates(self):
@@ -251,6 +339,7 @@ def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empt
                 missing_working_days=[],
             )
 
+    monkeypatch.setattr(main_module, "_fx_refresh_lock", fake_acquired_lock)
     monkeypatch.setattr(main_module, "SessionLocal", lambda: FakeSessionContext())
     monkeypatch.setattr(main_module, "ECBExchangeRateService", FakeService)
     monkeypatch.setattr(
@@ -267,7 +356,37 @@ def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empt
 
     assert calls == [
         "init",
-        "has_seed_data",
+        "has_historical_seed_coverage",
         "seed_historical_rates",
         ("catch_up_recent_days", 45),
     ]
+
+
+def test_startup_refresh_skips_when_fx_lock_is_busy(monkeypatch):
+    import app.main as main_module
+
+    calls = []
+
+    @contextmanager
+    def fake_busy_lock():
+        yield False
+
+    class FakeSessionContext:
+        def __enter__(self):
+            calls.append("session_entered")
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeService:
+        def __init__(self, db):
+            calls.append("service_init")
+
+    monkeypatch.setattr(main_module, "_fx_refresh_lock", fake_busy_lock)
+    monkeypatch.setattr(main_module, "SessionLocal", lambda: FakeSessionContext())
+    monkeypatch.setattr(main_module, "ECBExchangeRateService", FakeService)
+
+    main_module._run_startup_fx_refresh()
+
+    assert calls == []

@@ -18,8 +18,8 @@ class FXRefreshResult:
     start_date: date
     end_date: date
     inserted_or_updated_rows: int
-    missing_publication_days: list[date]
-    missing_working_days: list[date]
+    missing_publication_days: list[tuple[date, str]]
+    missing_working_days: list[tuple[date, str]]
 
 
 class ECBExchangeRateService:
@@ -46,6 +46,30 @@ class ECBExchangeRateService:
             .limit(1)
         ).scalar_one_or_none()
         return existing_id is not None
+
+    def has_historical_seed_coverage(self, *, today: date | None = None) -> bool:
+        end_date = today or self._today()
+        required_start_date = self._historical_seed_start_date(end_date)
+        earliest_rows = self.db.execute(
+            select(
+                FXDailyReferenceRate.quoted_currency,
+                func.min(FXDailyReferenceRate.rate_date),
+            ).where(
+                FXDailyReferenceRate.source_name == self.SOURCE_NAME,
+                FXDailyReferenceRate.base_currency == self.BASE_CURRENCY,
+                FXDailyReferenceRate.quoted_currency.in_(self.SUPPORTED_QUOTES),
+            ).group_by(FXDailyReferenceRate.quoted_currency)
+        ).all()
+        earliest_by_quote = {
+            quoted_currency: earliest_rate_date
+            for quoted_currency, earliest_rate_date in earliest_rows
+        }
+
+        return all(
+            earliest_by_quote.get(quoted_currency) is not None
+            and earliest_by_quote[quoted_currency] <= required_start_date
+            for quoted_currency in self.SUPPORTED_QUOTES
+        )
 
     def seed_historical_rates(self, *, today: date | None = None) -> FXRefreshResult:
         end_date = today or self._today()
@@ -74,9 +98,8 @@ class ECBExchangeRateService:
             end_date=end_date,
         )
         inserted_or_updated_rows = self._upsert_series(series, fetched_at=fetched_at)
-        available_dates = set(series.keys())
-        missing_publication_days, missing_working_days = self._classify_missing_dates(
-            start_date, end_date, available_dates
+        missing_publication_days, missing_working_days = self._classify_missing_quotes(
+            start_date, end_date, series
         )
 
         return FXRefreshResult(
@@ -219,21 +242,25 @@ class ECBExchangeRateService:
         self.db.commit()
         return inserted_or_updated
 
-    def _classify_missing_dates(
+    def _classify_missing_quotes(
         self,
         start_date: date,
         end_date: date,
-        available_dates: set[date],
-    ) -> tuple[list[date], list[date]]:
-        missing_publication_days: list[date] = []
-        missing_working_days: list[date] = []
+        series: dict[date, dict[str, Decimal]],
+    ) -> tuple[list[tuple[date, str]], list[tuple[date, str]]]:
+        missing_publication_days: list[tuple[date, str]] = []
+        missing_working_days: list[tuple[date, str]] = []
         current_date = start_date
         while current_date <= end_date:
-            if current_date not in available_dates:
+            available_quotes = series.get(current_date, {})
+            for quoted_currency in self.SUPPORTED_QUOTES:
+                if quoted_currency in available_quotes:
+                    continue
+
                 if self._is_ecb_publication_day(current_date):
-                    missing_working_days.append(current_date)
+                    missing_working_days.append((current_date, quoted_currency))
                 else:
-                    missing_publication_days.append(current_date)
+                    missing_publication_days.append((current_date, quoted_currency))
             current_date += timedelta(days=1)
 
         return missing_publication_days, missing_working_days
