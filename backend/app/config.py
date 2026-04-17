@@ -15,6 +15,12 @@ class Settings:
     batch_import_dir: Path
     provider_config_path: Path
     provider_example_path: Path
+    fx_seed_years: int
+    fx_startup_catchup_days: int
+    fx_refresh_hour_utc: int
+    fx_refresh_minute_utc: int
+    ecb_history_url: str
+    ecb_history_90d_url: str
 
 
 def load_settings() -> Settings:
@@ -32,6 +38,18 @@ def load_settings() -> Settings:
         os.environ.get("MYFINANCE_PROVIDER_CONFIG", BACKEND_DIR / "config.local.yaml")
     ).resolve()
     provider_example_path = (BACKEND_DIR / "config.example.yaml").resolve()
+    fx_seed_years = int(os.environ.get("MYFINANCE_FX_SEED_YEARS", "5"))
+    fx_startup_catchup_days = int(os.environ.get("MYFINANCE_FX_STARTUP_CATCHUP_DAYS", "45"))
+    fx_refresh_hour_utc = int(os.environ.get("MYFINANCE_FX_REFRESH_HOUR_UTC", "2"))
+    fx_refresh_minute_utc = int(os.environ.get("MYFINANCE_FX_REFRESH_MINUTE_UTC", "0"))
+    ecb_history_url = os.environ.get(
+        "MYFINANCE_ECB_HISTORY_URL",
+        "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml",
+    )
+    ecb_history_90d_url = os.environ.get(
+        "MYFINANCE_ECB_HISTORY_90D_URL",
+        "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml",
+    )
 
     return Settings(
         data_dir=data_dir,
@@ -40,6 +58,12 @@ def load_settings() -> Settings:
         batch_import_dir=batch_import_dir,
         provider_config_path=provider_config_path,
         provider_example_path=provider_example_path,
+        fx_seed_years=fx_seed_years,
+        fx_startup_catchup_days=fx_startup_catchup_days,
+        fx_refresh_hour_utc=fx_refresh_hour_utc,
+        fx_refresh_minute_utc=fx_refresh_minute_utc,
+        ecb_history_url=ecb_history_url,
+        ecb_history_90d_url=ecb_history_90d_url,
     )
 
 

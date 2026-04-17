@@ -13,3 +13,4 @@ PyYAML==6.0.2
 httpx<0.28
 openai>=2.0.0
 pypdf>=5.0.0
+apscheduler==3.10.4
