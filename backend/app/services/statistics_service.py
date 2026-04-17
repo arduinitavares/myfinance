@@ -1,9 +1,11 @@
 from sqlalchemy.orm import Session
 from datetime import date
 import calendar
+from decimal import Decimal
 from ..models.statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
 from ..models.transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory
 from sqlalchemy import func, extract, and_, or_, text
+from ..services.currency_conversion import CurrencyConversionService
 import logging
 
 # Set up logging
@@ -12,7 +14,86 @@ logger = logging.getLogger(__name__)
 
 class StatisticsService:
     @staticmethod
-    def calculate_statistics(db: Session, period: StatisticsPeriod, target_date: date = None):
+    def _to_decimal(value: Decimal | float | int) -> Decimal:
+        return value if isinstance(value, Decimal) else Decimal(str(value))
+
+    @classmethod
+    def _quantized_float(cls, value: Decimal | float | int) -> float:
+        return float(cls._to_decimal(value).quantize(Decimal("0.01")))
+
+    @classmethod
+    def _zero_financial_stats(cls) -> dict[str, float | int]:
+        return {
+            "period_income": 0.0,
+            "period_expenses": 0.0,
+            "period_net_savings": 0.0,
+            "savings_rate": 0.0,
+            "total_income": 0.0,
+            "total_expenses": 0.0,
+            "total_net_savings": 0.0,
+            "income_count": 0,
+            "expense_count": 0,
+            "average_income": 0.0,
+            "average_expense": 0.0,
+            "yearly_income": 0.0,
+            "yearly_expenses": 0.0,
+        }
+
+    @classmethod
+    def _summarize_transactions(
+        cls,
+        transactions: list[Transaction],
+        *,
+        conversion_service: CurrencyConversionService,
+        reporting_currency: str,
+    ) -> dict[str, float | int]:
+        income_total = Decimal("0")
+        expense_total = Decimal("0")
+        income_count = 0
+        expense_count = 0
+
+        for trans in transactions:
+            if trans.transaction_type not in (TransactionType.INCOME, TransactionType.EXPENSE):
+                continue
+
+            display_money = conversion_service.convert(
+                raw_amount=trans.amount,
+                raw_currency=trans.currency,
+                reporting_currency=reporting_currency,
+                transaction_date=trans.transaction_date,
+            )
+            if not display_money.is_available or display_money.display_amount is None:
+                continue
+
+            display_amount = cls._to_decimal(display_money.display_amount)
+            if trans.transaction_type == TransactionType.INCOME:
+                income_total += display_amount
+                income_count += 1
+            elif trans.transaction_type == TransactionType.EXPENSE:
+                expense_total += abs(display_amount)
+                expense_count += 1
+
+        period_net_savings = income_total - expense_total
+        savings_rate = float(period_net_savings / income_total * 100) if income_total > 0 else 0.0
+
+        return {
+            "period_income": cls._quantized_float(income_total),
+            "period_expenses": cls._quantized_float(expense_total),
+            "period_net_savings": cls._quantized_float(period_net_savings),
+            "savings_rate": savings_rate,
+            "income_count": income_count,
+            "expense_count": expense_count,
+            "average_income": cls._quantized_float(income_total / income_count) if income_count > 0 else 0.0,
+            "average_expense": cls._quantized_float(expense_total / expense_count) if expense_count > 0 else 0.0,
+        }
+
+    @staticmethod
+    def calculate_statistics(
+        db: Session,
+        period: StatisticsPeriod,
+        target_date: date = None,
+        reporting_currency: str = "EUR",
+    ):
         # Base query for period-specific stats
         period_query = db.query(Transaction)
         
@@ -45,61 +126,37 @@ class StatisticsService:
                     Transaction.transaction_date <= date(target_date.year, 12, 31)
                 )
         
-        # Calculate period-specific stats
+        conversion_service = CurrencyConversionService(db)
+
         period_transactions = period_query.all()
-        period_stats = {
-            'period_income': 0,
-            'period_expenses': 0,
-            'income_count': 0,
-            'expense_count': 0
-        }
-        
-        for trans in period_transactions:
-            if trans.transaction_type == TransactionType.INCOME:
-                period_stats['period_income'] += trans.amount
-                period_stats['income_count'] += 1
-            elif trans.transaction_type == TransactionType.EXPENSE:
-                period_stats['period_expenses'] += abs(trans.amount)
-                period_stats['expense_count'] += 1
-        
-        # Calculate cumulative stats
+        period_stats = StatisticsService._summarize_transactions(
+            period_transactions,
+            conversion_service=conversion_service,
+            reporting_currency=reporting_currency,
+        )
+
         cumulative_transactions = cumulative_query.all()
-        cumulative_stats = {
-            'total_income': 0,
-            'total_expenses': 0
-        }
-        
-        for trans in cumulative_transactions:
-            if trans.transaction_type == TransactionType.INCOME:
-                cumulative_stats['total_income'] += trans.amount
-            elif trans.transaction_type == TransactionType.EXPENSE:
-                cumulative_stats['total_expenses'] += abs(trans.amount)
-        
-        # New: Calculate yearly stats
+        cumulative_summary = StatisticsService._summarize_transactions(
+            cumulative_transactions,
+            conversion_service=conversion_service,
+            reporting_currency=reporting_currency,
+        )
+
         yearly_transactions = yearly_query.all()
-        yearly_stats = {
-            'yearly_income': 0,
-            'yearly_expenses': 0
+        yearly_summary = StatisticsService._summarize_transactions(
+            yearly_transactions,
+            conversion_service=conversion_service,
+            reporting_currency=reporting_currency,
+        )
+
+        return {
+            **period_stats,
+            "total_income": cumulative_summary["period_income"],
+            "total_expenses": cumulative_summary["period_expenses"],
+            "total_net_savings": cumulative_summary["period_net_savings"],
+            "yearly_income": yearly_summary["period_income"],
+            "yearly_expenses": yearly_summary["period_expenses"],
         }
-        
-        for trans in yearly_transactions:
-            if trans.transaction_type == TransactionType.INCOME:
-                yearly_stats['yearly_income'] += trans.amount
-            elif trans.transaction_type == TransactionType.EXPENSE:
-                yearly_stats['yearly_expenses'] += abs(trans.amount)
-        
-        # Calculate derived statistics
-        period_stats['period_net_savings'] = period_stats['period_income'] - period_stats['period_expenses']
-        period_stats['savings_rate'] = (period_stats['period_net_savings'] / period_stats['period_income'] * 100) if period_stats['period_income'] > 0 else 0
-        
-        cumulative_stats['total_net_savings'] = cumulative_stats['total_income'] - cumulative_stats['total_expenses']
-        
-        # Calculate averages
-        period_stats['average_income'] = period_stats['period_income'] / period_stats['income_count'] if period_stats['income_count'] > 0 else 0
-        period_stats['average_expense'] = period_stats['period_expenses'] / period_stats['expense_count'] if period_stats['expense_count'] > 0 else 0
-        
-        # Combine all stats
-        return {**period_stats, **cumulative_stats, **yearly_stats}
 
     @staticmethod
     def calculate_category_statistics(db: Session, period: StatisticsPeriod, target_date: date = None):
@@ -330,19 +387,39 @@ class StatisticsService:
         return expense_categories + income_categories
 
     @staticmethod
-    def calculate_transfer_summary(db: Session, start: date, end: date):
+    def calculate_transfer_summary(
+        db: Session,
+        start: date,
+        end: date,
+        reporting_currency: str = "EUR",
+    ):
         """
         Summarize transfer transactions by transfer category.
         """
-        transfers = db.query(Transaction.transfer_category, Transaction.amount).filter(
+        transfers = db.query(
+            Transaction.transfer_category,
+            Transaction.amount,
+            Transaction.currency,
+            Transaction.transaction_date,
+        ).filter(
             Transaction.transaction_type == TransactionType.TRANSFER,
-            Transaction.currency == "EUR",
             Transaction.transaction_date >= start,
             Transaction.transaction_date <= end,
         ).all()
 
+        conversion_service = CurrencyConversionService(db)
         summary = {}
-        for transfer_category, amount in transfers:
+        for transfer_category, amount, raw_currency, transaction_date in transfers:
+            display_money = conversion_service.convert(
+                raw_amount=amount,
+                raw_currency=raw_currency,
+                reporting_currency=reporting_currency,
+                transaction_date=transaction_date,
+            )
+            if not display_money.is_available or display_money.display_amount is None:
+                continue
+
+            display_amount = StatisticsService._to_decimal(display_money.display_amount)
             category_name = (
                 transfer_category.value
                 if transfer_category is not None
@@ -352,18 +429,29 @@ class StatisticsService:
             if category_name not in summary:
                 summary[category_name] = {
                     "subtype": category_name,
-                    "total_incoming_eur": 0.0,
-                    "total_outgoing_eur": 0.0,
+                    "total_incoming": Decimal("0"),
+                    "total_outgoing": Decimal("0"),
                     "transaction_count": 0,
                 }
 
             summary[category_name]["transaction_count"] += 1
-            if amount < 0:
-                summary[category_name]["total_outgoing_eur"] += abs(amount)
+            if display_amount < 0:
+                summary[category_name]["total_outgoing"] += abs(display_amount)
             else:
-                summary[category_name]["total_incoming_eur"] += amount
+                summary[category_name]["total_incoming"] += display_amount
 
-        return sorted(summary.values(), key=lambda item: item["subtype"])
+        items = []
+        for item in sorted(summary.values(), key=lambda entry: entry["subtype"]):
+            items.append(
+                {
+                    "subtype": item["subtype"],
+                    "transaction_count": item["transaction_count"],
+                    "total_outgoing": StatisticsService._quantized_float(item["total_outgoing"]),
+                    "total_incoming": StatisticsService._quantized_float(item["total_incoming"]),
+                }
+            )
+
+        return items
 
     @staticmethod
     def update_statistics(db: Session, transaction_date: date):

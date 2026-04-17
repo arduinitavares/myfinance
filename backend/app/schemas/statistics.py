@@ -98,14 +98,41 @@ class CategoryAveragesResponse(BaseModel):
     categories: List[CategoryAverageItem] = Field(..., description="List of category averages")
 
 
+class StatisticsOverviewItemResponse(BaseModel):
+    period: str = Field(..., description="Statistics period identifier")
+    date: Optional[str] = Field(None, description="Anchor date in ISO format (YYYY-MM-DD)")
+    reporting_currency: str = Field(..., description="Reporting currency used for monetary fields")
+    period_income: float = Field(..., description="Income total for the selected period")
+    period_expenses: float = Field(..., description="Expense total for the selected period")
+    period_net_savings: float = Field(..., description="Net savings for the selected period")
+    savings_rate: float = Field(..., description="Savings rate percentage for the selected period")
+    total_income: float = Field(..., description="Cumulative income total")
+    total_expenses: float = Field(..., description="Cumulative expense total")
+    total_net_savings: float = Field(..., description="Cumulative net savings total")
+    income_count: int = Field(..., description="Income transaction count")
+    expense_count: int = Field(..., description="Expense transaction count")
+    average_income: float = Field(..., description="Average income amount")
+    average_expense: float = Field(..., description="Average expense amount")
+    yearly_income: float = Field(..., description="Income total for the current year window")
+    yearly_expenses: float = Field(..., description="Expense total for the current year window")
+
+
+class StatisticsOverviewResponse(BaseModel):
+    current_month: StatisticsOverviewItemResponse
+    last_month: StatisticsOverviewItemResponse
+    previous_year_last_month: Optional[StatisticsOverviewItemResponse] = None
+    all_time: StatisticsOverviewItemResponse
+
+
 class TransferSummaryItem(BaseModel):
     subtype: str = Field(..., description="Transfer category name")
     transaction_count: int = Field(..., description="Number of transfer transactions")
-    total_outgoing_eur: float = Field(..., description="Total outgoing transfer amount")
-    total_incoming_eur: float = Field(..., description="Total incoming transfer amount")
+    total_outgoing: float = Field(..., description="Total outgoing transfer amount in the reporting currency")
+    total_incoming: float = Field(..., description="Total incoming transfer amount in the reporting currency")
 
 
 class TransferSummaryResponse(BaseModel):
     start_date: str = Field(..., description="Start date of the summary window")
     end_date: str = Field(..., description="End date of the summary window")
+    reporting_currency: str = Field(..., description="Reporting currency used for transfer totals")
     items: List[TransferSummaryItem] = Field(..., description="Transfer totals grouped by subtype")

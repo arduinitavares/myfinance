@@ -222,6 +222,12 @@ def test_statistics_overview_excludes_transfer_transactions():
     db_session = SessionLocal()
 
     try:
+        _store_rate(
+            db_session,
+            rate_date=date(2025, 1, 15),
+            quoted_currency="USD",
+            units_per_base="1.2500",
+        )
         _create_transaction(
             db_session,
             description="Salary",
@@ -250,22 +256,46 @@ def test_statistics_overview_excludes_transfer_transactions():
         StatisticsService.initialize_statistics(db_session)
         StatisticsService.initialize_category_statistics(db_session)
 
-        response = client.get("/statistics/overview")
-        assert response.status_code == 200
+        eur_response = client.get("/statistics/overview")
+        assert eur_response.status_code == 200
 
-        payload = response.json()
-        current_month = payload["current_month"]
-        all_time = payload["all_time"]
+        eur_payload = eur_response.json()
+        eur_current_month = eur_payload["current_month"]
+        eur_all_time = eur_payload["all_time"]
 
-        assert current_month["period_income"] == 5000.0
-        assert current_month["period_expenses"] == 125.0
-        assert current_month["income_count"] == 1
-        assert current_month["expense_count"] == 1
-        assert current_month["total_income"] == 5000.0
-        assert current_month["total_expenses"] == 125.0
-        assert current_month["total_net_savings"] == 4875.0
-        assert all_time["total_income"] == 5000.0
-        assert all_time["total_expenses"] == 125.0
+        assert eur_current_month["reporting_currency"] == "EUR"
+        assert eur_current_month["period_income"] == 5000.0
+        assert eur_current_month["period_expenses"] == 125.0
+        assert eur_current_month["income_count"] == 1
+        assert eur_current_month["expense_count"] == 1
+        assert eur_current_month["total_income"] == 5000.0
+        assert eur_current_month["total_expenses"] == 125.0
+        assert eur_current_month["total_net_savings"] == 4875.0
+        assert eur_all_time["reporting_currency"] == "EUR"
+        assert eur_all_time["total_income"] == 5000.0
+        assert eur_all_time["total_expenses"] == 125.0
+
+        usd_response = client.get(
+            "/statistics/overview",
+            headers={"X-Reporting-Currency": "USD"},
+        )
+        assert usd_response.status_code == 200
+
+        usd_payload = usd_response.json()
+        usd_current_month = usd_payload["current_month"]
+        usd_all_time = usd_payload["all_time"]
+
+        assert usd_current_month["reporting_currency"] == "USD"
+        assert usd_current_month["period_income"] == 6250.0
+        assert usd_current_month["period_expenses"] == 156.25
+        assert usd_current_month["total_income"] == 6250.0
+        assert usd_current_month["total_expenses"] == 156.25
+        assert usd_current_month["total_net_savings"] == 6093.75
+        assert usd_current_month["average_income"] == 6250.0
+        assert usd_current_month["average_expense"] == 156.25
+        assert usd_all_time["reporting_currency"] == "USD"
+        assert usd_all_time["total_income"] == 6250.0
+        assert usd_all_time["total_expenses"] == 156.25
     finally:
         db_session.close()
 
@@ -322,6 +352,12 @@ def test_transfer_summary_groups_by_category_and_sign():
     db_session = SessionLocal()
 
     try:
+        _store_rate(
+            db_session,
+            rate_date=date(2025, 1, 15),
+            quoted_currency="USD",
+            units_per_base="1.2500",
+        )
         _create_transaction(
             db_session,
             description="Card settlement",
@@ -352,7 +388,7 @@ def test_transfer_summary_groups_by_category_and_sign():
         )
         _create_transaction(
             db_session,
-            description="USD transfer should be excluded until FX support exists",
+            description="USD transfer should now be converted through the reporting currency service",
             amount=-80.0,
             transaction_type=TransactionType.TRANSFER,
             transfer_category=TransferCategory.INTERNAL_TRANSFER,
@@ -368,18 +404,37 @@ def test_transfer_summary_groups_by_category_and_sign():
         payload = response.json()
         assert payload["start_date"] == "2025-01-01"
         assert payload["end_date"] == "2025-01-31"
+        assert payload["reporting_currency"] == "EUR"
 
         by_category = {item["subtype"]: item for item in payload["items"]}
 
         assert by_category["Credit Card Settlement"]["transaction_count"] == 2
-        assert by_category["Credit Card Settlement"]["total_outgoing_eur"] == 240.0
-        assert by_category["Credit Card Settlement"]["total_incoming_eur"] == 240.0
-        assert by_category["Internal Transfer"]["transaction_count"] == 1
-        assert by_category["Internal Transfer"]["total_outgoing_eur"] == 100.0
-        assert by_category["Internal Transfer"]["total_incoming_eur"] == 0.0
+        assert by_category["Credit Card Settlement"]["total_outgoing"] == 240.0
+        assert by_category["Credit Card Settlement"]["total_incoming"] == 240.0
+        assert by_category["Internal Transfer"]["transaction_count"] == 2
+        assert by_category["Internal Transfer"]["total_outgoing"] == 164.0
+        assert by_category["Internal Transfer"]["total_incoming"] == 0.0
         assert by_category["Loan Repayment Received"]["transaction_count"] == 1
-        assert by_category["Loan Repayment Received"]["total_outgoing_eur"] == 0.0
-        assert by_category["Loan Repayment Received"]["total_incoming_eur"] == 55.0
+        assert by_category["Loan Repayment Received"]["total_outgoing"] == 0.0
+        assert by_category["Loan Repayment Received"]["total_incoming"] == 55.0
+
+        usd_response = client.get(
+            "/statistics/transfers/summary",
+            params={"start_date": "2025-01-01", "end_date": "2025-01-31"},
+            headers={"X-Reporting-Currency": "USD"},
+        )
+        assert usd_response.status_code == 200
+
+        usd_payload = usd_response.json()
+        assert usd_payload["reporting_currency"] == "USD"
+
+        usd_by_category = {item["subtype"]: item for item in usd_payload["items"]}
+        assert usd_by_category["Credit Card Settlement"]["total_outgoing"] == 300.0
+        assert usd_by_category["Credit Card Settlement"]["total_incoming"] == 300.0
+        assert usd_by_category["Internal Transfer"]["transaction_count"] == 2
+        assert usd_by_category["Internal Transfer"]["total_outgoing"] == 205.0
+        assert usd_by_category["Internal Transfer"]["total_incoming"] == 0.0
+        assert usd_by_category["Loan Repayment Received"]["total_incoming"] == 68.75
     finally:
         db_session.close()
 
@@ -397,6 +452,7 @@ def test_transfer_summary_empty_state_honors_requested_dates():
     assert response.json() == {
         "start_date": "2025-01-01",
         "end_date": "2025-01-31",
+        "reporting_currency": "EUR",
         "items": [],
     }
 

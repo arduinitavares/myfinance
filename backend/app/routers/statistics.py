@@ -13,13 +13,15 @@ from ..database import get_db
 from ..models.transaction import Transaction, TransactionType, ExpenseType
 from ..models.statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
 from ..services.statistics_service import StatisticsService
+from ..services.reporting_currency import get_reporting_currency
 from ..schemas.statistics import (
     FinancialStatisticsResponse,
     CategoryStatisticsResponse,
     CategoryAveragesResponse,
     ExpenseTypeTimeseriesResponse,
     ExpenseTypeTimeseriesItem,
-    TransferSummaryResponse
+    StatisticsOverviewResponse,
+    TransferSummaryResponse,
 )
 from ..schemas.transaction import TimePeriod
 
@@ -294,35 +296,56 @@ def get_category_statistics(
         logger.error(f"Error in get_category_statistics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/overview")
-def get_statistics_overview(db: Session = Depends(get_db)):
+def _build_overview_item(
+    *,
+    period: StatisticsPeriod,
+    anchor_date: date | None,
+    reporting_currency: str,
+    stats: dict,
+):
+    return {
+        "period": period.value,
+        "date": anchor_date.isoformat() if anchor_date else None,
+        "reporting_currency": reporting_currency,
+        **stats,
+    }
+
+
+@router.get("/overview", response_model=StatisticsOverviewResponse)
+def get_statistics_overview(
+    db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
+):
     try:
         # Get latest transaction date
         latest_transaction = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
         
         if not latest_transaction:
             # Return empty/zero statistics if no transactions exist
-            empty_stats = {
-                "period_income": 0,
-                "period_expenses": 0,
-                "period_net_savings": 0,
-                "savings_rate": 0,
-                "total_income": 0,
-                "total_expenses": 0,
-                "total_net_savings": 0,
-                "income_count": 0,
-                "expense_count": 0,
-                "average_income": 0,
-                "average_expense": 0,
-                "yearly_income": 0,
-                "yearly_expenses": 0,
-                "date": date.today().replace(day=calendar.monthrange(date.today().year, date.today().month)[1]).isoformat()
-            }
+            today = date.today()
+            current_month = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+            last_month = current_month - timedelta(days=calendar.monthrange(current_month.year, current_month.month)[1])
+            empty_stats = StatisticsService._zero_financial_stats()
             return {
-                "current_month": empty_stats,
-                "last_month": empty_stats,
+                "current_month": _build_overview_item(
+                    period=StatisticsPeriod.MONTHLY,
+                    anchor_date=current_month,
+                    reporting_currency=reporting_currency,
+                    stats=empty_stats,
+                ),
+                "last_month": _build_overview_item(
+                    period=StatisticsPeriod.MONTHLY,
+                    anchor_date=last_month,
+                    reporting_currency=reporting_currency,
+                    stats=empty_stats,
+                ),
                 "previous_year_last_month": None,
-                "all_time": empty_stats
+                "all_time": _build_overview_item(
+                    period=StatisticsPeriod.ALL_TIME,
+                    anchor_date=None,
+                    reporting_currency=reporting_currency,
+                    stats=empty_stats,
+                ),
             }
         
         # Set current month to last day of the month
@@ -330,64 +353,68 @@ def get_statistics_overview(db: Session = Depends(get_db)):
             day=calendar.monthrange(latest_transaction.transaction_date.year, latest_transaction.transaction_date.month)[1]
         )
 
-        # Get current month stats
-        current_month_stats = db.query(FinancialStatistics).filter(
-            FinancialStatistics.period == StatisticsPeriod.MONTHLY,
-            FinancialStatistics.date == current_month
-        ).first()
+        current_month_stats = StatisticsService.calculate_statistics(
+            db,
+            StatisticsPeriod.MONTHLY,
+            current_month,
+            reporting_currency=reporting_currency,
+        )
         
-        if not current_month_stats:
-            raise HTTPException(status_code=404, detail="Current month statistics not found")
-        
-        # Get last month stats
         last_month = current_month - timedelta(days=calendar.monthrange(current_month.year, current_month.month)[1])
-        last_month_stats = db.query(FinancialStatistics).filter(
-            FinancialStatistics.period == StatisticsPeriod.MONTHLY,
-            FinancialStatistics.date == last_month
-        ).first()
-        
-        if not last_month_stats:
-            # Use empty stats for last month if not found
-            last_month_stats = {
-                "period_income": 0,
-                "period_expenses": 0,
-                "period_net_savings": 0,
-                "savings_rate": 0,
-                "total_income": 0,
-                "total_expenses": 0,
-                "total_net_savings": 0,
-                "income_count": 0,
-                "expense_count": 0,
-                "average_income": 0,
-                "average_expense": 0,
-                "yearly_income": 0,
-                "yearly_expenses": 0,
-                "date": last_month.isoformat()
-            }
-        
-        # Get last month of previous year stats (if exists)
+        last_month_stats = StatisticsService.calculate_statistics(
+            db,
+            StatisticsPeriod.MONTHLY,
+            last_month,
+            reporting_currency=reporting_currency,
+        )
+
         previous_year_last_month = date(current_month.year - 1, 12, 31)
-        previous_year_last_month_stats = db.query(FinancialStatistics).filter(
-            FinancialStatistics.period == StatisticsPeriod.MONTHLY,
-            FinancialStatistics.date == previous_year_last_month
+        previous_year_last_month_has_activity = db.query(Transaction.id).filter(
+            Transaction.transaction_type.in_([TransactionType.INCOME, TransactionType.EXPENSE]),
+            extract("year", Transaction.transaction_date) == previous_year_last_month.year,
+            extract("month", Transaction.transaction_date) == previous_year_last_month.month,
         ).first()
-        
-        # If no previous year data exists, set to None
-        # The frontend will handle this case appropriately
-        
-        # Get all time stats
-        all_time_stats = db.query(FinancialStatistics).filter(
-            FinancialStatistics.period == StatisticsPeriod.ALL_TIME
-        ).first()
-        
-        if not all_time_stats:
-            raise HTTPException(status_code=404, detail="All time statistics not found")
+
+        previous_year_last_month_stats = None
+        if previous_year_last_month_has_activity:
+            previous_year_last_month_stats = _build_overview_item(
+                period=StatisticsPeriod.MONTHLY,
+                anchor_date=previous_year_last_month,
+                reporting_currency=reporting_currency,
+                stats=StatisticsService.calculate_statistics(
+                    db,
+                    StatisticsPeriod.MONTHLY,
+                    previous_year_last_month,
+                    reporting_currency=reporting_currency,
+                ),
+            )
+
+        all_time_stats = StatisticsService.calculate_statistics(
+            db,
+            StatisticsPeriod.ALL_TIME,
+            reporting_currency=reporting_currency,
+        )
         
         return {
-            "current_month": current_month_stats,
-            "last_month": last_month_stats,
-            "previous_year_last_month": previous_year_last_month_stats,  # This might be None
-            "all_time": all_time_stats
+            "current_month": _build_overview_item(
+                period=StatisticsPeriod.MONTHLY,
+                anchor_date=current_month,
+                reporting_currency=reporting_currency,
+                stats=current_month_stats,
+            ),
+            "last_month": _build_overview_item(
+                period=StatisticsPeriod.MONTHLY,
+                anchor_date=last_month,
+                reporting_currency=reporting_currency,
+                stats=last_month_stats,
+            ),
+            "previous_year_last_month": previous_year_last_month_stats,
+            "all_time": _build_overview_item(
+                period=StatisticsPeriod.ALL_TIME,
+                anchor_date=None,
+                reporting_currency=reporting_currency,
+                stats=all_time_stats,
+            ),
         }
     except HTTPException:
         raise
@@ -401,6 +428,7 @@ def get_transfer_summary(
     db: Session = Depends(get_db),
     start_date: str = Query(None, description="Start date in ISO format (YYYY-MM-DD)"),
     end_date: str = Query(None, description="End date in ISO format (YYYY-MM-DD)"),
+    reporting_currency: str = Depends(get_reporting_currency),
 ):
     try:
         latest_transaction_date = db.query(func.max(Transaction.transaction_date)).scalar()
@@ -419,7 +447,13 @@ def get_transfer_summary(
         return {
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
-            "items": StatisticsService.calculate_transfer_summary(db, start, end),
+            "reporting_currency": reporting_currency,
+            "items": StatisticsService.calculate_transfer_summary(
+                db,
+                start,
+                end,
+                reporting_currency=reporting_currency,
+            ),
         }
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
