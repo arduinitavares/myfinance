@@ -113,7 +113,7 @@ describe('TransferSummary', () => {
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(presetSelect).toHaveValue('this_month');
-    expect(mockedGetTransferSummary.mock.calls[0]).toEqual([]);
+    expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(1);
 
     await act(async () => {
       fireEvent.change(presetSelect, { target: { value: 'last_month' } });
