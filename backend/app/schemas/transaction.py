@@ -3,7 +3,7 @@ from typing import Any, Optional, Literal
 from enum import Enum
 from pydantic import BaseModel, root_validator, validator
 
-from ..services.currency_conversion import DisplayMoney
+from ..services.currency_conversion import CurrencyConversionService, DisplayMoney
 from ..models.transaction import ExpenseCategory, IncomeCategory, TransactionType, TransferCategory
 
 
@@ -132,3 +132,18 @@ def build_transaction_response_payload(transaction: Any, display_money: DisplayM
     payload = Transaction.model_validate(transaction, from_attributes=True).model_dump()
     payload.update(serialize_display_money(display_money))
     return payload
+
+
+def build_transaction_response_payload_for_reporting_currency(
+    transaction: Any,
+    *,
+    conversion_service: CurrencyConversionService,
+    reporting_currency: str,
+) -> dict[str, Any]:
+    display_money = conversion_service.convert(
+        raw_amount=transaction.amount,
+        raw_currency=transaction.currency,
+        reporting_currency=reporting_currency,
+        transaction_date=transaction.transaction_date,
+    )
+    return build_transaction_response_payload(transaction, display_money)

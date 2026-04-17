@@ -1,10 +1,12 @@
 import pytest
 import numpy as np
 from fastapi.testclient import TestClient
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 
 from app.main import app
 from app.database import SessionLocal
+from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import (
     ExpenseCategory,
     IncomeCategory,
@@ -83,6 +85,27 @@ def _create_transaction(
     return transaction
 
 
+def _store_rate(
+    db_session,
+    *,
+    rate_date: date,
+    quoted_currency: str,
+    units_per_base: str,
+):
+    db_session.add(
+        FXDailyReferenceRate(
+            rate_date=rate_date,
+            base_currency="EUR",
+            quoted_currency=quoted_currency,
+            units_per_base=Decimal(units_per_base),
+            source_name="ECB_EXR",
+            fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+            updated_at=datetime(2026, 4, 17, 8, 30, 0),
+        )
+    )
+    db_session.commit()
+
+
 def _clear_transactions_and_statistics():
     db_session = SessionLocal()
     try:
@@ -113,6 +136,84 @@ def test_manual_transfer_update_uses_transfer_category_and_clears_other_category
     assert payload["transfer_category"] == TransferCategory.CREDIT_CARD_SETTLEMENT.value
     assert payload["expense_category"] is None
     assert payload["income_category"] is None
+
+
+def test_manual_transfer_update_returns_display_fields_for_reporting_currency():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+    try:
+        _store_rate(
+            db_session,
+            rate_date=date(2025, 1, 15),
+            quoted_currency="USD",
+            units_per_base="1.2500",
+        )
+    finally:
+        db_session.close()
+
+    transaction = _restore_transaction(client, description="Belfius card settlement")
+
+    response = client.patch(
+        f"/transactions/{transaction['id']}/category",
+        params={
+            "transaction_type": TransactionType.TRANSFER.value,
+            "category": TransferCategory.CREDIT_CARD_SETTLEMENT.value,
+        },
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["amount"] == -240.0
+    assert payload["currency"] == "EUR"
+    assert payload["display_amount"] == -300.0
+    assert payload["display_currency"] == "USD"
+    assert payload["display_fx_rate"] == 1.25
+    assert payload["display_rate_date"] == "2025-01-15"
+
+
+def test_restore_returns_display_fields_for_reporting_currency():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+    try:
+        _store_rate(
+            db_session,
+            rate_date=date(2025, 1, 15),
+            quoted_currency="USD",
+            units_per_base="1.2500",
+        )
+    finally:
+        db_session.close()
+
+    payload = {
+        "account_number": "BE55000000000001",
+        "transaction_date": "2025-01-15",
+        "amount": -240.00,
+        "currency": "EUR",
+        "description": "Transfer to card",
+        "counterparty_name": "Counterparty",
+        "counterparty_account": "BE99000000000002",
+        "transaction_type": TransactionType.TRANSFER.value,
+        "transfer_category": TransferCategory.INTERNAL_TRANSFER.value,
+        "source_bank": "ing",
+    }
+
+    response = client.post(
+        "/transactions/restore",
+        json=payload,
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["amount"] == -240.0
+    assert body["currency"] == "EUR"
+    assert body["display_amount"] == -300.0
+    assert body["display_currency"] == "USD"
+    assert body["display_fx_rate"] == 1.25
+    assert body["display_rate_date"] == "2025-01-15"
 
 
 def test_statistics_overview_excludes_transfer_transactions():

@@ -28,9 +28,13 @@ from ..schemas.classification import (
     SimilarTransactionMatchResponse,
     SubmitFeedbackRequest,
 )
-from ..schemas.transaction import Transaction as TransactionSchema
+from ..schemas.transaction import (
+    Transaction as TransactionSchema,
+    build_transaction_response_payload_for_reporting_currency,
+)
 from ..routers.suggestions import category_suggestion_service
 from ..services.classifier_providers import OpenAICompatibleClassifierProvider, StubClassifierProvider
+from ..services.currency_conversion import CurrencyConversionService
 from .classification_similarity import (
     SIMILARITY_PREVIEW_LIMIT,
     SIMILARITY_THRESHOLD,
@@ -198,6 +202,8 @@ class ClassificationSessionService:
         db: Session,
         session_id: int,
         request: AcceptClassificationRequest,
+        *,
+        reporting_currency: str,
     ) -> AcceptClassificationResponse:
         session = cls._require_open_session(db, session_id)
         transaction = cls._require_transaction(db, session.transaction_id)
@@ -250,9 +256,15 @@ class ClassificationSessionService:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         db.refresh(session)
+        conversion_service = CurrencyConversionService(db)
+        transaction_payload = build_transaction_response_payload_for_reporting_currency(
+            updated_transaction,
+            conversion_service=conversion_service,
+            reporting_currency=reporting_currency,
+        )
         return AcceptClassificationResponse(
             session=ClassificationSessionResponse.model_validate(session, from_attributes=True),
-            transaction=TransactionSchema.model_validate(updated_transaction, from_attributes=True),
+            transaction=TransactionSchema.model_validate(transaction_payload),
             recurrence_pattern_id=recurrence_pattern.id if recurrence_pattern else None,
         )
 

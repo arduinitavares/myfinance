@@ -1,5 +1,6 @@
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import settings as app_settings
 from app.database import SessionLocal
 from app.models.classification import ClassificationSession, ClassificationSessionStatus, RecurrencePattern
+from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
 from app.main import app
 from app.services.classifier_providers import ClassificationProposal
@@ -62,6 +64,30 @@ def _restore_transaction(
     response = client.post("/transactions/restore", json=payload)
     assert response.status_code == 200
     return response.json()
+
+
+def _store_rate(
+    *,
+    rate_date: date,
+    quoted_currency: str,
+    units_per_base: str,
+):
+    db = SessionLocal()
+    try:
+        db.add(
+            FXDailyReferenceRate(
+                rate_date=rate_date,
+                base_currency="EUR",
+                quoted_currency=quoted_currency,
+                units_per_base=Decimal(units_per_base),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+                updated_at=datetime(2026, 4, 17, 8, 30, 0),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def test_create_session_returns_open_session():
@@ -279,6 +305,41 @@ def test_accept_commits_transaction_sets_classification_source_and_marks_session
     assert payload["transaction"]["expense_category"] == "Utilities"
     assert payload["transaction"]["classification_source"] == "assistant"
     assert payload["transaction"]["recurrence_pattern_id"] is not None
+
+
+def test_accept_returns_display_fields_for_reporting_currency():
+    _reset_database()
+    _store_rate(
+        rate_date=date(2025, 1, 15),
+        quoted_currency="USD",
+        units_per_base="1.2500",
+    )
+    transaction = _restore_transaction(description="PROXIMUS telecom invoice")
+    session = client.post("/classification/sessions", json={"transaction_id": transaction["id"]}).json()
+
+    propose_response = client.post(f"/classification/sessions/{session['id']}/propose")
+    assert propose_response.status_code == 200
+
+    response = client.post(
+        f"/classification/sessions/{session['id']}/accept",
+        json={
+            "transaction_type": "Expense",
+            "category": "Utilities",
+            "classification_source": "assistant",
+            "confirm_type_change": False,
+            "recurrence": {"is_recurrent": False},
+        },
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transaction"]["amount"] == -49.99
+    assert payload["transaction"]["currency"] == "EUR"
+    assert payload["transaction"]["display_amount"] == -62.49
+    assert payload["transaction"]["display_currency"] == "USD"
+    assert payload["transaction"]["display_fx_rate"] == 1.25
+    assert payload["transaction"]["display_rate_date"] == "2025-01-15"
 
 
 def test_propose_returns_503_when_runtime_provider_config_is_missing(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..services.reporting_currency import get_reporting_currency
 from ..schemas.classification import (
     ApplyBatchRequest,
     ApplyBatchResponse,
@@ -46,8 +47,14 @@ def accept_classification(
     session_id: int,
     request: AcceptClassificationRequest,
     db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
 ):
-    return ClassificationSessionService.accept(db, session_id, request)
+    return ClassificationSessionService.accept(
+        db,
+        session_id,
+        request,
+        reporting_currency=reporting_currency,
+    )
 
 
 @router.post("/sessions/{session_id}/similar-preview", response_model=SimilarPreviewResponse)

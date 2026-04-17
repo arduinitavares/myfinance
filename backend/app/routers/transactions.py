@@ -84,13 +84,11 @@ def _serialize_transaction_for_response(
     conversion_service: CurrencyConversionService,
     reporting_currency: str,
 ):
-    display_money = conversion_service.convert(
-        raw_amount=transaction.amount,
-        raw_currency=transaction.currency,
+    return schemas.build_transaction_response_payload_for_reporting_currency(
+        transaction,
+        conversion_service=conversion_service,
         reporting_currency=reporting_currency,
-        transaction_date=transaction.transaction_date,
     )
-    return schemas.build_transaction_response_payload(transaction, display_money)
 
 
 @router.post("/upload/", response_model=List[schemas.Transaction])
@@ -371,7 +369,8 @@ def update_transaction_category(
     transaction_id: int,
     category: str = Query(...),
     transaction_type: TransactionType = Query(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    reporting_currency: str = Depends(get_reporting_currency),
 ):
     transaction = db.query(Transaction).filter(
         Transaction.id == transaction_id
@@ -381,13 +380,19 @@ def update_transaction_category(
         raise HTTPException(404, detail="Transaction not found")
 
     try:
-        return commit_category_change(
+        updated_transaction = commit_category_change(
             db=db,
             transaction=transaction,
             transaction_type=transaction_type,
             category=category,
             classification_source="manual",
             recurrence_pattern_id=transaction.recurrence_pattern_id,
+        )
+        conversion_service = CurrencyConversionService(db)
+        return _serialize_transaction_for_response(
+            updated_transaction,
+            conversion_service=conversion_service,
+            reporting_currency=reporting_currency,
         )
     except ValueError as exc:
         db.rollback()
