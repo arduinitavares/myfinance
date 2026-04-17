@@ -1,4 +1,4 @@
-import { endOfMonth, format, parse, parseISO, startOfMonth, subMonths } from 'date-fns';
+import { endOfMonth, format, parse, parseISO, startOfMonth, startOfYear as getStartOfYear, subMonths } from 'date-fns';
 
 export type TransferSummaryPreset =
   | 'this_month'
@@ -45,8 +45,10 @@ export const buildTransferSummaryRange = (
     };
   }
 
+  const startOfYear = getStartOfYear(anchor);
+
   return {
-    startDate: `${anchor.getFullYear()}-01-01`,
+    startDate: toIsoDate(startOfYear),
     endDate: toIsoDate(anchor),
   };
 };

@@ -35,6 +35,27 @@ export const TransferSummary: React.FC = () => {
   const isLatestTransferSummaryRequest = (requestId: number) =>
     isMountedRef.current && requestSequenceRef.current === requestId;
 
+  const executeFilteredRequest = async (range: { startDate: string; endDate: string }) => {
+    const requestId = startTransferSummaryRequest();
+    setRefreshing(true);
+    setError(null);
+
+    try {
+      await loadTransferSummary(requestId, range.startDate, range.endDate);
+    } catch (err) {
+      if (!isLatestTransferSummaryRequest(requestId)) {
+        return;
+      }
+
+      console.error('Error fetching transfer summary:', err);
+      setError('Failed to load transfer summary');
+    } finally {
+      if (isLatestTransferSummaryRequest(requestId)) {
+        setRefreshing(false);
+      }
+    }
+  };
+
   const loadTransferSummary = async (requestId: number, startDate?: string, endDate?: string) => {
     const data = await statisticService.getTransferSummary(startDate, endDate);
     if (!isLatestTransferSummaryRequest(requestId)) {
@@ -95,28 +116,16 @@ export const TransferSummary: React.FC = () => {
       return;
     }
 
-    if (nextPreset === 'specific_month') {
+    const range =
+      nextPreset === 'specific_month'
+        ? buildSpecificMonthRange(specificMonth)
+        : buildTransferSummaryRange(nextPreset, anchorDate);
+
+    if (!range) {
       return;
     }
 
-    const requestId = startTransferSummaryRequest();
-    setRefreshing(true);
-    setError(null);
-    try {
-      const range = buildTransferSummaryRange(nextPreset, anchorDate);
-      await loadTransferSummary(requestId, range.startDate, range.endDate);
-    } catch (err) {
-      if (!isLatestTransferSummaryRequest(requestId)) {
-        return;
-      }
-
-      console.error('Error fetching transfer summary:', err);
-      setError('Failed to load transfer summary');
-    } finally {
-      if (isLatestTransferSummaryRequest(requestId)) {
-        setRefreshing(false);
-      }
-    }
+    await executeFilteredRequest(range);
   };
 
   const handleSpecificMonthChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,23 +141,7 @@ export const TransferSummary: React.FC = () => {
       return;
     }
 
-    const requestId = startTransferSummaryRequest();
-    setRefreshing(true);
-    setError(null);
-    try {
-      await loadTransferSummary(requestId, range.startDate, range.endDate);
-    } catch (err) {
-      if (!isLatestTransferSummaryRequest(requestId)) {
-        return;
-      }
-
-      console.error('Error fetching transfer summary:', err);
-      setError('Failed to load transfer summary');
-    } finally {
-      if (isLatestTransferSummaryRequest(requestId)) {
-        setRefreshing(false);
-      }
-    }
+    await executeFilteredRequest(range);
   };
 
   if (loading && !hasLoadedOnce) {

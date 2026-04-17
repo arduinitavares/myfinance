@@ -36,6 +36,20 @@ describe('transferSummaryRange', () => {
     });
   });
 
+  test('builds leap-year February for specific month selection', () => {
+    expect(buildSpecificMonthRange('2024-02')).toEqual({
+      startDate: '2024-02-01',
+      endDate: '2024-02-29',
+    });
+  });
+
+  test('builds last month across year boundary', () => {
+    expect(buildTransferSummaryRange('last_month', '2026-01-15')).toEqual({
+      startDate: '2025-12-01',
+      endDate: '2025-12-31',
+    });
+  });
+
   test('returns null for missing or invalid specific month input', () => {
     expect(buildSpecificMonthRange('')).toBeNull();
     expect(buildSpecificMonthRange('2026-2')).toBeNull();

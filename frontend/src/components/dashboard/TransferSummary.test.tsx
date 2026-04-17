@@ -113,7 +113,7 @@ describe('TransferSummary', () => {
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(presetSelect).toHaveValue('this_month');
-    expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(1);
+    expect(mockedGetTransferSummary.mock.calls[0]).toEqual([]);
 
     await act(async () => {
       fireEvent.change(presetSelect, { target: { value: 'last_month' } });
@@ -156,6 +156,90 @@ describe('TransferSummary', () => {
     await waitFor(() => {
       expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(2, '2026-02-01', '2026-02-28');
     });
+  });
+
+  test('re-applies the saved specific month when switching back to that preset', async () => {
+    mockedGetTransferSummary
+      .mockResolvedValueOnce({
+        start_date: '2026-04-01',
+        end_date: '2026-04-10',
+        items: [
+          {
+            subtype: 'Default summary',
+            transaction_count: 1,
+            total_outgoing_eur: 100,
+            total_incoming_eur: 50,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        start_date: '2026-02-01',
+        end_date: '2026-02-28',
+        items: [
+          {
+            subtype: 'Specific month summary',
+            transaction_count: 2,
+            total_outgoing_eur: 200,
+            total_incoming_eur: 100,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        start_date: '2026-03-01',
+        end_date: '2026-03-31',
+        items: [
+          {
+            subtype: 'Last month summary',
+            transaction_count: 3,
+            total_outgoing_eur: 300,
+            total_incoming_eur: 150,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        start_date: '2026-02-01',
+        end_date: '2026-02-28',
+        items: [
+          {
+            subtype: 'Specific month summary',
+            transaction_count: 2,
+            total_outgoing_eur: 200,
+            total_incoming_eur: 100,
+          },
+        ],
+      });
+
+    render(<TransferSummary />);
+
+    const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
+
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'specific_month' } });
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/transfer summary month/i), {
+        target: { value: '2026-02' },
+      });
+    });
+
+    expect(await screen.findByText('Specific month summary')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'last_month' } });
+    });
+
+    expect(await screen.findByText('Last month summary')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.change(presetSelect, { target: { value: 'specific_month' } });
+    });
+
+    await waitFor(() => {
+      expect(mockedGetTransferSummary).toHaveBeenNthCalledWith(4, '2026-02-01', '2026-02-28');
+    });
+
+    expect(await screen.findByText('Specific month summary')).toBeInTheDocument();
   });
 
   test('keeps the card mounted while a filtered request is in flight', async () => {
