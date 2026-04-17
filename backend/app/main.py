@@ -23,7 +23,17 @@ fx_scheduler = None
 def _run_startup_fx_refresh() -> None:
     try:
         with SessionLocal() as db:
-            result = ECBExchangeRateService(db).catch_up_recent_days(
+            service = ECBExchangeRateService(db)
+            if not service.has_seed_data():
+                seed_result = service.seed_historical_rates()
+                logger.info(
+                    "FX historical seed completed for %s to %s: %s rows upserted",
+                    seed_result.start_date,
+                    seed_result.end_date,
+                    seed_result.inserted_or_updated_rows,
+                )
+
+            result = service.catch_up_recent_days(
                 window_days=settings.fx_startup_catchup_days
             )
             logger.info(

@@ -202,6 +202,14 @@ class ECBExchangeRateService:
                     )
                     self.db.add(row)
                     existing_by_key[(rate_date, quoted_currency)] = row
+                    row.units_per_base = units_per_base
+                    row.fetched_at = fetched_at
+                    row.updated_at = fetched_at
+                    inserted_or_updated += 1
+                    continue
+
+                if row.units_per_base == units_per_base:
+                    continue
 
                 row.units_per_base = units_per_base
                 row.fetched_at = fetched_at

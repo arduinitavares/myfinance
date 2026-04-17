@@ -1,9 +1,11 @@
 from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction, TransactionType
 from app.services.ecb_exchange_rates import ECBExchangeRateService
+from app.services.ecb_exchange_rates import FXRefreshResult
 from app.services.fx_refresh_scheduler import build_fx_refresh_scheduler
 
 
@@ -131,6 +133,38 @@ def test_refresh_range_upserts_existing_rows_without_duplicates(db_session, monk
     assert all(row.updated_at >= first_updated_at[row.quoted_currency] for row in rows)
 
 
+def test_refresh_range_skips_unchanged_rows_without_timestamp_churn(db_session, monkeypatch):
+    first_run_at = datetime(2026, 4, 17, 8, 30, 0)
+    second_run_at = datetime(2026, 4, 17, 9, 45, 0)
+    sample_series = {
+        date(2026, 4, 16): {"USD": Decimal("1.1100"), "BRL": Decimal("6.0100")},
+    }
+
+    monkeypatch.setattr(ECBExchangeRateService, "_fetch_series", lambda self, start_date, end_date: sample_series)
+
+    first_service = ECBExchangeRateService(db_session, now_provider=lambda: first_run_at)
+    first_result = first_service.refresh_range(date(2026, 4, 16), date(2026, 4, 16))
+
+    first_rows = _stored_rates(db_session)
+    first_timestamps = {
+        row.quoted_currency: (row.fetched_at, row.updated_at)
+        for row in first_rows
+    }
+
+    second_service = ECBExchangeRateService(db_session, now_provider=lambda: second_run_at)
+    second_result = second_service.refresh_range(date(2026, 4, 16), date(2026, 4, 16))
+
+    db_session.expire_all()
+    rows = _stored_rates(db_session)
+
+    assert first_result.inserted_or_updated_rows == 2
+    assert second_result.inserted_or_updated_rows == 0
+    assert {
+        row.quoted_currency: (row.fetched_at, row.updated_at)
+        for row in rows
+    } == first_timestamps
+
+
 def test_catch_up_recent_days_ignores_weekend_gaps(db_session, monkeypatch):
     today = date(2026, 2, 20)
     start_date = date(2026, 1, 7)
@@ -175,3 +209,65 @@ def test_build_fx_refresh_scheduler_registers_daily_utc_job():
     finally:
         if scheduler.running:
             scheduler.shutdown(wait=False)
+
+
+def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empty(monkeypatch):
+    import app.main as main_module
+
+    calls = []
+
+    class FakeSessionContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeService:
+        def __init__(self, db):
+            calls.append("init")
+
+        def has_seed_data(self):
+            calls.append("has_seed_data")
+            return False
+
+        def seed_historical_rates(self):
+            calls.append("seed_historical_rates")
+            return FXRefreshResult(
+                start_date=date(2021, 4, 17),
+                end_date=date(2026, 4, 17),
+                inserted_or_updated_rows=10,
+                missing_publication_days=[],
+                missing_working_days=[],
+            )
+
+        def catch_up_recent_days(self, *, window_days):
+            calls.append(("catch_up_recent_days", window_days))
+            return FXRefreshResult(
+                start_date=date(2026, 3, 4),
+                end_date=date(2026, 4, 17),
+                inserted_or_updated_rows=2,
+                missing_publication_days=[],
+                missing_working_days=[],
+            )
+
+    monkeypatch.setattr(main_module, "SessionLocal", lambda: FakeSessionContext())
+    monkeypatch.setattr(main_module, "ECBExchangeRateService", FakeService)
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        SimpleNamespace(
+            fx_startup_catchup_days=45,
+            fx_refresh_hour_utc=2,
+            fx_refresh_minute_utc=0,
+        ),
+    )
+
+    main_module._run_startup_fx_refresh()
+
+    assert calls == [
+        "init",
+        "has_seed_data",
+        "seed_historical_rates",
+        ("catch_up_recent_days", 45),
+    ]
