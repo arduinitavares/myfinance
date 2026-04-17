@@ -243,6 +243,17 @@ V1 rules:
 - `source_name` is always `ECB_EXR`
 - no stored row is required for `EUR -> EUR`; that is handled as a built-in identity conversion
 
+Timestamp semantics:
+
+- `fetched_at` = when the successful external ECB fetch that produced the currently stored source observation completed
+- `updated_at` = when the local database row was last written
+
+Write rules:
+
+- on first insert, `fetched_at` and `updated_at` are both set to the successful fetch timestamp
+- on a re-fetch that changes or rewrites the stored row, both fields are updated
+- on an idempotent re-run that detects the stored row already matches the source observation and skips the write, neither field changes
+
 ## Conversion Rules
 
 ### Identity rule
@@ -252,6 +263,7 @@ If raw currency and reporting currency are the same:
 - `display_amount = raw_amount`
 - `display_currency = raw_currency`
 - `display_fx_rate = 1.0`
+- `display_rate_date = transaction_date`
 
 ### Effective-date rule
 
@@ -290,6 +302,7 @@ For a raw amount `raw_amount` in `raw_currency`, displayed in `reporting_currenc
 - preserve the original sign
 - perform calculation with `Decimal`
 - round only at the display boundary, not in internal conversion steps
+- expose the effective rate date actually used as `display_rate_date`
 
 ### Precision rule
 
@@ -336,7 +349,10 @@ For every request:
    - `USD`
    - `BRL`
 3. if missing, default to `EUR`
-4. if invalid, return a validation error rather than silently guessing
+4. if invalid, return HTTP `400` with an explicit machine-readable error payload such as:
+   - `error = "invalid_reporting_currency"`
+   - `allowed = ["EUR", "USD", "BRL"]`
+5. do not silently coerce, lowercase-normalize, or guess unsupported values
 
 ## API Contract Design
 
@@ -355,9 +371,6 @@ Required additive fields:
 - `display_amount`
 - `display_currency`
 - `display_fx_rate`
-
-Optional future debug field:
-
 - `display_rate_date`
 
 Examples of affected response shapes:
@@ -385,6 +398,18 @@ Required naming rule:
 
 This prevents the API from lying about units once the selected reporting currency is not `EUR`.
 
+### Analytics conversion boundary
+
+V1 conversion for analytics happens in the **Python service layer**, not in ad hoc SQL expressions.
+
+Rule:
+
+- SQL may still filter raw transaction sets by date, type, category, or account
+- the shared currency-conversion service owns rate lookup and FX math
+- aggregate totals are produced after conversion through that shared service
+
+This is an explicit correctness-over-cleverness decision for v1. It keeps one FX implementation path across line items and aggregates and avoids scattering pairwise conversion formulas across SQL queries.
+
 ## Frontend Design
 
 ### Global control
@@ -403,7 +428,7 @@ Default:
 
 Persistence:
 
-- local storage under one explicit app-owned key, for example `reporting_currency`
+- local storage under one explicit app-owned key: `reporting_currency`
 
 ### UI rule
 
@@ -472,14 +497,20 @@ V1 needs both:
 Recommended behavior:
 
 - seed historical `USD` and `BRL` ECB daily rates for the date span covered by existing transactions
-- run an idempotent startup catch-up that fetches recent missing working-day rates for supported currencies over a bounded window
+- run an idempotent startup catch-up that fetches recent missing supported working-day rates over the last `45` calendar days
 
 V1 delivery shape:
 
 1. a re-runnable historical seed path for the existing transaction date span
-2. a bounded startup catch-up for recent missing supported rates
+2. a bounded startup catch-up for recent missing supported rates over the last `45` calendar days
 
 The seed and refresh mechanism must be deterministic and re-runnable.
+
+Non-working-day handling:
+
+- the seed and catch-up jobs must treat weekends and known ECB non-publication days as normal absent-rate dates
+- absence of a rate on a non-working day is not an error condition
+- only missing supported working-day observations inside the requested fetch window are treated as gaps to fill
 
 ## Interaction With Future Importers
 
@@ -502,12 +533,14 @@ This is why the FX/UI foundation should be built before the Nexo importer spec.
 - prior-date fallback behavior
 - missing-rate failure behavior
 - header validation for reporting currency
+- effective `display_rate_date` behavior
 
 ### Service tests
 
 - transaction serializer emits correct `display_*` fields
 - analytics services emit `reporting_currency`
 - aggregate values use the selected reporting currency, not fixed `EUR`
+- analytics conversion flows through the shared Python conversion service instead of inline SQL FX math
 
 ### Frontend tests
 
@@ -523,6 +556,7 @@ This is why the FX/UI foundation should be built before the Nexo importer spec.
 - switching reporting currency never mutates raw transaction data
 - historical reports remain stable for a fixed FX table snapshot
 - existing `EUR`-only transactions still render correctly with identity conversion
+- FX seed path is idempotent and handles duplicate-key upserts cleanly
 
 ## Readiness Criteria
 
