@@ -10,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 from .database import get_db
 from .database_manager import init_database, reset_database
-from .services.reporting_currency import get_reporting_currency
-
 # Initialize the database BEFORE importing routers to ensure tables exist
 init_database()
 
@@ -19,7 +17,7 @@ init_database()
 from .routers import transactions, statistics, suggestions, financial_health, projections, anomalies, imports
 from .routers.classification import router as classification_router
 
-app = FastAPI(title="MyFinance API", dependencies=[Depends(get_reporting_currency)])
+app = FastAPI(title="MyFinance API")
 
 # Configure CORS
 app.add_middleware(
