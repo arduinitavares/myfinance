@@ -6,6 +6,7 @@ from .database import engine, Base
 from .config import settings
 from .imports.dedupe import ensure_import_session_file_hash_uniqueness
 from .migrations.migrate_europe_iban_reclassification import migrate_europe_iban_reclassification
+from .models.fx import FXDailyReferenceRate
 from .models.classification import ClassificationSession, ClassificationTurn, RecurrencePattern
 from .models.transaction import Transaction
 from .models.statistics import FinancialStatistics, CategoryStatistics
@@ -98,6 +99,7 @@ def init_database():
         "category_statistics",
         "financial_health",
         "financial_recommendations",
+        "fx_daily_reference_rates",
         "projection_scenarios",
         "projection_parameters",
         "projection_results",

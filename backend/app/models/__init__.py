@@ -10,6 +10,7 @@ from .statistics import FinancialStatistics, CategoryStatistics, StatisticsPerio
 from .financial_health import FinancialHealth, FinancialRecommendation
 from .financial_projection import ProjectionScenario, ProjectionParameter, ProjectionResult
 from .anomaly import TransactionAnomaly, AnomalyPattern, AnomalyRule, AnomalyType, AnomalySeverity, AnomalyStatus
+from .fx import FXDailyReferenceRate
 from .imports import (
     ImportBatchItem,
     ImportBatchRun,
@@ -36,6 +37,7 @@ __all__ = [
     'TransferCategory',
     'FinancialHealth',
     'FinancialRecommendation',
+    'FXDailyReferenceRate',
     'ProjectionScenario',
     'ProjectionParameter',
     'ProjectionResult',
