@@ -8,13 +8,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.imports.contracts import ImportStrategyKey
 from app.imports.pipeline import ImportPipelineService, ImportUploadDuplicateError
 from app.imports.state_machine import ImportSessionStatus, assert_transition_allowed
 from app.imports.workflow import ImportWorkflowService
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
 from app.services.csv_import_service import CsvImportService
-
-from .contracts import ImportStrategyKey
 
 
 logger = logging.getLogger(__name__)
@@ -148,6 +147,15 @@ class ImportBatchFolderService:
 
     def _process_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
         if self._is_supported_csv(file_path):
+            csv_strategy = self._detect_csv_strategy(file_path)
+            if csv_strategy == ImportStrategyKey.NEXO_CSV:
+                self._process_reviewable_file(
+                    batch_run,
+                    item,
+                    file_path,
+                    content_type="text/csv",
+                )
+                return
             self._process_csv_file(batch_run, item, file_path)
             return
 
@@ -161,11 +169,47 @@ class ImportBatchFolderService:
             )
             return
 
+        self._process_reviewable_file(batch_run, item, file_path, content_type="application/pdf")
+
+    def _process_csv_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
+        try:
+            result = CsvImportService.import_file(
+                self.db,
+                file_path=str(file_path),
+                source_filename=file_path.name,
+            )
+        except Exception as exc:
+            self._finalize_item(
+                batch_run,
+                item,
+                status="failed",
+                message=str(exc),
+            )
+            return
+
+        self._finalize_item(
+            batch_run,
+            item,
+            status="processed",
+            message=self._format_csv_result_message(
+                imported_count=result.imported_count,
+                skipped_duplicate_count=result.skipped_duplicate_count,
+            ),
+        )
+
+    def _process_reviewable_file(
+        self,
+        batch_run: ImportBatchRun,
+        item: ImportBatchItem,
+        file_path: Path,
+        *,
+        content_type: str,
+    ) -> None:
         try:
             file_bytes = file_path.read_bytes()
             session, detection = self.pipeline.start_upload(
                 filename=file_path.name,
-                content_type="application/pdf",
+                content_type=content_type,
                 file_bytes=file_bytes,
             )
         except ImportUploadDuplicateError as exc:
@@ -189,11 +233,11 @@ class ImportBatchFolderService:
             )
             return
 
-        if detection.strategy_key != ImportStrategyKey.PDF_STATEMENT:
+        if detection.strategy_key not in {ImportStrategyKey.PDF_STATEMENT, ImportStrategyKey.NEXO_CSV}:
             session = self._mark_session_failed(
                 session.id,
                 stage="detection",
-                message=f"Unsupported PDF import strategy for batch import: {detection.strategy_key.value}",
+                message=f"Unsupported batch import strategy: {detection.strategy_key.value}",
             )
             snapshot = self.workflow.get_session_snapshot(session.id)
             self._finalize_item(
@@ -226,32 +270,6 @@ class ImportBatchFolderService:
             session_status=snapshot["status"],
             strategy_key=snapshot["strategy_key"],
             extractor_id=snapshot["extractor_id"],
-        )
-
-    def _process_csv_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
-        try:
-            result = CsvImportService.import_file(
-                self.db,
-                file_path=str(file_path),
-                source_filename=file_path.name,
-            )
-        except Exception as exc:
-            self._finalize_item(
-                batch_run,
-                item,
-                status="failed",
-                message=str(exc),
-            )
-            return
-
-        self._finalize_item(
-            batch_run,
-            item,
-            status="processed",
-            message=self._format_csv_result_message(
-                imported_count=result.imported_count,
-                skipped_duplicate_count=result.skipped_duplicate_count,
-            ),
         )
 
     def _mark_session_failed(self, session_id: int, *, stage: str, message: str) -> ImportSession:
@@ -413,6 +431,15 @@ class ImportBatchFolderService:
     @staticmethod
     def _is_supported_csv(file_path: Path) -> bool:
         return file_path.suffix.lower() == ".csv"
+
+    def _detect_csv_strategy(self, file_path: Path) -> ImportStrategyKey:
+        file_bytes = file_path.read_bytes()
+        detection = self.pipeline.detector.detect(
+            filename=file_path.name,
+            content_type="text/csv",
+            sample=file_bytes[:4096],
+        )
+        return detection.strategy_key
 
     @staticmethod
     def _is_ignored_batch_file(file_path: Path) -> bool:

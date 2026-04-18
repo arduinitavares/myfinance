@@ -102,7 +102,7 @@ async def upload_import(
         logger.exception("Import upload failed before extraction")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    if detection.strategy_key == ImportStrategyKey.PDF_STATEMENT:
+    if detection.strategy_key in {ImportStrategyKey.PDF_STATEMENT, ImportStrategyKey.NEXO_CSV}:
         try:
             session = workflow.extract_detected_session(session.id)
         except Exception:

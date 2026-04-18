@@ -10,6 +10,7 @@ from app.imports.contracts import (
     ImportStrategyKey,
     RawEvidence,
 )
+from app.models.transaction import ExpenseCategory, TransactionType
 
 
 def test_extraction_result_serializes_blocking_issues_and_nullable_fields():
@@ -28,6 +29,11 @@ def test_extraction_result_serializes_blocking_issues_and_nullable_fields():
                 debit_credit="debit",
                 inferred_category=None,
                 category_source=None,
+                proposed_transaction_type=None,
+                proposed_expense_category=None,
+                proposed_income_category=None,
+                proposed_transfer_category=None,
+                proposal_source=None,
                 confidence={"amount": 1.0},
                 source_locator="csv:row:2",
                 edit_source="ai_extracted",
@@ -47,6 +53,7 @@ def test_extraction_result_serializes_blocking_issues_and_nullable_fields():
     dumped = result.model_dump()
     assert dumped["issues"][0]["blocking"] is True
     assert dumped["transactions"][0]["canonical_description_en"] is None
+    assert dumped["transactions"][0]["proposed_transfer_category"] is None
 
 
 def test_raw_evidence_is_json_serializable():
@@ -72,6 +79,30 @@ def test_detection_result_exposes_strategy_enum():
     assert detected.strategy_key == ImportStrategyKey.PDF_STATEMENT
 
 
+def test_import_strategy_key_includes_nexo_csv():
+    assert ImportStrategyKey.NEXO_CSV.value == "nexo_csv"
+
+
+def test_extracted_transaction_serializes_proposal_fields():
+    tx = ExtractedTransaction(
+        transaction_date="2026-04-11",
+        source_description="Nexo Card Transaction Fee",
+        signed_amount=-0.16,
+        currency="xUSD",
+        debit_credit="debit",
+        source_locator="csv:r3:NXT_FEE_1",
+        proposed_transaction_type=TransactionType.EXPENSE,
+        proposed_expense_category=ExpenseCategory.FINANCIAL_FEES,
+        proposal_source="deterministic_extracted",
+        edit_source="deterministic_extracted",
+    )
+
+    dumped = tx.model_dump(mode="json")
+    assert dumped["proposed_transaction_type"] == "Expense"
+    assert dumped["proposed_expense_category"] == "Financial Fees"
+    assert dumped["proposal_source"] == "deterministic_extracted"
+
+
 def test_raw_evidence_rejects_non_json_safe_content():
     with pytest.raises(ValidationError):
         RawEvidence(text_blocks=[{"page": 1, "text": object()}])
@@ -87,11 +118,18 @@ def test_extracted_transaction_limits_edit_source_values():
         debit_credit="debit",
         inferred_category=None,
         category_source=None,
+        proposed_transaction_type=TransactionType.EXPENSE,
+        proposed_expense_category=ExpenseCategory.GROCERIES,
+        proposed_income_category=None,
+        proposed_transfer_category=None,
+        proposal_source="deterministic_extracted",
         confidence={},
         source_locator="csv:row:2",
         edit_source="user_edited",
     )
     assert valid.edit_source == "user_edited"
+    assert valid.proposal_source == "deterministic_extracted"
+    assert valid.proposed_expense_category == ExpenseCategory.GROCERIES
 
     with pytest.raises(ValidationError):
         ExtractedTransaction(
@@ -103,9 +141,14 @@ def test_extracted_transaction_limits_edit_source_values():
             debit_credit="debit",
             inferred_category=None,
             category_source=None,
+            proposed_transaction_type=None,
+            proposed_expense_category=None,
+            proposed_income_category=None,
+            proposed_transfer_category=None,
+            proposal_source="manual",
             confidence={},
             source_locator="csv:row:2",
-            edit_source="manual",
+            edit_source="user_edited",
         )
 
 
@@ -117,6 +160,7 @@ def test_extracted_transaction_accepts_deterministic_edit_source():
         currency="EUR",
         debit_credit="debit",
         source_locator="pdf:p2:l21",
+        proposal_source="ai_extracted",
         edit_source="deterministic_extracted",
     )
     assert tx.edit_source == "deterministic_extracted"

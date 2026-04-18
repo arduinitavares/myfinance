@@ -11,8 +11,9 @@ from app.imports.contracts import DetectionResult, ImportStrategyKey
 from app.imports.batch_folder import ImportBatchFolderService
 from app.main import app
 from app.models.transaction import Transaction
-from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
+from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession, ImportStatementDraft, ImportTransactionDraft
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
+from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
 
 
 client = TestClient(app)
@@ -117,6 +118,72 @@ def test_batch_folder_endpoint_processes_pdf_and_csv_and_ignores_junk_files(db_s
     assert persisted_response.status_code == 200
     assert persisted_response.json()["id"] == payload["id"]
     assert persisted_response.json()["items"][0]["id"] == pdf_item["id"]
+
+
+def test_batch_folder_routes_nexo_csv_to_import_review_session_instead_of_csv_service(
+    db_session, monkeypatch, tmp_path
+):
+    batch_dir = tmp_path / "bank_files"
+    batch_dir.mkdir()
+    (batch_dir / "nexo.csv").write_bytes(
+        build_nexo_csv_bytes(
+            nexo_row(
+                "NXT1001",
+                "Nexo Card Purchase",
+                "xUSD",
+                "-12.34",
+                "approved / Coffee Shop",
+                "2026-04-10 09:15:30",
+            ),
+            nexo_row(
+                "NXT1002",
+                "Nexo Card Transaction Fee",
+                "xUSD",
+                "-0.16",
+                "approved / Card fee",
+                "2026-04-10 09:15:31",
+            ),
+            nexo_row(
+                "NXT1003",
+                "Transfer Out",
+                "EUR",
+                "-250.00",
+                "approved / Bank transfer to BE6800000000000000",
+                "2026-04-11 11:22:33",
+            ),
+        )
+    )
+    _configure_batch_dir(monkeypatch, batch_dir)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("CsvImportService should not be called for a Nexo CSV")
+
+    monkeypatch.setattr("app.services.csv_import_service.CsvImportService.import_file", explode)
+
+    response = client.post("/imports/batch-folder")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["processed_count"] == 1
+    assert payload["skipped_existing_count"] == 0
+    assert payload["unsupported_count"] == 0
+    assert payload["failed_count"] == 0
+
+    item = payload["items"][0]
+    assert item["filename"] == "nexo.csv"
+    assert item["status"] == "processed"
+    assert item["session_id"] is not None
+    assert item["session_status"] == "awaiting_review"
+    assert item["strategy_key"] == "nexo_csv"
+    assert item["extractor_id"] == "nexo_csv_v1"
+    assert item["message"] is None
+
+    db_session.expire_all()
+    assert db_session.query(Transaction).count() == 0
+    assert db_session.query(ImportSession).count() == 1
+    assert db_session.query(ImportStatementDraft).count() == 1
+    assert db_session.query(ImportTransactionDraft).count() == 3
 
 
 def test_batch_folder_rerun_skips_existing_pdf_and_reports_csv_duplicate_rows(db_session, monkeypatch, tmp_path):

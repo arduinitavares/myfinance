@@ -28,6 +28,48 @@ const getErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+const getProposalTypeLabel = (transactionType: string | null) => {
+  if (!transactionType) {
+    return null;
+  }
+
+  const normalizedType = transactionType.trim().toLowerCase();
+
+  if (normalizedType === 'expense') {
+    return 'Expense';
+  }
+
+  if (normalizedType === 'income') {
+    return 'Income';
+  }
+
+  if (normalizedType === 'transfer') {
+    return 'Transfer';
+  }
+
+  return transactionType;
+};
+
+const getProposalLabel = (transaction: ImportReviewPayload['transactions'][number]) => {
+  const typeLabel = getProposalTypeLabel(transaction.proposed_transaction_type);
+
+  if (!typeLabel) {
+    return null;
+  }
+
+  const normalizedType = transaction.proposed_transaction_type?.trim().toLowerCase();
+  const category =
+    normalizedType === 'expense'
+      ? transaction.proposed_expense_category
+      : normalizedType === 'income'
+        ? transaction.proposed_income_category
+        : normalizedType === 'transfer'
+          ? transaction.proposed_transfer_category
+          : null;
+
+  return category && category.trim() ? `${typeLabel} • ${category}` : typeLabel;
+};
+
 export const ImportReviewPage: React.FC = () => {
   const { reportingCurrency } = useReportingCurrency();
   const navigate = useNavigate();
@@ -282,6 +324,9 @@ export const ImportReviewPage: React.FC = () => {
                     Amount
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Proposed
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Locator
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
@@ -290,38 +335,54 @@ export const ImportReviewPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white text-sm dark:divide-gray-700 dark:bg-gray-900">
-                {review.transactions.map((transaction) => (
-                  <tr key={transaction.id}>
-                    <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
-                      {formatDisplayDate(transaction.transaction_date)}
-                    </td>
-                    <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
-                      <div className="font-medium">{transaction.source_description}</div>
-                      {transaction.canonical_description_en ? (
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {transaction.canonical_description_en}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
-                      <DisplayMoney
-                        rawAmount={transaction.signed_amount}
-                        rawCurrency={transaction.currency}
-                        displayAmount={transaction.display_amount}
-                        displayCurrency={transaction.display_currency}
-                        displayIsAvailable={transaction.display_is_available}
-                        displayUnavailableReason={transaction.display_unavailable_reason}
-                        primaryClassName="text-gray-900 dark:text-gray-200"
-                        unavailableClassName="font-medium text-amber-700 dark:text-amber-300"
-                        secondaryClassName="text-xs text-gray-500 dark:text-gray-400"
-                      />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
-                      {transaction.source_locator}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{transaction.edit_source}</td>
-                  </tr>
-                ))}
+                {review.transactions.map((transaction) => {
+                  const proposalLabel = getProposalLabel(transaction);
+
+                  return (
+                    <tr key={transaction.id}>
+                      <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
+                        {formatDisplayDate(transaction.transaction_date)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
+                        <div className="font-medium">{transaction.source_description}</div>
+                        {transaction.canonical_description_en ? (
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {transaction.canonical_description_en}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
+                        <DisplayMoney
+                          rawAmount={transaction.signed_amount}
+                          rawCurrency={transaction.currency}
+                          displayAmount={transaction.display_amount}
+                          displayCurrency={transaction.display_currency}
+                          displayIsAvailable={transaction.display_is_available}
+                          displayUnavailableReason={transaction.display_unavailable_reason}
+                          primaryClassName="text-gray-900 dark:text-gray-200"
+                          unavailableClassName="font-medium text-amber-700 dark:text-amber-300"
+                          secondaryClassName="text-xs text-gray-500 dark:text-gray-400"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
+                        {proposalLabel ? (
+                          <div className="space-y-1">
+                            <div className="font-medium">{proposalLabel}</div>
+                            {transaction.proposal_source ? (
+                              <div className="text-xs text-gray-500 dark:text-gray-400">{transaction.proposal_source}</div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="font-medium text-gray-700 dark:text-gray-300">Needs classification</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
+                        {transaction.source_locator}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{transaction.edit_source}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

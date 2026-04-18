@@ -9,10 +9,11 @@ from app.imports.pipeline import ImportPipelineService
 from app.imports.state_machine import ImportSessionStatus
 from app.imports.workflow import ImportApprovalConflictError, ImportSessionStateError, ImportWorkflowService
 from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
-from app.models.transaction import Transaction
+from app.models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType, TransferCategory
 from tests.imports.fixtures.belfius_account_pages import SANITIZED_BELFIUS_PAGE_TEXTS
 from tests.imports.fixtures.belfius_card_pages import SANITIZED_BELFIUS_CARD_PAGE_TEXTS
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
+from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
 
 
 def _successful_result(session_id: int, attempt_number: int) -> tuple[RawEvidence, ExtractionResult]:
@@ -164,6 +165,150 @@ def test_extract_detected_session_accepts_belfius_card_pdf_and_commits_with_card
     assert committed[0].source_bank == "Belfius"
     assert committed[0].account_number == "5440 56XX XXXX 3844"
     assert committed[0].import_session_id == session.id
+
+
+def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_commits_rows(db_session):
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=build_nexo_csv_bytes(
+            nexo_row(
+                "NXT1001",
+                "Nexo Card Purchase",
+                "xUSD",
+                "-12.34",
+                "approved / Coffee Shop",
+                "2026-04-10 09:15:30",
+            ),
+            nexo_row(
+                "NXT1002",
+                "Nexo Card Transaction Fee",
+                "xUSD",
+                "-0.16",
+                "approved / Card fee",
+                "2026-04-10 09:15:31",
+            ),
+            nexo_row(
+                "NXT1003",
+                "Transfer Out",
+                "EUR",
+                "-250.00",
+                "approved / Bank transfer to BE6800000000000000",
+                "2026-04-11 11:22:33",
+            ),
+        ),
+    )
+
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+
+    assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
+    assert extracted_session.extractor_id == "nexo_csv_v1"
+    assert extracted_session.provider_hint == "nexo"
+
+    statement_draft = db_session.query(ImportStatementDraft).one()
+    assert statement_draft.account_number_hint == "NEXO"
+    assert statement_draft.review_status == "awaiting_review"
+
+    transaction_drafts = db_session.query(ImportTransactionDraft).order_by(ImportTransactionDraft.id.asc()).all()
+    assert len(transaction_drafts) == 3
+
+    first_draft = transaction_drafts[0]
+    assert first_draft.source_locator == "csv:r2:NXT1001"
+    assert first_draft.proposed_transaction_type == TransactionType.EXPENSE
+    assert first_draft.proposed_expense_category is None
+    assert first_draft.proposed_income_category is None
+    assert first_draft.proposed_transfer_category is None
+    assert first_draft.proposal_source == "deterministic_extracted"
+
+    second_draft = transaction_drafts[1]
+    assert second_draft.source_locator == "csv:r3:NXT1002"
+    assert second_draft.proposed_transaction_type == TransactionType.EXPENSE
+    assert second_draft.proposed_expense_category == ExpenseCategory.FINANCIAL_FEES
+    assert second_draft.proposal_source == "deterministic_extracted"
+
+    third_draft = transaction_drafts[2]
+    assert third_draft.source_locator == "csv:r4:NXT1003"
+    assert third_draft.proposed_transaction_type == TransactionType.TRANSFER
+    assert third_draft.proposed_transfer_category == TransferCategory.INTERNAL_TRANSFER
+    assert third_draft.proposal_source == "deterministic_extracted"
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+
+    committed = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
+    assert len(committed) == 3
+    assert committed[0].source_bank == "Nexo"
+    assert committed[0].transaction_type == TransactionType.EXPENSE
+    assert committed[0].expense_category is None
+    assert committed[0].transfer_category is None
+    assert committed[1].transaction_type == TransactionType.EXPENSE
+    assert committed[1].expense_category == ExpenseCategory.FINANCIAL_FEES
+    assert committed[1].source_bank == "Nexo"
+    assert committed[2].transaction_type == TransactionType.TRANSFER
+    assert committed[2].transfer_category == TransferCategory.INTERNAL_TRANSFER
+    assert committed[2].source_bank == "Nexo"
+
+
+@pytest.mark.parametrize(
+    "proposal_updates, expected_message",
+    [
+        (
+            {"proposed_transaction_type": None, "proposed_expense_category": ExpenseCategory.FINANCIAL_FEES},
+            "a transaction type is required when any category proposal is present",
+        ),
+        (
+            {"proposed_transaction_type": TransactionType.EXPENSE, "proposed_income_category": IncomeCategory.SALARY},
+            "Expense cannot carry income_category",
+        ),
+        (
+            {
+                "proposed_transaction_type": TransactionType.INCOME,
+                "proposed_transfer_category": TransferCategory.INTERNAL_TRANSFER,
+            },
+            "Income cannot carry transfer_category",
+        ),
+        (
+            {
+                "proposed_transaction_type": TransactionType.TRANSFER,
+                "proposed_expense_category": ExpenseCategory.FINANCIAL_FEES,
+            },
+            "Transfer cannot carry expense_category",
+        ),
+    ],
+)
+def test_approve_session_rejects_invalid_proposal_combinations(db_session, proposal_updates, expected_message):
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=build_nexo_csv_bytes(
+            nexo_row(
+                "NXT2001",
+                "Transfer Out",
+                "EUR",
+                "-250.00",
+                "approved / Bank transfer to BE6800000000000000",
+                "2026-04-11 11:22:33",
+            ),
+        ),
+    )
+
+    ImportWorkflowService(db_session).extract_detected_session(session.id)
+
+    draft = db_session.query(ImportTransactionDraft).one()
+    for field_name, field_value in proposal_updates.items():
+        setattr(draft, field_name, field_value)
+    db_session.commit()
+
+    with pytest.raises(ImportSessionStateError, match=expected_message):
+        ImportWorkflowService(db_session).approve_session(session.id)
+
+    db_session.expire_all()
+    persisted_session = db_session.get(ImportSession, session.id)
+    statement_draft = db_session.query(ImportStatementDraft).one()
+
+    assert persisted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
+    assert statement_draft.review_status == "awaiting_review"
+    assert db_session.query(Transaction).count() == 0
 
 
 def test_extract_detected_session_fails_closed_on_unsupported_layout(db_session, monkeypatch):

@@ -6,6 +6,9 @@ from .database import engine, Base
 from .config import settings
 from .imports.dedupe import ensure_import_session_file_hash_uniqueness
 from .migrations.migrate_europe_iban_reclassification import migrate_europe_iban_reclassification
+from .migrations.migrate_import_transaction_draft_proposals import (
+    migrate_import_transaction_draft_proposals,
+)
 from .models.fx import FXDailyReferenceRate
 from .models.classification import ClassificationSession, ClassificationTurn, RecurrencePattern
 from .models.transaction import Transaction
@@ -78,6 +81,8 @@ def _ensure_import_traceability_transaction_columns() -> None:
 def ensure_runtime_schema_compatibility() -> None:
     _ensure_classification_transaction_columns()
     _ensure_import_traceability_transaction_columns()
+    migrate_import_transaction_draft_proposals(engine)
+
 
 def init_database():
     """Initialize the database and create all tables"""

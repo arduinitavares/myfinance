@@ -13,8 +13,14 @@ from app.models.imports import (
     ImportStatementDraft,
     ImportTransactionDraft,
 )
+from app.models.transaction import (
+    ExpenseCategory,
+    IncomeCategory,
+    Transaction,
+    TransactionType,
+    TransferCategory,
+)
 from app.models.statistics import CategoryStatistics, FinancialStatistics, StatisticsPeriod
-from app.models.transaction import Transaction
 from app.schemas.imports import build_import_transaction_draft_response_payload
 from app.schemas.transaction import TransactionCreate
 from app.services.currency_conversion import CurrencyConversionService, DisplayMoney
@@ -22,6 +28,7 @@ from app.services.statistics_service import StatisticsService
 
 from .artifacts import ArtifactStore
 from .contracts import ExtractionResult, ExtractedTransaction, ImportStrategyKey
+from .nexo_csv import NexoCsvExtractor
 from .pdf_statement import PdfStatementExtractor
 from .state_machine import ImportSessionStatus, assert_transition_allowed
 
@@ -51,18 +58,18 @@ class ImportWorkflowService:
         self,
         db: Session,
         pdf_statement_extractor: PdfStatementExtractor | None = None,
+        nexo_csv_extractor: NexoCsvExtractor | None = None,
         artifacts: ArtifactStore | None = None,
     ) -> None:
         self.db = db
         self.pdf_statement_extractor = pdf_statement_extractor or PdfStatementExtractor()
+        self.nexo_csv_extractor = nexo_csv_extractor or NexoCsvExtractor()
         self.artifacts = artifacts or ArtifactStore()
 
     def extract_detected_session(self, session_id: int) -> ImportSession:
         session = self._get_session(session_id)
         if session.status != ImportSessionStatus.DETECTED.value:
             raise ImportSessionStateError(f"Import session {session_id} must be in detected state.")
-        if session.strategy_key != ImportStrategyKey.PDF_STATEMENT.value:
-            raise ImportSessionStateError(f"Import session {session_id} does not use pdf_statement strategy.")
 
         attempt_number = self._next_attempt_number(session.id)
         original_file = self.artifacts.session_dir(str(session.id)) / "original" / session.file_name
@@ -71,7 +78,8 @@ class ImportWorkflowService:
         try:
             if not original_file.exists():
                 raise FileNotFoundError(f"Original upload missing for import session {session.id}.")
-            evidence, result = self.pdf_statement_extractor.extract(
+            extractor = self._reviewable_extractor_for_strategy(session.strategy_key)
+            evidence, result = extractor.extract(
                 file_path=original_file,
                 session_id=str(session.id),
                 attempt_number=attempt_number,
@@ -185,6 +193,10 @@ class ImportWorkflowService:
         duplicates = self._find_duplicate_transactions(statement, drafts)
         if duplicates:
             raise ImportApprovalConflictError(duplicates)
+        validated_proposals = [
+            self._validate_proposal_combination(import_session_id=session.id, draft=draft)
+            for draft in drafts
+        ]
 
         current = ImportSessionStatus(session.status)
         for target in (ImportSessionStatus.APPROVED, ImportSessionStatus.COMMITTING):
@@ -195,8 +207,8 @@ class ImportWorkflowService:
         statement.review_status = "approved"
 
         affected_dates: set[date] = set()
-        for draft in drafts:
-            transaction = self._build_committed_transaction(session.id, statement, draft)
+        for draft, proposal in zip(drafts, validated_proposals):
+            transaction = self._build_committed_transaction(session.id, statement, draft, proposal)
             self.db.add(transaction)
             if transaction.transaction_date is not None:
                 affected_dates.add(transaction.transaction_date)
@@ -334,6 +346,11 @@ class ImportWorkflowService:
                     currency=transaction.currency,
                     debit_credit=transaction.debit_credit,
                     source_locator=transaction.source_locator,
+                    proposed_transaction_type=transaction.proposed_transaction_type,
+                    proposed_expense_category=transaction.proposed_expense_category,
+                    proposed_income_category=transaction.proposed_income_category,
+                    proposed_transfer_category=transaction.proposed_transfer_category,
+                    proposal_source=transaction.proposal_source,
                     inferred_category=transaction.inferred_category,
                     category_source=transaction.category_source,
                     confidence=self._transaction_confidence(transaction, result),
@@ -378,6 +395,7 @@ class ImportWorkflowService:
         import_session_id: int,
         statement: ImportStatementDraft,
         draft: ImportTransactionDraft,
+        proposal: dict[str, TransactionType | ExpenseCategory | IncomeCategory | TransferCategory | None],
     ) -> Transaction:
         if draft.transaction_date is None:
             raise ImportSessionStateError(
@@ -392,10 +410,10 @@ class ImportWorkflowService:
             description=draft.source_description,
             counterparty_name=None,
             counterparty_account=None,
-            transaction_type=None,
-            expense_category=None,
-            income_category=None,
-            transfer_category=None,
+            transaction_type=proposal["transaction_type"],
+            expense_category=proposal["expense_category"],
+            income_category=proposal["income_category"],
+            transfer_category=proposal["transfer_category"],
             classification_source=None,
             recurrence_pattern_id=None,
             source_bank=self._source_bank_name(statement),
@@ -677,7 +695,94 @@ class ImportWorkflowService:
             return "Belfius"
         if normalized == "beobank":
             return "Beobank"
+        if normalized == "nexo":
+            return "Nexo"
         return provider_hint.title() if provider_hint else "Unknown"
+
+    def _reviewable_extractor_for_strategy(self, strategy_key: str) -> PdfStatementExtractor | NexoCsvExtractor:
+        normalized = (strategy_key or "").casefold()
+        if normalized == ImportStrategyKey.PDF_STATEMENT.value:
+            return self.pdf_statement_extractor
+        if normalized == ImportStrategyKey.NEXO_CSV.value:
+            return self.nexo_csv_extractor
+        raise ImportSessionStateError(f"Import session uses non-reviewable strategy {strategy_key!r}.")
+
+    @staticmethod
+    def _validate_proposal_combination(
+        *,
+        import_session_id: int,
+        draft: ImportTransactionDraft,
+    ) -> dict[str, TransactionType | ExpenseCategory | IncomeCategory | TransferCategory | None]:
+        proposed_transaction_type = draft.proposed_transaction_type
+        proposed_expense_category = draft.proposed_expense_category
+        proposed_income_category = draft.proposed_income_category
+        proposed_transfer_category = draft.proposed_transfer_category
+
+        if proposed_transaction_type is None:
+            if any(
+                category is not None
+                for category in (
+                    proposed_expense_category,
+                    proposed_income_category,
+                    proposed_transfer_category,
+                )
+            ):
+                raise ImportSessionStateError(
+                    f"Import session {import_session_id} has invalid proposal combination for draft {draft.id}: "
+                    "a transaction type is required when any category proposal is present."
+                )
+            return {
+                "transaction_type": None,
+                "expense_category": None,
+                "income_category": None,
+                "transfer_category": None,
+            }
+
+        if proposed_transaction_type == TransactionType.EXPENSE:
+            invalid_categories = [
+                name
+                for name, value in (
+                    ("income_category", proposed_income_category),
+                    ("transfer_category", proposed_transfer_category),
+                )
+                if value is not None
+            ]
+        elif proposed_transaction_type == TransactionType.INCOME:
+            invalid_categories = [
+                name
+                for name, value in (
+                    ("expense_category", proposed_expense_category),
+                    ("transfer_category", proposed_transfer_category),
+                )
+                if value is not None
+            ]
+        elif proposed_transaction_type == TransactionType.TRANSFER:
+            invalid_categories = [
+                name
+                for name, value in (
+                    ("expense_category", proposed_expense_category),
+                    ("income_category", proposed_income_category),
+                )
+                if value is not None
+            ]
+        else:
+            raise ImportSessionStateError(
+                f"Import session {import_session_id} has invalid proposal combination for draft {draft.id}: "
+                f"unsupported transaction type {proposed_transaction_type!r}."
+            )
+
+        if invalid_categories:
+            raise ImportSessionStateError(
+                f"Import session {import_session_id} has invalid proposal combination for draft {draft.id}: "
+                f"{proposed_transaction_type.value} cannot carry {', '.join(invalid_categories)}."
+            )
+
+        return {
+            "transaction_type": proposed_transaction_type,
+            "expense_category": proposed_expense_category,
+            "income_category": proposed_income_category,
+            "transfer_category": proposed_transfer_category,
+        }
 
     def _get_session(self, session_id: int) -> ImportSession:
         session = self.db.get(ImportSession, session_id)
