@@ -1,21 +1,5 @@
-import type { AxiosInstance } from 'axios';
+import axios, { AxiosHeaders, type AxiosInstance } from 'axios';
 import { API_BASE_URL } from '../config';
-
-const axiosModule = require('axios') as any;
-
-const axios =
-  (axiosModule?.create
-    ? axiosModule
-    : axiosModule?.default?.create
-      ? axiosModule.default
-      : axiosModule?.default?.default?.create
-        ? axiosModule.default.default
-        : axiosModule) as any;
-
-const AxiosHeaders =
-  axiosModule?.AxiosHeaders ??
-  axiosModule?.default?.AxiosHeaders ??
-  axiosModule?.default?.default?.AxiosHeaders;
 
 export const REPORTING_CURRENCIES = ['EUR', 'USD', 'BRL'] as const;
 export type ReportingCurrency = (typeof REPORTING_CURRENCIES)[number];
@@ -65,7 +49,7 @@ export const apiClient = axios.create({
 export const applyReportingCurrencyHeader = <T extends { headers?: unknown }>(
   config: T
 ): T => {
-  const headers = AxiosHeaders.from(config.headers);
+  const headers = AxiosHeaders.from((config.headers ?? {}) as any);
   headers.set(REPORTING_CURRENCY_HEADER, getReportingCurrency());
   config.headers = headers;
   return config;

@@ -39,6 +39,8 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "test:ci": "node ./scripts/run-tests-ci.js",
+    "check:bundle": "node ./scripts/check-api-client-bundle.js",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
