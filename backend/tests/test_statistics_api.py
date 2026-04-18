@@ -250,3 +250,63 @@ def test_statistics_transfer_summary_endpoint_returns_conversion_summary(db_sess
     assert payload["conversion_summary"]["converted_transaction_count"] == 1
     assert payload["conversion_summary"]["unavailable_transaction_count"] == 1
     assert payload["conversion_summary"]["unavailable_currencies"] == ["NEXO"]
+
+
+def test_expense_type_timeseries_endpoint_returns_wrapper_payload(db_session):
+    response = client.get("/statistics/expense-type/timeseries", headers={"X-Reporting-Currency": "BRL"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reporting_currency"] == "BRL"
+    assert "conversion_summary" in payload
+    assert isinstance(payload["items"], list)
+
+
+def test_by_category_endpoint_returns_reporting_currency_wrapper(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="Groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    db_session.commit()
+
+    response = client.get("/statistics/by-category", headers={"X-Reporting-Currency": "USD"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reporting_currency"] == "USD"
+    groceries = next(item for item in payload["items"] if item["category"] == "Groceries")
+    assert groceries["period_amount"] == 120.0
+
+
+def test_category_averages_endpoint_returns_reporting_currency_wrapper(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="Groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    db_session.commit()
+
+    response = client.get("/statistics/category/averages", headers={"X-Reporting-Currency": "USD"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reporting_currency"] == "USD"
+    assert "conversion_summary" in payload
+    assert payload["categories"][0]["total_amount"] == 120.0

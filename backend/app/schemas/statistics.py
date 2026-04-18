@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 from datetime import date
 from enum import Enum
@@ -39,13 +39,19 @@ class FinancialStatisticsResponse(BaseModel):
     }
 
 # Models for get_category_statistics_timeseries
+class ConversionSummaryResponse(BaseModel):
+    converted_transaction_count: int
+    unavailable_transaction_count: int
+    unavailable_currencies: List[str]
+
+
 class CategoryStatisticsResponse(BaseModel):
-    id: int
+    category: Optional[str] = None
+    category_name: Optional[str] = None
     period: str
-    date: str
+    date: Optional[str] = None
     
     # Category identification
-    category_name: str
     transaction_type: str
     expense_type: Optional[str] = None
     
@@ -56,6 +62,8 @@ class CategoryStatisticsResponse(BaseModel):
     
     # Cumulative metrics
     total_amount: float
+    transaction_count: Optional[int] = None
+    total_amount_cumulative: Optional[float] = None
     total_transaction_count: int
     
     # Averages
@@ -69,6 +77,12 @@ class CategoryStatisticsResponse(BaseModel):
         "from_attributes": True
     }
 
+
+class CategoryStatisticsListResponse(BaseModel):
+    reporting_currency: str
+    conversion_summary: ConversionSummaryResponse
+    items: List[CategoryStatisticsResponse]
+
 # Models for get_expense_type_statistics_timeseries
 class ExpenseTypeTimeseriesItem(BaseModel):
     date: str = Field(..., description="Date in ISO format (YYYY-MM-DD)")
@@ -76,9 +90,38 @@ class ExpenseTypeTimeseriesItem(BaseModel):
     period_amount: float = Field(..., description="Total amount for this expense type in the time period")
     period_transaction_count: int = Field(..., description="Number of transactions for this expense type in the time period")
 
-# Use RootModel for a list response
-class ExpenseTypeTimeseriesResponse(RootModel):
-    root: List[ExpenseTypeTimeseriesItem]
+class ExpenseTypeStatisticsCategoryItem(BaseModel):
+    category: str
+    period_amount: float
+    period_transaction_count: int
+    period_percentage: float
+
+class ExpenseTypeStatisticsItem(BaseModel):
+    expense_type: str
+    period: str
+    date: Optional[str] = None
+    period_amount: float
+    period_transaction_count: int
+    period_percentage: float
+    total_amount: float
+    transaction_count: int
+    total_amount_cumulative: float
+    total_transaction_count: int
+    average_transaction_amount: float
+    yearly_amount: float
+    yearly_transaction_count: int
+    categories: List[ExpenseTypeStatisticsCategoryItem]
+
+class ExpenseTypeStatisticsResponse(BaseModel):
+    reporting_currency: str
+    conversion_summary: ConversionSummaryResponse
+    items: List[ExpenseTypeStatisticsItem]
+
+
+class ExpenseTypeTimeseriesResponse(BaseModel):
+    reporting_currency: str
+    conversion_summary: "ConversionSummaryResponse"
+    items: List[ExpenseTypeTimeseriesItem]
 
 # Models for get_category_averages
 class CategoryAverageItem(BaseModel):
@@ -92,16 +135,12 @@ class CategoryAverageItem(BaseModel):
     percentage: float = Field(..., description="Percentage of total expenses/income")
 
 class CategoryAveragesResponse(BaseModel):
+    reporting_currency: str = Field(..., description="Reporting currency used for category totals")
+    conversion_summary: ConversionSummaryResponse = Field(..., description="Conversion coverage for the returned period")
     start_date: str = Field(..., description="Start date of the period")
     end_date: str = Field(..., description="End date of the period")
     months_count: int = Field(..., description="Number of months in the period")
     categories: List[CategoryAverageItem] = Field(..., description="List of category averages")
-
-
-class ConversionSummaryResponse(BaseModel):
-    converted_transaction_count: int
-    unavailable_transaction_count: int
-    unavailable_currencies: List[str]
 
 
 class StatisticsOverviewItemResponse(BaseModel):
@@ -168,3 +207,9 @@ class FinancialStatisticsTimeseriesResponse(BaseModel):
     reporting_currency: str
     conversion_summary: ConversionSummaryResponse
     items: List[FinancialStatisticsTimeseriesItemResponse]
+
+
+class CategoryTimeseriesResponse(BaseModel):
+    reporting_currency: str
+    conversion_summary: ConversionSummaryResponse
+    items: List[CategoryStatisticsResponse]

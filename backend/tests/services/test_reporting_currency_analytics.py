@@ -2,8 +2,10 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from app.models.fx import FXDailyReferenceRate
+from app.models.statistics import StatisticsPeriod
 from app.models.transaction import (
     ExpenseCategory,
+    ExpenseType,
     IncomeCategory,
     Transaction,
     TransactionType,
@@ -203,3 +205,296 @@ def test_resolve_reporting_window_raises_stable_invalid_date_message(db_session)
         assert False, "expected resolve_reporting_window to raise ValueError"
     except ValueError as exc:
         assert str(exc) == "Invalid date format. Use YYYY-MM-DD"
+
+
+def test_category_breakdown_uses_converted_raw_transactions_instead_of_persisted_eur_rows(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    groceries = _create_transaction(
+        db_session,
+        description="Groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    groceries.currency = "EUR"
+    db_session.commit()
+
+    payload = ReportingCurrencyAnalyticsService(db_session).build_category_breakdown(
+        period=StatisticsPeriod.MONTHLY,
+        target_date=date(2026, 3, 31),
+        reporting_currency="USD",
+    )
+
+    groceries_item = next(item for item in payload["items"] if item["category"] == "Groceries")
+    assert groceries_item["period_amount"] == 120.0
+    assert payload["reporting_currency"] == "USD"
+    assert payload["conversion_summary"] == {
+        "converted_transaction_count": 1,
+        "unavailable_transaction_count": 0,
+        "unavailable_currencies": [],
+    }
+
+
+def test_build_expense_type_breakdown_uses_converted_raw_transactions_and_reports_unavailable_rows(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 2, 28),
+        quoted_currency="USD",
+        units_per_base="1.1000",
+    )
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="March groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    _create_transaction(
+        db_session,
+        description="February groceries",
+        amount=-50.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 2, 28),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    unsupported = _create_transaction(
+        db_session,
+        description="Unsupported restaurant charge",
+        amount=-25.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.EATING_OUT,
+    )
+    unsupported.currency = "NEXO"
+    db_session.commit()
+
+    payload = ReportingCurrencyAnalyticsService(db_session).build_expense_type_breakdown(
+        period=StatisticsPeriod.MONTHLY,
+        target_date=date(2026, 3, 31),
+        reporting_currency="USD",
+    )
+
+    essential = next(item for item in payload["items"] if item["expense_type"] == ExpenseType.FIXED_ESSENTIAL.value)
+    discretionary = next(
+        item for item in payload["items"] if item["expense_type"] == ExpenseType.GUILT_FREE_DISCRETIONARY.value
+    )
+    assert payload["reporting_currency"] == "USD"
+    assert payload["conversion_summary"] == {
+        "converted_transaction_count": 2,
+        "unavailable_transaction_count": 1,
+        "unavailable_currencies": ["NEXO"],
+    }
+    assert essential["period_amount"] == 120.0
+    assert essential["total_amount_cumulative"] == 175.0
+    assert discretionary["period_amount"] == 0.0
+    assert discretionary["period_transaction_count"] == 1
+
+
+def test_build_category_averages_uses_converted_raw_transactions_and_reports_conversion_gaps(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 2, 28),
+        quoted_currency="USD",
+        units_per_base="1.1000",
+    )
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="February groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 2, 28),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    _create_transaction(
+        db_session,
+        description="March groceries",
+        amount=-50.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    unsupported = _create_transaction(
+        db_session,
+        description="Unsupported groceries fee",
+        amount=-25.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    unsupported.currency = "NEXO"
+    db_session.commit()
+
+    payload = ReportingCurrencyAnalyticsService(db_session).build_category_averages(
+        start=date(2026, 2, 1),
+        end=date(2026, 3, 31),
+        reporting_currency="USD",
+        transaction_type=TransactionType.EXPENSE,
+    )
+
+    groceries = next(item for item in payload["categories"] if item["category_name"] == "Groceries")
+    assert payload["reporting_currency"] == "USD"
+    assert payload["months_count"] == 2
+    assert payload["conversion_summary"] == {
+        "converted_transaction_count": 2,
+        "unavailable_transaction_count": 1,
+        "unavailable_currencies": ["NEXO"],
+    }
+    assert groceries["total_amount"] == 170.0
+    assert groceries["average_amount"] == 85.0
+    assert groceries["transaction_count"] == 3
+    assert groceries["average_transaction_amount"] == 85.0
+
+
+def test_build_category_timeseries_uses_converted_raw_transactions_for_period_and_cumulative_metrics(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 2, 28),
+        quoted_currency="USD",
+        units_per_base="1.1000",
+    )
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="February groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 2, 28),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    _create_transaction(
+        db_session,
+        description="March groceries",
+        amount=-50.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    unsupported = _create_transaction(
+        db_session,
+        description="Unsupported groceries fee",
+        amount=-25.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    unsupported.currency = "NEXO"
+    db_session.commit()
+
+    payload = ReportingCurrencyAnalyticsService(db_session).build_category_timeseries(
+        start=date(2026, 3, 1),
+        end=date(2026, 3, 31),
+        reporting_currency="USD",
+        transaction_type=TransactionType.EXPENSE,
+        category_name="Groceries",
+    )
+
+    assert payload["reporting_currency"] == "USD"
+    assert payload["conversion_summary"] == {
+        "converted_transaction_count": 2,
+        "unavailable_transaction_count": 1,
+        "unavailable_currencies": ["NEXO"],
+    }
+    assert payload["items"] == [
+        {
+            "category": "Groceries",
+            "period": "monthly",
+            "date": "2026-03-31",
+            "category_name": "Groceries",
+            "transaction_type": "Expense",
+            "expense_type": "Fixed Essential",
+            "period_amount": 60.0,
+            "period_transaction_count": 2,
+            "period_percentage": 100.0,
+            "total_amount": 60.0,
+            "transaction_count": 2,
+            "total_amount_cumulative": 170.0,
+            "total_transaction_count": 3,
+            "average_transaction_amount": 60.0,
+            "yearly_amount": 170.0,
+            "yearly_transaction_count": 3,
+        }
+    ]
+
+
+def test_build_expense_type_timeseries_uses_converted_raw_transactions(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 2, 28),
+        quoted_currency="USD",
+        units_per_base="1.1000",
+    )
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="Groceries",
+        amount=-100.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 2, 28),
+        expense_category=ExpenseCategory.GROCERIES,
+    )
+    _create_transaction(
+        db_session,
+        description="Restaurant",
+        amount=-50.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.EATING_OUT,
+    )
+    unsupported = _create_transaction(
+        db_session,
+        description="Unsupported shopping",
+        amount=-25.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 31),
+        expense_category=ExpenseCategory.SHOPPING,
+    )
+    unsupported.currency = "NEXO"
+    db_session.commit()
+
+    payload = ReportingCurrencyAnalyticsService(db_session).build_expense_type_timeseries(
+        start=date(2026, 2, 1),
+        end=date(2026, 3, 31),
+        reporting_currency="USD",
+    )
+
+    items = {
+        (item["date"], item["expense_type"]): item
+        for item in payload["items"]
+    }
+    assert payload["reporting_currency"] == "USD"
+    assert payload["conversion_summary"] == {
+        "converted_transaction_count": 2,
+        "unavailable_transaction_count": 1,
+        "unavailable_currencies": ["NEXO"],
+    }
+    assert items[("2026-02-28", ExpenseType.FIXED_ESSENTIAL.value)]["period_amount"] == 110.0
+    assert items[("2026-03-31", ExpenseType.GUILT_FREE_DISCRETIONARY.value)]["period_amount"] == 60.0
+    assert items[("2026-03-31", ExpenseType.GUILT_FREE_DISCRETIONARY.value)]["period_transaction_count"] == 2

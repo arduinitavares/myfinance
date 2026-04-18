@@ -446,7 +446,7 @@ def test_category_statistics_ignore_transfer_rows():
         assert response.status_code == 200
 
         payload = response.json()
-        categories = {item["category"] for item in payload}
+        categories = {item["category"] for item in payload["items"]}
 
         assert "Internal Transfer" not in categories
         assert categories == {"Salary", "Groceries"}
