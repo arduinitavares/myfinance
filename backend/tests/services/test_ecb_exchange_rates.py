@@ -1,13 +1,86 @@
+import asyncio
+import importlib
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from contextlib import contextmanager
+import sys
+import types
 
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction, TransactionType
 from app.services.ecb_exchange_rates import ECBExchangeRateService
 from app.services.ecb_exchange_rates import FXRefreshResult
 from app.services.fx_refresh_scheduler import build_fx_refresh_scheduler
+
+
+def _import_main_with_dependency_stubs(monkeypatch):
+    class FakeSentenceTransformer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def encode(self, *args, **kwargs):
+            return [0.0]
+
+    class FakeQdrantClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def recreate_collection(self, *args, **kwargs):
+            return None
+
+        def upsert(self, *args, **kwargs):
+            return None
+
+        def get_collection(self, *args, **kwargs):
+            return SimpleNamespace(points_count=0)
+
+        def search_points(self, *args, **kwargs):
+            return []
+
+    class FakeVectorParams:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class FakePointStruct:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    sentence_transformers_module = types.ModuleType("sentence_transformers")
+    sentence_transformers_module.SentenceTransformer = FakeSentenceTransformer
+
+    pandas_module = types.ModuleType("pandas")
+    pandas_module.DataFrame = object
+    pandas_module.notna = lambda value: value is not None
+
+    qdrant_module = types.ModuleType("qdrant_client")
+    qdrant_module.QdrantClient = FakeQdrantClient
+
+    qdrant_http_module = types.ModuleType("qdrant_client.http")
+    qdrant_http_models_module = types.ModuleType("qdrant_client.http.models")
+    qdrant_http_models_module.VectorParams = FakeVectorParams
+    qdrant_http_models_module.PointStruct = FakePointStruct
+    qdrant_http_models_module.Distance = SimpleNamespace(COSINE="cosine")
+    qdrant_http_module.models = qdrant_http_models_module
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", sentence_transformers_module)
+    monkeypatch.setitem(sys.modules, "pandas", pandas_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client", qdrant_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.http", qdrant_http_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.http.models", qdrant_http_models_module)
+
+    for module_name in (
+        "app.main",
+        "app.routers.transactions",
+        "app.routers.suggestions",
+        "app.services.csv_import_service",
+        "app.services.csv_parser",
+        "app.services.classification_commit_service",
+        "app.services.category_suggestion_service",
+    ):
+        sys.modules.pop(module_name, None)
+
+    return importlib.import_module("app.main")
 
 
 def _stored_rates(db_session):
@@ -365,7 +438,7 @@ def test_build_fx_refresh_scheduler_registers_daily_utc_job():
 
 
 def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empty(monkeypatch):
-    import app.main as main_module
+    main_module = _import_main_with_dependency_stubs(monkeypatch)
 
     calls = []
 
@@ -432,7 +505,7 @@ def test_startup_refresh_seeds_history_before_recent_catch_up_when_fx_table_empt
 
 
 def test_startup_refresh_skips_when_fx_lock_is_busy(monkeypatch):
-    import app.main as main_module
+    main_module = _import_main_with_dependency_stubs(monkeypatch)
 
     calls = []
 
@@ -459,3 +532,47 @@ def test_startup_refresh_skips_when_fx_lock_is_busy(monkeypatch):
     main_module._run_startup_fx_refresh()
 
     assert calls == []
+
+
+def test_lifespan_starts_startup_refresh_in_background(monkeypatch):
+    main_module = _import_main_with_dependency_stubs(monkeypatch)
+
+    calls = []
+
+    def fake_startup_refresh():
+        calls.append("refresh_ran_inline")
+
+    class FakeThread:
+        def __init__(self, *, target, name=None, daemon=None):
+            calls.append(("thread_init", target, name, daemon))
+
+        def start(self):
+            calls.append("thread_start")
+
+    class FakeScheduler:
+        def __init__(self):
+            self.running = False
+
+        def start(self):
+            self.running = True
+            calls.append("scheduler_start")
+
+        def shutdown(self, wait=False):
+            self.running = False
+            calls.append(("scheduler_shutdown", wait))
+
+    monkeypatch.setattr(main_module, "_run_startup_fx_refresh", fake_startup_refresh)
+    monkeypatch.setattr(main_module.threading, "Thread", FakeThread)
+    monkeypatch.setattr(main_module, "build_fx_refresh_scheduler", lambda *args, **kwargs: FakeScheduler())
+
+    async def exercise_lifespan():
+        async with main_module.lifespan(main_module.app):
+            assert "refresh_ran_inline" not in calls
+            assert "thread_start" in calls
+
+    asyncio.run(exercise_lifespan())
+
+    assert calls[0][0] == "thread_init"
+    assert calls[0][1] is fake_startup_refresh
+    assert calls[0][2] == "fx-startup-refresh"
+    assert calls[0][3] is True

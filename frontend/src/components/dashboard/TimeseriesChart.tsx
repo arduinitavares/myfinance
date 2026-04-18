@@ -14,8 +14,7 @@ import {
 import { format, parseISO } from 'date-fns';
 import * as Tabs from '@radix-ui/react-tabs';
 import { TimePeriod } from '../../types/transaction';
-import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
-import { formatMoney } from '../../utils/currency';
+import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
 
 interface TimeseriesData {
     date: string;
@@ -36,7 +35,6 @@ interface TimeseriesChartProps {
 }
 
 export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, setPeriod, PERIODS }) => {
-    const { reportingCurrency } = useReportingCurrency();
     const [activeMetric, setActiveMetric] = useState('income_expenses');
     const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({});
 
@@ -112,7 +110,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
         if (metric === 'savings_rate') {
         return `${Number(value).toFixed(1)}%`;
         }
-        return formatMoney(value, reportingCurrency, {
+        return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
             notation: 'compact'
         });
     };
@@ -179,7 +177,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
                                     if (activeMetric === 'savings_rate') {
                                         return `${value}%`;
                                     }
-                                    return formatMoney(value, reportingCurrency, {
+                                    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
                                         notation: 'compact'
                                     });
                                 }}

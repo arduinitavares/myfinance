@@ -51,10 +51,17 @@ class StatisticsService:
         expense_total = Decimal("0")
         income_count = 0
         expense_count = 0
+        converted_income_count = 0
+        converted_expense_count = 0
 
         for trans in transactions:
             if trans.transaction_type not in (TransactionType.INCOME, TransactionType.EXPENSE):
                 continue
+
+            if trans.transaction_type == TransactionType.INCOME:
+                income_count += 1
+            elif trans.transaction_type == TransactionType.EXPENSE:
+                expense_count += 1
 
             display_money = conversion_service.convert(
                 raw_amount=trans.amount,
@@ -68,10 +75,10 @@ class StatisticsService:
             display_amount = cls._to_decimal(display_money.display_amount)
             if trans.transaction_type == TransactionType.INCOME:
                 income_total += display_amount
-                income_count += 1
+                converted_income_count += 1
             elif trans.transaction_type == TransactionType.EXPENSE:
                 expense_total += abs(display_amount)
-                expense_count += 1
+                converted_expense_count += 1
 
         period_net_savings = income_total - expense_total
         savings_rate = float(period_net_savings / income_total * 100) if income_total > 0 else 0.0
@@ -83,8 +90,8 @@ class StatisticsService:
             "savings_rate": savings_rate,
             "income_count": income_count,
             "expense_count": expense_count,
-            "average_income": cls._quantized_float(income_total / income_count) if income_count > 0 else 0.0,
-            "average_expense": cls._quantized_float(expense_total / expense_count) if expense_count > 0 else 0.0,
+            "average_income": cls._quantized_float(income_total / converted_income_count) if converted_income_count > 0 else 0.0,
+            "average_expense": cls._quantized_float(expense_total / converted_expense_count) if converted_expense_count > 0 else 0.0,
         }
 
     @staticmethod
@@ -486,16 +493,6 @@ class StatisticsService:
         conversion_service = CurrencyConversionService(db)
         summary = {}
         for transfer_category, amount, raw_currency, transaction_date in transfers:
-            display_money = conversion_service.convert(
-                raw_amount=amount,
-                raw_currency=raw_currency,
-                reporting_currency=reporting_currency,
-                transaction_date=transaction_date,
-            )
-            if not display_money.is_available or display_money.display_amount is None:
-                continue
-
-            display_amount = StatisticsService._to_decimal(display_money.display_amount)
             category_name = (
                 transfer_category.value
                 if transfer_category is not None
@@ -511,6 +508,17 @@ class StatisticsService:
                 }
 
             summary[category_name]["transaction_count"] += 1
+
+            display_money = conversion_service.convert(
+                raw_amount=amount,
+                raw_currency=raw_currency,
+                reporting_currency=reporting_currency,
+                transaction_date=transaction_date,
+            )
+            if not display_money.is_available or display_money.display_amount is None:
+                continue
+
+            display_amount = StatisticsService._to_decimal(display_money.display_amount)
             if display_amount < 0:
                 summary[category_name]["total_outgoing"] += abs(display_amount)
             else:

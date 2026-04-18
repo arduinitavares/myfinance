@@ -8,6 +8,7 @@ except ImportError:  # pragma: no cover
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import threading
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,11 +92,21 @@ def _run_scheduled_fx_refresh() -> None:
     _run_fx_refresh(reason="scheduled", allow_historical_seed=False)
 
 
+def _start_background_fx_refresh() -> threading.Thread:
+    thread = threading.Thread(
+        target=_run_startup_fx_refresh,
+        name="fx-startup-refresh",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global fx_scheduler
 
-    _run_startup_fx_refresh()
+    _start_background_fx_refresh()
     fx_scheduler = build_fx_refresh_scheduler(
         _run_scheduled_fx_refresh,
         hour=settings.fx_refresh_hour_utc,

@@ -16,8 +16,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { ChartArea, ChartColumnStacked } from 'lucide-react';
-import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
-import { formatMoney } from '../../utils/currency';
+import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
 
 const PERIODS = [
   { label: '3M', value: TimePeriod.THREE_MONTHS },
@@ -37,7 +36,6 @@ export const CategoryTimeseriesChart: React.FC<CategoryTimeseriesChartProps> = (
   title = "Category Trends Over Time",
   defaultTransactionType = TransactionType.EXPENSE
 }) => {
-  const { reportingCurrency } = useReportingCurrency();
   const [period, setPeriod] = useState<TimePeriod>(TimePeriod.ONE_YEAR);
   const [transactionType, setTransactionType] = useState<TransactionType>(defaultTransactionType);
   const [chartType, setChartType] = useState<'area' | 'bar'>('area');
@@ -174,7 +172,7 @@ export const CategoryTimeseriesChart: React.FC<CategoryTimeseriesChartProps> = (
       return `${value.toFixed(1)}%`;
     } else {
       // Format as currency for bar chart
-      return formatMoney(value, reportingCurrency, {
+      return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
         notation: 'compact'
       });
     }

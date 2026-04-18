@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { statisticService } from '../../services/statisticService';
 import { Loading } from '../common/Loading';
-import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
-import { formatMoney } from '../../utils/currency';
+import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
 
 interface MonthlyStatistics {
   period: 'monthly' | 'all_time';
@@ -37,7 +36,6 @@ interface YearData {
 }
 
 export const MonthlyHeatmap: React.FC = () => {
-  const { reportingCurrency } = useReportingCurrency();
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [yearData, setYearData] = useState<Record<string, YearData>>({});
@@ -94,7 +92,7 @@ export const MonthlyHeatmap: React.FC = () => {
     };
     
     fetchData();
-  }, [reportingCurrency]);
+  }, []);
   
   const getIntensityClass = (monthData: MonthData | undefined) => {
     if (!monthData) return 'bg-gray-100 dark:bg-gray-800';
@@ -123,7 +121,7 @@ export const MonthlyHeatmap: React.FC = () => {
   };
   
   const formatCurrency = (value: number) => {
-    return formatMoney(value, reportingCurrency);
+    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY);
   };
   
   if (loading) return (<Loading variant="progress" size="medium" />);

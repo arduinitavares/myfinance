@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { statisticService } from '../services/statisticService';
 import { CategoryStatistics, TransactionType } from '../types/transaction';
-import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 type StatisticsPeriod = 'monthly' | 'yearly' | 'all_time';
 
 export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly', initialDate?: string) => {
-  const { reportingCurrency } = useReportingCurrency();
   const [categoryStats, setCategoryStats] = useState<CategoryStatistics[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +33,7 @@ export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly
 
   useEffect(() => {
     void fetchCategoryStatistics(period, date);
-  }, [date, fetchCategoryStatistics, period, reportingCurrency]);
+  }, [date, fetchCategoryStatistics, period]);
 
   // Helper functions to extract and process the data
   const getExpenseCategories = () => {

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { statisticService } from '../services/statisticService';
-import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 // Define the expense type statistics interface
 export interface ExpenseTypeStatistics {
@@ -28,7 +27,6 @@ export interface ExpenseTypeStatistics {
 type StatisticsPeriod = 'monthly' | 'yearly' | 'all_time';
 
 export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'monthly', initialDate?: string) => {
-  const { reportingCurrency } = useReportingCurrency();
   const [expenseTypeStats, setExpenseTypeStats] = useState<ExpenseTypeStatistics[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +55,7 @@ export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'mont
 
   useEffect(() => {
     void fetchExpenseTypeStatistics(period, date);
-  }, [date, fetchExpenseTypeStatistics, period, reportingCurrency]);
+  }, [date, fetchExpenseTypeStatistics, period]);
 
   // Helper functions to extract and process the data
   const getEssentialExpenses = () => {

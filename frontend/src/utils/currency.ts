@@ -14,6 +14,9 @@ export interface ResolvedDisplayMoney {
   secondaryText?: string;
 }
 
+// Persisted dashboard aggregates are stored in EUR until those endpoints become reporting-currency aware.
+export const PERSISTED_STATISTICS_CURRENCY = 'EUR';
+
 export const formatMoney = (
   amount: number,
   currency: string,
