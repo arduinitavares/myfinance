@@ -3,6 +3,94 @@ from app.imports.detection import ImportDetector
 from app.config import settings
 
 
+def test_detector_flags_belfius_csv_with_metadata_preface():
+    sample = (
+        "Boekingsdatum vanaf;01/02/2026\n"
+        "Boekingsdatum tot en met;13/04/2026\n"
+        "Bedrag vanaf;\n"
+        "Bedrag tot en met;\n"
+        "Rekeninguittrekselnummer vanaf;\n"
+        "Rekeninguittrekselnummer tot en met;\n"
+        "Mededeling;\n"
+        "Naam tegenpartij bevat;\n"
+        "Rekening tegenpartij;\n"
+        "Laatste saldo;-140,40 EUR\n"
+        "Datum/uur van het laatste saldo;11/04/2026 13:14:53\n"
+        ";\n"
+        "Rekening;Boekingsdatum;Rekeninguittrekselnummer;Transactienummer;Rekening tegenpartij;"
+        "Naam tegenpartij bevat;Straat en nummer;Postcode en plaats;Transactie;Valutadatum;Bedrag;"
+        "Devies;BIC;Landcode;Mededelingen\n"
+    ).encode("utf-8")
+
+    result = ImportDetector().detect(
+        filename="belfius.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+
+    assert result.strategy_key == ImportStrategyKey.BELFIUS_CSV
+    assert result.charset_hint == "utf-8"
+
+
+def test_detector_does_not_scan_belfius_header_past_first_twenty_lines():
+    lines = [f"metadata-{idx};value" for idx in range(20)]
+    lines.append(
+        "Rekening;Boekingsdatum;Rekeninguittrekselnummer;Transactienummer;Rekening tegenpartij;"
+        "Naam tegenpartij bevat;Straat en nummer;Postcode en plaats;Transactie;Valutadatum;Bedrag;"
+        "Devies;BIC;Landcode;Mededelingen"
+    )
+    sample = ("\n".join(lines) + "\n").encode("utf-8")
+
+    result = ImportDetector().detect(
+        filename="late-belfius.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+
+    assert result.strategy_key == ImportStrategyKey.UNKNOWN
+
+
+def test_detector_flags_beobank_compact_csv():
+    sample = "Datum;Waardedatum;Debet;Krediet;Omschrijving;Saldo\n".encode("latin-1")
+
+    result = ImportDetector().detect(
+        filename="50212984548.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+
+    assert result.strategy_key == ImportStrategyKey.BEOBANK_CSV
+    assert result.charset_hint == "utf-8"
+
+
+def test_detector_flags_beobank_debit_credit_csv():
+    sample = "Date;Debit;Credit;Message;Balance\n".encode("utf-8")
+
+    result = ImportDetector().detect(
+        filename="beobank.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+
+    assert result.strategy_key == ImportStrategyKey.BEOBANK_CSV
+
+
+def test_detector_flags_nexo_csv_on_exact_header_match():
+    sample = (
+        "Transaction,Type,Input Currency,Input Amount,Output Currency,Output Amount,USD Equivalent,"
+        "Fee,Fee Currency,Details,Date / Time (UTC),normalizedDisplayDetails\n"
+    ).encode("utf-8")
+
+    result = ImportDetector().detect(
+        filename="nexo.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+
+    assert result.strategy_key == ImportStrategyKey.NEXO_CSV
+    assert result.charset_hint == "utf-8"
+
+
 def test_detector_does_not_route_mislabeled_non_pdf_payload_as_pdf_statement():
     result = ImportDetector().detect(
         filename="statement.pdf",
