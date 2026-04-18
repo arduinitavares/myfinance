@@ -6,7 +6,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
-from .csv_support import NEXO_HEADER, build_csv_raw_evidence, build_dict_rows, find_header_row, read_csv_text
+from .csv_support import (
+    NEXO_HEADER,
+    build_csv_raw_evidence,
+    build_dict_rows,
+    find_header_row,
+    read_csv_text,
+    statement_period_from_transactions,
+)
 
 NEXO_SKIP_TYPES = {
     "Cashback",
@@ -186,9 +193,11 @@ class NexoCsvExtractor:
             extractor_id=self.extractor_id,
             raw_artifact_ref=raw_artifact_ref,
             source_metadata={"provider_hint": "nexo", "file_type": "csv", "encoding": encoding},
-            statement_metadata={"account_number_hint": "NEXO"},
+            statement_metadata={
+                **statement_period_from_transactions(transactions),
+                "account_number_hint": "NEXO",
+            },
             transactions=transactions,
             issues=issues,
             overall_confidence=0.0 if any(issue.blocking for issue in issues) else 1.0,
         )
-

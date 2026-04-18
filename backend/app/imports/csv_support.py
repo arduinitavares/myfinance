@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from .contracts import RawEvidence
+from .contracts import ExtractedTransaction, RawEvidence
 
 CSV_CHARSETS = ("utf-8-sig", "utf-8", "latin-1")
 HEADER_SCAN_LIMIT = 20
@@ -131,3 +131,12 @@ def build_csv_raw_evidence(
         snippets=list(snippets),
     )
 
+
+def statement_period_from_transactions(
+    transactions: Sequence[ExtractedTransaction],
+) -> dict[str, str | None]:
+    dates = [transaction.transaction_date for transaction in transactions]
+    return {
+        "statement_period_start": min(dates) if dates else None,
+        "statement_period_end": max(dates) if dates else None,
+    }

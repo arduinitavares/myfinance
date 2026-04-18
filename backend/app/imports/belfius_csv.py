@@ -5,7 +5,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
-from .csv_support import BELFIUS_HEADER, build_csv_raw_evidence, build_dict_rows, find_header_row, read_csv_text
+from .csv_support import (
+    BELFIUS_HEADER,
+    build_csv_raw_evidence,
+    build_dict_rows,
+    find_header_row,
+    read_csv_text,
+    statement_period_from_transactions,
+)
 
 
 def _to_iso_date(value: str) -> str:
@@ -77,6 +84,7 @@ class BelfiusCsvExtractor:
 
         evidence = build_csv_raw_evidence(raw_text=raw_text, snippets=snippets)
         statement_metadata = {
+            **statement_period_from_transactions(transactions),
             "account_number_hint": next(
                 (row.get("Rekening") for _, row in rows if row.get("Rekening")),
                 None,
@@ -102,4 +110,3 @@ class BelfiusCsvExtractor:
             issues=issues,
             overall_confidence=0.0 if issues else 1.0,
         )
-

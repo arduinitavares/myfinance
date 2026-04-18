@@ -12,6 +12,7 @@ from .csv_support import (
     build_dict_rows,
     find_header_row,
     read_csv_text,
+    statement_period_from_transactions,
 )
 
 
@@ -130,6 +131,7 @@ class BeobankCsvExtractor:
 
         evidence = build_csv_raw_evidence(raw_text=raw_text, snippets=snippets)
         statement_metadata = {
+            **statement_period_from_transactions(transactions),
             "account_number_hint": _infer_numeric_filename_stem(file_path) if format_name == "compact" else "",
             "currency": "EUR",
         }
@@ -157,4 +159,3 @@ class BeobankCsvExtractor:
             issues=issues,
             overall_confidence=0.0 if issues else 1.0,
         )
-

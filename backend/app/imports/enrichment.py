@@ -62,14 +62,22 @@ def find_matching_recurrence_pattern(
 
 
 def _apply_recurrence_pattern(draft: ImportTransactionDraft, pattern: RecurrencePattern) -> None:
-    if draft.proposed_transaction_type is None:
-        draft.proposed_transaction_type = pattern.transaction_type.value
+    pattern_type = pattern.transaction_type
 
-    if pattern.transaction_type == TransactionType.EXPENSE and draft.proposed_expense_category is None:
+    if draft.proposed_transaction_type != pattern_type.value:
+        draft.proposed_transaction_type = pattern_type.value
+        if pattern_type != TransactionType.EXPENSE:
+            draft.proposed_expense_category = None
+        if pattern_type != TransactionType.INCOME:
+            draft.proposed_income_category = None
+        if pattern_type != TransactionType.TRANSFER:
+            draft.proposed_transfer_category = None
+
+    if pattern_type == TransactionType.EXPENSE and draft.proposed_expense_category is None:
         draft.proposed_expense_category = pattern.category
-    elif pattern.transaction_type == TransactionType.INCOME and draft.proposed_income_category is None:
+    elif pattern_type == TransactionType.INCOME and draft.proposed_income_category is None:
         draft.proposed_income_category = pattern.category
-    elif pattern.transaction_type == TransactionType.TRANSFER and draft.proposed_transfer_category is None:
+    elif pattern_type == TransactionType.TRANSFER and draft.proposed_transfer_category is None:
         draft.proposed_transfer_category = pattern.category
 
     if draft.classification_source is None:
@@ -123,4 +131,3 @@ def enrich_draft_proposals(
     if recurrence_pattern is not None:
         _apply_recurrence_pattern(draft, recurrence_pattern)
     _apply_upload_suggestions(draft)
-

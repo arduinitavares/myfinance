@@ -171,6 +171,9 @@ export const ImportReviewPage: React.FC = () => {
     };
   };
 
+  const statementIdentifier = review.statement?.card_number_hint ?? review.statement?.account_number_hint ?? null;
+  const statementIdentifierLabel = review.statement?.card_number_hint ? 'Card' : 'Account';
+
   return (
     <div className="space-y-8 pb-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -260,8 +263,8 @@ export const ImportReviewPage: React.FC = () => {
               </dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-500 dark:text-gray-400">Card</dt>
-              <dd>{review.statement.card_number_hint ?? 'Unknown'}</dd>
+              <dt className="font-medium text-gray-500 dark:text-gray-400">{statementIdentifierLabel}</dt>
+              <dd>{statementIdentifier ?? 'Unknown'}</dd>
             </div>
             <div>
               <dt className="font-medium text-gray-500 dark:text-gray-400">Currency</dt>

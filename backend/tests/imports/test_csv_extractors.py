@@ -40,6 +40,8 @@ def test_belfius_csv_extractor_parses_rows_after_metadata_prefix(tmp_path):
 
     assert result.extractor_id == "belfius_csv_v1"
     assert result.statement_metadata["account_number_hint"] == "BE46 0636 5194 6836"
+    assert result.statement_metadata["statement_period_start"] == "2026-04-10"
+    assert result.statement_metadata["statement_period_end"] == "2026-04-10"
     assert len(result.transactions) == 1
     assert result.transactions[0].transaction_date == "2026-04-10"
     assert result.transactions[0].signed_amount == -3.59
@@ -68,6 +70,8 @@ def test_beobank_csv_extractor_uses_numeric_filename_for_compact_export(tmp_path
 
     assert result.extractor_id == "beobank_csv_v1"
     assert result.statement_metadata["account_number_hint"] == "50212984548"
+    assert result.statement_metadata["statement_period_start"] == "2026-01-03"
+    assert result.statement_metadata["statement_period_end"] == "2026-01-03"
     assert len(result.transactions) == 1
     assert result.transactions[0].transaction_date == "2026-01-03"
     assert result.transactions[0].signed_amount == -10.0
@@ -91,6 +95,8 @@ def test_beobank_csv_extractor_keeps_empty_account_hint_for_debit_credit_export(
     _, result = BeobankCsvExtractor().extract(file_path=file_path, session_id="23", attempt_number=1)
 
     assert result.statement_metadata["account_number_hint"] == ""
+    assert result.statement_metadata["statement_period_start"] == "2026-01-03"
+    assert result.statement_metadata["statement_period_end"] == "2026-01-04"
     assert [transaction.proposed_transaction_type for transaction in result.transactions] == [
         "Expense",
         "Income",
@@ -115,6 +121,8 @@ def test_nexo_csv_extractor_preserves_raw_currency_and_deterministic_proposals(t
     evidence, result = NexoCsvExtractor().extract(file_path=file_path, session_id="42", attempt_number=3)
 
     assert result.statement_metadata["account_number_hint"] == "NEXO"
+    assert result.statement_metadata["statement_period_start"] == "2026-03-08"
+    assert result.statement_metadata["statement_period_end"] == "2026-03-26"
     assert [transaction.currency for transaction in result.transactions] == ["xUSD", "xUSD", "USDC"]
     assert [transaction.proposed_transaction_type for transaction in result.transactions] == [
         "Expense",
@@ -153,4 +161,3 @@ def test_nexo_csv_extractor_skips_rejected_and_internal_rows_and_warns_on_ambigu
     assert decisions["NXT_REJECTED_1"] == "skipped"
     assert decisions["NXT_INTERNAL_1"] == "skipped"
     assert decisions["NXT_CASHBACK_1"] == "skipped"
-

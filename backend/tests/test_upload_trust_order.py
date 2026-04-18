@@ -405,6 +405,50 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
     assert stored_pattern.active is True
 
 
+def test_transfer_recurrence_pattern_overrides_seeded_sign_based_type_for_reviewed_csv_upload(monkeypatch):
+    _reset_rate_limiter()
+    _reset_database()
+    _clear_vector_collections()
+
+    seed = _restore_transaction(
+        description="BANK TRANSFER to savings",
+        tx_date="2026-04-10",
+        transaction_type="Transfer",
+    )
+    accepted = _accept_session(
+        seed["id"],
+        transaction_type="Transfer",
+        category="Internal Transfer",
+        recurrence={"is_recurrent": True, "frequency": "monthly"},
+    )
+    pattern_id = accepted["recurrence_pattern_id"]
+
+    def _unexpected_suggester(*args, **kwargs):
+        raise AssertionError("upload suggester should not run when a transfer recurrence pattern matches")
+
+    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", _unexpected_suggester)
+
+    review_session = _upload_csv_for_review(
+        filename="BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
+        payload=_make_minimal_belfius_export_csv(
+            booking_date="11/05/2026",
+            description="BANK TRANSFER to savings",
+        ),
+    )
+    assert review_session["status"] == "awaiting_review"
+
+    approve_response = client.post(f"/imports/{review_session['id']}/approve")
+    assert approve_response.status_code == 200
+
+    imported_transaction = _latest_transaction()
+    assert imported_transaction is not None
+    assert imported_transaction.transaction_type.value == "Transfer"
+    assert imported_transaction.transfer_category.value == "Internal Transfer"
+    assert imported_transaction.expense_category is None
+    assert imported_transaction.classification_source == "recurrence_pattern"
+    assert imported_transaction.recurrence_pattern_id == pattern_id
+
+
 def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_missing(monkeypatch):
     _reset_rate_limiter()
     _reset_database()

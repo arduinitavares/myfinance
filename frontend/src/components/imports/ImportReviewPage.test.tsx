@@ -159,6 +159,24 @@ const proposalPayload = {
   ],
 };
 
+const csvStatementPayload = {
+  ...firstPayload,
+  session: {
+    ...firstPayload.session,
+    file_name: 'nexo.csv',
+    mime_type: 'text/csv',
+    strategy_key: 'nexo_csv',
+    provider_hint: 'nexo',
+    extractor_id: 'nexo_csv_v1',
+  },
+  statement: {
+    ...firstPayload.statement,
+    account_number_hint: 'NEXO',
+    card_number_hint: null,
+    currency: null,
+  },
+};
+
 const secondPayload = {
   ...firstPayload,
   session: {
@@ -257,6 +275,16 @@ describe('ImportReviewPage', () => {
 
     expect(await screen.findByText('Expense • Groceries')).toBeInTheDocument();
     expect(screen.getByText('recurrence_pattern • Pattern 17')).toBeInTheDocument();
+  });
+
+  test('shows account hints for csv review sessions when no card hint exists', async () => {
+    mockedImportService.getReview.mockResolvedValue(csvStatementPayload as never);
+
+    renderImportReviewPage();
+
+    expect(await screen.findByText('Account')).toBeInTheDocument();
+    expect(screen.getByText('NEXO')).toBeInTheDocument();
+    expect(screen.queryByText('Card')).not.toBeInTheDocument();
   });
 
   test('approve calls the service and navigates to transactions', async () => {
