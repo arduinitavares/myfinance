@@ -92,15 +92,15 @@ const batchPayload = {
     {
       id: 4,
       filename: 'delta.csv',
-      file_hash: null,
+      file_hash: 'ddd',
       status: 'processed',
-      message: 'Imported 12 new transactions from CSV; skipped 3 duplicate rows.',
-      session_id: null,
-      session_status: null,
+      message: null,
+      session_id: 102,
+      session_status: 'awaiting_review',
       existing_session_id: null,
       existing_session_status: null,
-      strategy_key: null,
-      extractor_id: null,
+      strategy_key: 'beobank_csv',
+      extractor_id: 'beobank_csv_v1',
       started_at: '2026-04-12T17:10:26Z',
       completed_at: '2026-04-12T17:10:26Z',
     },
@@ -130,7 +130,7 @@ describe('ImportBatchResultsPage', () => {
     expect(screen.getByText('beta.pdf')).toBeInTheDocument();
     expect(screen.getByText('gamma.pdf')).toBeInTheDocument();
     expect(screen.getByText('delta.csv')).toBeInTheDocument();
-    expect(screen.getByText('Imported 12 new transactions from CSV; skipped 3 duplicate rows.')).toBeInTheDocument();
+    expect(screen.getAllByText('Draft extracted. Review and approve to import these transactions.').length).toBe(2);
     expect(
       screen.getByText(/some files are still drafts and will not appear in transactions until you review and approve them/i)
     ).toBeInTheDocument();
@@ -140,7 +140,8 @@ describe('ImportBatchResultsPage', () => {
   test('offers row actions for new sessions, existing sessions, and failed sessions', async () => {
     render(<ImportBatchResultsPage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /review & approve/i }));
+    const reviewButtons = await screen.findAllByRole('button', { name: /review & approve/i });
+    fireEvent.click(reviewButtons[0]);
     expect(mockNavigate).toHaveBeenCalledWith('/imports/101/review');
 
     fireEvent.click(screen.getByRole('button', { name: /continue review/i }));
@@ -149,6 +150,7 @@ describe('ImportBatchResultsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^open$/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/imports/77/review');
 
-    expect(screen.queryByRole('button', { name: /delta\.csv/i })).not.toBeInTheDocument();
+    fireEvent.click(reviewButtons[1]);
+    expect(mockNavigate).toHaveBeenCalledWith('/imports/102/review');
   });
 });

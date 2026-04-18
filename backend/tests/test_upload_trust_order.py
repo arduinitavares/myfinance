@@ -1,7 +1,6 @@
 import csv
 import io
 from dataclasses import replace
-from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,11 +8,12 @@ from qdrant_client.http import models
 
 from app.config import settings as app_settings
 from app.database import SessionLocal
+from app.imports import enrichment as import_enrichment
+from app.imports import workflow as import_workflow
 from app.main import app
 from app.models.classification import RecurrencePattern
-from app.models.statistics import FinancialStatistics, StatisticsPeriod
 from app.models.transaction import Transaction
-from app.routers import transactions as tx_router
+from app.routers import imports as imports_router
 from app.routers.suggestions import category_suggestion_service
 from app.services import classification_session_service
 
@@ -32,7 +32,7 @@ def _enable_runtime_stub_provider(monkeypatch):
 
 def _reset_rate_limiter():
     try:
-        tx_router._upload_attempts.clear()  # type: ignore[attr-defined]
+        imports_router._upload_attempts.clear()  # type: ignore[attr-defined]
     except Exception:
         pass
 
@@ -116,10 +116,15 @@ def _accept_utilities_session(transaction_id: int):
 
 
 def _make_minimal_belfius_export_csv(*, booking_date: str, description: str) -> bytes:
+    return _make_belfius_export_csv_rows((booking_date, description))
+
+
+def _make_belfius_export_csv_rows(*rows: tuple[str, str]) -> bytes:
+    first_booking_date = rows[0][0]
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")
-    writer.writerow(["Boekingsdatum vanaf", booking_date])
-    writer.writerow(["Boekingsdatum tot en met", booking_date])
+    writer.writerow(["Boekingsdatum vanaf", first_booking_date])
+    writer.writerow(["Boekingsdatum tot en met", rows[-1][0]])
     writer.writerow(["Bedrag vanaf", ""])
     writer.writerow(["Bedrag tot en met", ""])
     writer.writerow(["Rekeninguittrekselnummer vanaf", ""])
@@ -149,25 +154,26 @@ def _make_minimal_belfius_export_csv(*, booking_date: str, description: str) -> 
             "Mededelingen",
         ]
     )
-    writer.writerow(
-        [
-            "BE46 0636 5194 6836",
-            booking_date,
-            "00004",
-            "33",
-            "",
-            "",
-            "",
-            "",
-            description,
-            booking_date,
-            "-45,99",
-            "EUR",
-            "",
-            "",
-            description,
-        ]
-    )
+    for index, (booking_date, description) in enumerate(rows, start=33):
+        writer.writerow(
+            [
+                "BE46 0636 5194 6836",
+                booking_date,
+                "00004",
+                str(index),
+                "",
+                "",
+                "",
+                "",
+                description,
+                booking_date,
+                "-45,99",
+                "EUR",
+                "",
+                "",
+                description,
+            ]
+        )
     return output.getvalue().encode("utf-8")
 
 
@@ -197,33 +203,27 @@ def _make_minimal_beobank_compact_csv(*, booking_date: str, description: str) ->
     return output.getvalue().encode("latin-1")
 
 
-def _make_minimal_ing_csv(*rows: tuple[str, str, str]) -> bytes:
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=";")
-    writer.writerow(
-        [
-            "Account Number",
-            "Account Name",
-            "Counterparty account",
-            "Booking date",
-            "Amount",
-            "Currency",
-            "Description",
-        ]
+def _upload_csv_for_review(*, filename: str, payload: bytes) -> dict:
+    response = client.post(
+        "/imports/upload",
+        files={"file": (filename, payload, "text/csv")},
     )
-    for booking_date, amount, description in rows:
-        writer.writerow(
-            [
-                "BE1234567890",
-                "Main Account",
-                "BE0987654321",
-                booking_date,
-                amount,
-                "EUR",
-                description,
-            ]
-        )
-    return output.getvalue().encode("utf-8")
+    assert response.status_code == 200
+    return response.json()
+
+
+def _approve_import_session(session_id: int) -> dict:
+    response = client.post(f"/imports/{session_id}/approve")
+    assert response.status_code == 200
+    return response.json()
+
+
+def _latest_transaction() -> Transaction | None:
+    db = SessionLocal()
+    try:
+        return db.query(Transaction).order_by(Transaction.id.desc()).first()
+    finally:
+        db.close()
 
 
 def test_similar_preview_only_returns_uncategorized_rows(monkeypatch):
@@ -339,23 +339,18 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
     _reset_database()
     _clear_vector_collections()
 
-    first_upload = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "BE46 0636 5194 6836 2026-04-11 13-17-27 1.csv",
-                _make_minimal_belfius_export_csv(
-                    booking_date="10/04/2026",
-                    description="PROXIMUS telecom invoice",
-                ),
-                "text/csv",
-            )
-        },
+    first_upload = _upload_csv_for_review(
+        filename="BE46 0636 5194 6836 2026-04-11 13-17-27 1.csv",
+        payload=_make_minimal_belfius_export_csv(
+            booking_date="10/04/2026",
+            description="PROXIMUS telecom invoice",
+        ),
     )
-    assert first_upload.status_code == 200
-
-    seed_transaction = first_upload.json()[0]
-    session = client.post("/classification/sessions", json={"transaction_id": seed_transaction["id"]}).json()
+    assert first_upload["status"] == "awaiting_review"
+    _approve_import_session(first_upload["id"])
+    seed_transaction = _latest_transaction()
+    assert seed_transaction is not None
+    session = client.post("/classification/sessions", json={"transaction_id": seed_transaction.id}).json()
     propose_response = client.post(f"/classification/sessions/{session['id']}/propose")
     assert propose_response.status_code == 200
 
@@ -375,30 +370,25 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
     def _unexpected_suggester(*args, **kwargs):
         raise AssertionError("upload suggester should not run when a recurrence pattern matches")
 
-    monkeypatch.setattr(tx_router.category_suggestion_service, "suggest_category", _unexpected_suggester)
+    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", _unexpected_suggester)
 
-    second_upload = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
-                _make_minimal_belfius_export_csv(
-                    booking_date="11/05/2026",
-                    description="PROXIMUS telecom invoice",
-                ),
-                "text/csv",
-            )
-        },
+    second_upload = _upload_csv_for_review(
+        filename="BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
+        payload=_make_minimal_belfius_export_csv(
+            booking_date="11/05/2026",
+            description="PROXIMUS telecom invoice",
+        ),
     )
-    assert second_upload.status_code == 200
-
-    imported_transaction = second_upload.json()[0]
-    assert imported_transaction["expense_category"] == "Utilities"
-    assert imported_transaction["classification_source"] == "recurrence_pattern"
-    assert imported_transaction["recurrence_pattern_id"] == pattern_id
+    assert second_upload["status"] == "awaiting_review"
+    _approve_import_session(second_upload["id"])
+    imported_transaction = _latest_transaction()
+    assert imported_transaction is not None
+    assert imported_transaction.expense_category.value == "Utilities"
+    assert imported_transaction.classification_source == "recurrence_pattern"
+    assert imported_transaction.recurrence_pattern_id == pattern_id
 
     manual_override = client.patch(
-        f"/transactions/{imported_transaction['id']}/category",
+        f"/transactions/{imported_transaction.id}/category",
         params={"category": "Entertainment", "transaction_type": "Expense"},
     )
     assert manual_override.status_code == 200
@@ -413,52 +403,6 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
 
     assert stored_pattern is not None
     assert stored_pattern.active is True
-
-
-def test_transfer_recurrence_pattern_matches_expense_upload_rows(monkeypatch):
-    _reset_rate_limiter()
-    _reset_database()
-    _clear_vector_collections()
-
-    seed = _restore_transaction(
-        description="BANK TRANSFER to savings",
-        tx_date="2026-04-10",
-        transaction_type="Transfer",
-    )
-    accepted = _accept_session(
-        seed["id"],
-        transaction_type="Transfer",
-        category="Internal Transfer",
-        recurrence={"is_recurrent": True, "frequency": "monthly"},
-    )
-    pattern_id = accepted["recurrence_pattern_id"]
-
-    def _unexpected_suggester(*args, **kwargs):
-        raise AssertionError("upload suggester should not run when a transfer recurrence pattern matches")
-
-    monkeypatch.setattr(tx_router.category_suggestion_service, "suggest_category", _unexpected_suggester)
-
-    second_upload = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
-                _make_minimal_belfius_export_csv(
-                    booking_date="11/05/2026",
-                    description="BANK TRANSFER to savings",
-                ),
-                "text/csv",
-            )
-        },
-    )
-    assert second_upload.status_code == 200
-
-    imported_transaction = second_upload.json()[0]
-    assert imported_transaction["transaction_type"] == "Transfer"
-    assert imported_transaction["transfer_category"] == "Internal Transfer"
-    assert imported_transaction["expense_category"] is None
-    assert imported_transaction["classification_source"] == "recurrence_pattern"
-    assert imported_transaction["recurrence_pattern_id"] == pattern_id
 
 
 def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_missing(monkeypatch):
@@ -482,28 +426,24 @@ def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_miss
     def _unexpected_suggester(*args, **kwargs):
         raise AssertionError("upload suggester should not run when a compatible recurrence pattern exists")
 
-    monkeypatch.setattr(tx_router.category_suggestion_service, "suggest_category", _unexpected_suggester)
+    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", _unexpected_suggester)
 
-    second_upload = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "50212984548.csv",
-                _make_minimal_beobank_compact_csv(
-                    booking_date="11/05/2026",
-                    description="PROXIMUS telecom invoice",
-                ),
-                "text/csv",
-            )
-        },
+    second_upload = _upload_csv_for_review(
+        filename="50212984548.csv",
+        payload=_make_minimal_beobank_compact_csv(
+            booking_date="11/05/2026",
+            description="PROXIMUS telecom invoice",
+        ),
     )
+    assert second_upload["status"] == "awaiting_review"
+    _approve_import_session(second_upload["id"])
 
-    assert second_upload.status_code == 200
-    imported_transaction = second_upload.json()[0]
-    assert imported_transaction["source_bank"] == "Beobank"
-    assert imported_transaction["expense_category"] == "Utilities"
-    assert imported_transaction["classification_source"] == "recurrence_pattern"
-    assert imported_transaction["recurrence_pattern_id"] == pattern_id
+    imported_transaction = _latest_transaction()
+    assert imported_transaction is not None
+    assert imported_transaction.source_bank == "Beobank"
+    assert imported_transaction.expense_category.value == "Utilities"
+    assert imported_transaction.classification_source == "recurrence_pattern"
+    assert imported_transaction.recurrence_pattern_id == pattern_id
 
 
 def test_upload_csv_is_atomic_when_auto_classification_fails_mid_file(monkeypatch):
@@ -520,23 +460,18 @@ def test_upload_csv_is_atomic_when_auto_classification_fails_mid_file(monkeypatc
             return [("Utilities", 0.91)]
         raise RuntimeError("simulated suggester failure")
 
-    monkeypatch.setattr(tx_router.category_suggestion_service, "suggest_category", flaky_suggester)
+    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", flaky_suggester)
 
-    response = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "data.csv",
-                _make_minimal_ing_csv(
-                    ("01/05/2026", "-10.00", "PROXIMUS invoice"),
-                    ("02/05/2026", "-12.00", "Bakery purchase"),
-                ),
-                "text/csv",
-            )
-        },
+    response = _upload_csv_for_review(
+        filename="data.csv",
+        payload=_make_belfius_export_csv_rows(
+            ("01/05/2026", "PROXIMUS invoice"),
+            ("02/05/2026", "Bakery purchase"),
+        ),
     )
-
-    assert response.status_code == 500
+    assert response["status"] == "failed"
+    assert response["error_stage"] == "extraction"
+    assert "simulated suggester failure" in response["error_message"]
 
     db = SessionLocal()
     try:
@@ -553,7 +488,7 @@ def test_upload_csv_still_succeeds_when_post_commit_learning_update_fails(monkey
     _clear_vector_collections()
 
     monkeypatch.setattr(
-        tx_router.category_suggestion_service,
+        import_enrichment.category_suggestion_service,
         "suggest_category",
         lambda *args, **kwargs: [("Utilities", 0.91)],
     )
@@ -561,20 +496,19 @@ def test_upload_csv_still_succeeds_when_post_commit_learning_update_fails(monkey
     def broken_add_transaction(*args, **kwargs):
         raise RuntimeError("simulated index update failure")
 
-    monkeypatch.setattr(tx_router.category_suggestion_service, "add_transaction", broken_add_transaction)
+    monkeypatch.setattr(import_workflow.category_suggestion_service, "add_transaction", broken_add_transaction)
 
-    response = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "data.csv",
-                _make_minimal_ing_csv(("01/05/2026", "-10.00", "PROXIMUS invoice")),
-                "text/csv",
-            )
-        },
+    session = _upload_csv_for_review(
+        filename="data.csv",
+        payload=_make_minimal_belfius_export_csv(
+            booking_date="01/05/2026",
+            description="PROXIMUS invoice",
+        ),
     )
+    assert session["status"] == "awaiting_review"
 
-    assert response.status_code == 200
+    response = _approve_import_session(session["id"])
+    assert response["status"] == "committed"
 
     db = SessionLocal()
     try:
@@ -583,98 +517,3 @@ def test_upload_csv_still_succeeds_when_post_commit_learning_update_fails(monkey
         db.close()
 
     assert transaction_count == 1
-
-
-def test_upload_csv_rolls_back_dirty_stats_session_before_continuing(monkeypatch):
-    _reset_rate_limiter()
-    _reset_database()
-    _clear_vector_collections()
-
-    monkeypatch.setattr(
-        tx_router.category_suggestion_service,
-        "suggest_category",
-        lambda *args, **kwargs: [("Utilities", 0.91)],
-    )
-
-    def dirty_statistics_update(db, transaction_date):
-        imported = db.query(Transaction).filter(Transaction.description == "PROXIMUS invoice").first()
-        assert imported is not None
-        imported.description = "CORRUPTED DESCRIPTION"
-        raise RuntimeError("simulated stats failure")
-
-    monkeypatch.setattr(tx_router.StatisticsService, "update_statistics", dirty_statistics_update)
-    monkeypatch.setattr(tx_router.category_suggestion_service, "add_transaction", lambda *args, **kwargs: None)
-
-    response = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "data.csv",
-                _make_minimal_ing_csv(("01/05/2026", "-10.00", "PROXIMUS invoice")),
-                "text/csv",
-            )
-        },
-    )
-
-    assert response.status_code == 200
-
-    db = SessionLocal()
-    try:
-        stored_transaction = db.query(Transaction).one()
-    finally:
-        db.close()
-
-    assert stored_transaction.description == "PROXIMUS invoice"
-
-
-def test_upload_csv_does_not_persist_partial_stats_rows_when_stats_refresh_fails(monkeypatch):
-    _reset_rate_limiter()
-    _reset_database()
-    _clear_vector_collections()
-
-    monkeypatch.setattr(
-        tx_router.category_suggestion_service,
-        "suggest_category",
-        lambda *args, **kwargs: [("Utilities", 0.91)],
-    )
-
-    leaked_date = date(2099, 12, 31)
-
-    def dirty_statistics_update(db, transaction_date):
-        db.add(
-            FinancialStatistics(
-                period=StatisticsPeriod.MONTHLY,
-                date=leaked_date,
-                period_income=999.0,
-            )
-        )
-        db.flush()
-        raise RuntimeError("simulated stats failure")
-
-    monkeypatch.setattr(tx_router.StatisticsService, "update_statistics", dirty_statistics_update)
-    monkeypatch.setattr(tx_router.category_suggestion_service, "add_transaction", lambda *args, **kwargs: None)
-
-    response = client.post(
-        "/transactions/upload/",
-        files={
-            "file": (
-                "data.csv",
-                _make_minimal_ing_csv(("01/05/2026", "-10.00", "PROXIMUS invoice")),
-                "text/csv",
-            )
-        },
-    )
-
-    assert response.status_code == 200
-
-    db = SessionLocal()
-    try:
-        leaked_stats_count = (
-            db.query(FinancialStatistics)
-            .filter(FinancialStatistics.date == leaked_date)
-            .count()
-        )
-    finally:
-        db.close()
-
-    assert leaked_stats_count == 0

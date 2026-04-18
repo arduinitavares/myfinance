@@ -7,6 +7,8 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.imports.belfius_csv import BelfiusCsvExtractor
+from app.imports.beobank_csv import BeobankCsvExtractor
 from app.models.imports import (
     ImportIssue as ImportIssueModel,
     ImportSession,
@@ -14,14 +16,18 @@ from app.models.imports import (
     ImportTransactionDraft,
 )
 from app.models.statistics import CategoryStatistics, FinancialStatistics, StatisticsPeriod
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TransactionType
 from app.schemas.imports import build_import_transaction_draft_response_payload
 from app.schemas.transaction import TransactionCreate
+from app.services.anomaly_detection_service import AnomalyDetectionService
 from app.services.currency_conversion import CurrencyConversionService, DisplayMoney
 from app.services.statistics_service import StatisticsService
+from app.routers.suggestions import category_suggestion_service
 
 from .artifacts import ArtifactStore
 from .contracts import ExtractionResult, ExtractedTransaction, ImportStrategyKey
+from .enrichment import enrich_draft_proposals
+from .nexo_csv import NexoCsvExtractor
 from .pdf_statement import PdfStatementExtractor
 from .state_machine import ImportSessionStatus, assert_transition_allowed
 
@@ -51,18 +57,22 @@ class ImportWorkflowService:
         self,
         db: Session,
         pdf_statement_extractor: PdfStatementExtractor | None = None,
+        belfius_csv_extractor: BelfiusCsvExtractor | None = None,
+        beobank_csv_extractor: BeobankCsvExtractor | None = None,
+        nexo_csv_extractor: NexoCsvExtractor | None = None,
         artifacts: ArtifactStore | None = None,
     ) -> None:
         self.db = db
         self.pdf_statement_extractor = pdf_statement_extractor or PdfStatementExtractor()
+        self.belfius_csv_extractor = belfius_csv_extractor or BelfiusCsvExtractor()
+        self.beobank_csv_extractor = beobank_csv_extractor or BeobankCsvExtractor()
+        self.nexo_csv_extractor = nexo_csv_extractor or NexoCsvExtractor()
         self.artifacts = artifacts or ArtifactStore()
 
     def extract_detected_session(self, session_id: int) -> ImportSession:
         session = self._get_session(session_id)
         if session.status != ImportSessionStatus.DETECTED.value:
             raise ImportSessionStateError(f"Import session {session_id} must be in detected state.")
-        if session.strategy_key != ImportStrategyKey.PDF_STATEMENT.value:
-            raise ImportSessionStateError(f"Import session {session_id} does not use pdf_statement strategy.")
 
         attempt_number = self._next_attempt_number(session.id)
         original_file = self.artifacts.session_dir(str(session.id)) / "original" / session.file_name
@@ -71,7 +81,12 @@ class ImportWorkflowService:
         try:
             if not original_file.exists():
                 raise FileNotFoundError(f"Original upload missing for import session {session.id}.")
-            evidence, result = self.pdf_statement_extractor.extract(
+            extractor = self._extractor_for_strategy(session.strategy_key)
+            if extractor is None:
+                raise ImportSessionStateError(
+                    f"Import session {session_id} uses unsupported strategy {session.strategy_key!r}."
+                )
+            evidence, result = extractor.extract(
                 file_path=original_file,
                 session_id=str(session.id),
                 attempt_number=attempt_number,
@@ -91,7 +106,8 @@ class ImportWorkflowService:
                 session.error_stage = "extraction"
                 session.error_message = self._failure_message(result)
             else:
-                self._persist_statement_draft(session.id, attempt_number, result)
+                statement_draft = self._persist_statement_draft(session.id, attempt_number, result)
+                self._enrich_csv_drafts_before_review(session, statement_draft)
                 self._advance_to_awaiting_review(session)
                 session.error_stage = None
                 session.error_message = None
@@ -195,18 +211,24 @@ class ImportWorkflowService:
         statement.review_status = "approved"
 
         affected_dates: set[date] = set()
+        committed_transactions: list[Transaction] = []
         for draft in drafts:
             transaction = self._build_committed_transaction(session.id, statement, draft)
             self.db.add(transaction)
+            committed_transactions.append(transaction)
             if transaction.transaction_date is not None:
                 affected_dates.add(transaction.transaction_date)
 
         try:
+            self.db.flush()
             self._refresh_statistics_in_transaction(affected_dates)
 
             assert_transition_allowed(current, ImportSessionStatus.COMMITTED)
             session.status = ImportSessionStatus.COMMITTED.value
-            return self._commit_session_state(session, meta_state=session.status)
+            committed_session = self._commit_session_state(session, meta_state=session.status)
+            self._sync_category_suggestion_index(committed_transactions)
+            self._run_anomaly_detection(committed_transactions)
+            return committed_session
         except Exception:
             self.db.rollback()
             raise
@@ -306,7 +328,12 @@ class ImportWorkflowService:
                 )
             )
 
-    def _persist_statement_draft(self, session_id: int, attempt_number: int, result: ExtractionResult) -> None:
+    def _persist_statement_draft(
+        self,
+        session_id: int,
+        attempt_number: int,
+        result: ExtractionResult,
+    ) -> ImportStatementDraft:
         metadata = result.statement_metadata
         statement_draft = ImportStatementDraft(
             import_session_id=session_id,
@@ -336,12 +363,20 @@ class ImportWorkflowService:
                     source_locator=transaction.source_locator,
                     inferred_category=transaction.inferred_category,
                     category_source=transaction.category_source,
+                    proposed_transaction_type=transaction.proposed_transaction_type,
+                    proposed_expense_category=transaction.proposed_expense_category,
+                    proposed_income_category=transaction.proposed_income_category,
+                    proposed_transfer_category=transaction.proposed_transfer_category,
+                    classification_source=transaction.classification_source,
+                    recurrence_pattern_id=transaction.recurrence_pattern_id,
                     confidence=self._transaction_confidence(transaction, result),
                     field_confidence=json.dumps(transaction.confidence, sort_keys=True),
                     raw_fields=json.dumps(transaction.model_dump(mode="json"), sort_keys=True),
                     edit_source=transaction.edit_source,
                 )
             )
+        self.db.flush()
+        return statement_draft
 
     def _latest_statement_draft(self, session_id: int, attempt_number: int) -> ImportStatementDraft | None:
         return (
@@ -384,6 +419,7 @@ class ImportWorkflowService:
                 f"Import session {import_session_id} cannot approve a transaction draft without a transaction_date."
             )
 
+        proposed_type = self._validated_transaction_type(draft)
         transaction_payload = TransactionCreate(
             account_number=self._statement_account_number(statement),
             transaction_date=draft.transaction_date,
@@ -392,12 +428,12 @@ class ImportWorkflowService:
             description=draft.source_description,
             counterparty_name=None,
             counterparty_account=None,
-            transaction_type=None,
-            expense_category=None,
-            income_category=None,
-            transfer_category=None,
-            classification_source=None,
-            recurrence_pattern_id=None,
+            transaction_type=proposed_type.value if proposed_type is not None else None,
+            expense_category=draft.proposed_expense_category,
+            income_category=draft.proposed_income_category,
+            transfer_category=draft.proposed_transfer_category,
+            classification_source=draft.classification_source,
+            recurrence_pattern_id=draft.recurrence_pattern_id,
             source_bank=self._source_bank_name(statement),
         )
         payload = transaction_payload.model_dump()
@@ -552,6 +588,35 @@ class ImportWorkflowService:
         for transaction_date in sorted(affected_dates):
             self._refresh_statistics_for_date(transaction_date)
 
+    @staticmethod
+    def _sync_category_suggestion_index(committed_transactions: list[Transaction]) -> None:
+        for transaction in committed_transactions:
+            if transaction.transaction_type not in {TransactionType.EXPENSE, TransactionType.INCOME}:
+                continue
+            if not transaction.expense_category and not transaction.income_category:
+                continue
+            try:
+                category_suggestion_service.add_transaction(transaction)
+            except Exception:
+                logger.warning(
+                    "Failed to update suggestion index for transaction %s",
+                    transaction.id,
+                    exc_info=True,
+                )
+
+    def _run_anomaly_detection(self, committed_transactions: list[Transaction]) -> None:
+        transaction_ids = [transaction.id for transaction in committed_transactions if transaction.id is not None]
+        if not transaction_ids:
+            return
+        try:
+            AnomalyDetectionService.detect_anomalies(
+                db=self.db,
+                transaction_ids=transaction_ids,
+                force_redetection=False,
+            )
+        except Exception:
+            logger.warning("Anomaly detection failed for committed import transactions", exc_info=True)
+
     def _refresh_statistics_for_date(self, transaction_date: date) -> None:
         monthly_date = transaction_date.replace(day=monthrange(transaction_date.year, transaction_date.month)[1])
         yearly_date = date(transaction_date.year, 12, 31)
@@ -679,11 +744,36 @@ class ImportWorkflowService:
             return "Beobank"
         return provider_hint.title() if provider_hint else "Unknown"
 
+    def _enrich_csv_drafts_before_review(self, session: ImportSession, statement: ImportStatementDraft) -> None:
+        if session.strategy_key not in {
+            ImportStrategyKey.BELFIUS_CSV.value,
+            ImportStrategyKey.BEOBANK_CSV.value,
+            ImportStrategyKey.NEXO_CSV.value,
+        }:
+            return
+
+        source_bank = self._source_bank_name(statement)
+        for draft in self._statement_transactions(statement.id):
+            enrich_draft_proposals(
+                self.db,
+                draft=draft,
+                source_bank=source_bank,
+            )
+
     def _get_session(self, session_id: int) -> ImportSession:
         session = self.db.get(ImportSession, session_id)
         if session is None:
             raise ImportSessionNotFoundError(f"Import session {session_id} does not exist.")
         return session
+
+    def fail_session(self, session_id: int, *, stage: str, message: str) -> ImportSession:
+        session = self._get_session(session_id)
+        if session.status == ImportSessionStatus.DETECTED.value:
+            assert_transition_allowed(ImportSessionStatus.DETECTED, ImportSessionStatus.FAILED)
+            session.status = ImportSessionStatus.FAILED.value
+        session.error_stage = stage
+        session.error_message = message
+        return self._commit_session_state(session, meta_state=session.status)
 
     @staticmethod
     def _advance_to_awaiting_review(session: ImportSession) -> None:
@@ -716,6 +806,37 @@ class ImportWorkflowService:
         if not value:
             return None
         return date.fromisoformat(value)
+
+    @staticmethod
+    def _validated_transaction_type(draft: ImportTransactionDraft) -> TransactionType | None:
+        proposed_type = TransactionType(draft.proposed_transaction_type) if draft.proposed_transaction_type else None
+        if proposed_type is None:
+            if draft.proposed_expense_category or draft.proposed_income_category or draft.proposed_transfer_category:
+                raise ImportSessionStateError(
+                    "Draft contains category proposals without a proposed_transaction_type."
+                )
+            return None
+
+        if proposed_type == TransactionType.EXPENSE:
+            if draft.proposed_income_category or draft.proposed_transfer_category:
+                raise ImportSessionStateError("Expense draft cannot carry income or transfer category proposals.")
+            return proposed_type
+        if proposed_type == TransactionType.INCOME:
+            if draft.proposed_expense_category or draft.proposed_transfer_category:
+                raise ImportSessionStateError("Income draft cannot carry expense or transfer category proposals.")
+            return proposed_type
+        if draft.proposed_expense_category or draft.proposed_income_category:
+            raise ImportSessionStateError("Transfer draft cannot carry expense or income category proposals.")
+        return proposed_type
+
+    def _extractor_for_strategy(self, strategy_key: str | None):
+        strategy_map = {
+            ImportStrategyKey.PDF_STATEMENT.value: self.pdf_statement_extractor,
+            ImportStrategyKey.BELFIUS_CSV.value: self.belfius_csv_extractor,
+            ImportStrategyKey.BEOBANK_CSV.value: self.beobank_csv_extractor,
+            ImportStrategyKey.NEXO_CSV.value: self.nexo_csv_extractor,
+        }
+        return strategy_map.get(strategy_key)
 
     def _write_workflow_meta(
         self,

@@ -46,7 +46,7 @@ jest.mock('react-router-dom', () => ({
 
 jest.mock('../../services/importService', () => ({
   importService: {
-    uploadStatement: jest.fn(),
+    uploadFile: jest.fn(),
     getReview: jest.fn(),
     approve: jest.fn(),
     reject: jest.fn(),
@@ -146,6 +146,19 @@ const unavailablePayload = {
   ],
 };
 
+const proposalPayload = {
+  ...firstPayload,
+  transactions: [
+    {
+      ...firstPayload.transactions[0],
+      proposed_transaction_type: 'Expense',
+      proposed_expense_category: 'Groceries',
+      classification_source: 'recurrence_pattern',
+      recurrence_pattern_id: 17,
+    },
+  ],
+};
+
 const secondPayload = {
   ...firstPayload,
   session: {
@@ -235,6 +248,15 @@ describe('ImportReviewPage', () => {
 
     expect(await screen.findByText('FX unavailable')).toBeInTheDocument();
     expect(screen.getByText(/Raw -NEXO\s42\.00/)).toBeInTheDocument();
+  });
+
+  test('renders proposal metadata for draft transactions', async () => {
+    mockedImportService.getReview.mockResolvedValue(proposalPayload as never);
+
+    renderImportReviewPage();
+
+    expect(await screen.findByText('Expense • Groceries')).toBeInTheDocument();
+    expect(screen.getByText('recurrence_pattern • Pattern 17')).toBeInTheDocument();
   });
 
   test('approve calls the service and navigates to transactions', async () => {

@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { FileUpload } from './FileUpload';
 import { importService } from '../services/importService';
-import { transactionService } from '../services/transactionService';
 
 let mockIsAxiosError = false;
 
@@ -22,7 +21,7 @@ jest.mock('react-router-dom', () => ({
 
 jest.mock('../services/importService', () => ({
   importService: {
-    uploadStatement: jest.fn(),
+    uploadFile: jest.fn(),
     startBatchFolderImport: jest.fn(),
     getBatchRun: jest.fn(),
     getLatestBatchRun: jest.fn(),
@@ -30,12 +29,6 @@ jest.mock('../services/importService', () => ({
     approve: jest.fn(),
     reject: jest.fn(),
     retry: jest.fn(),
-  },
-}));
-
-jest.mock('../services/transactionService', () => ({
-  transactionService: {
-    uploadCSV: jest.fn(),
   },
 }));
 
@@ -67,7 +60,6 @@ jest.mock('@radix-ui/react-toast', () => ({
 }));
 
 const mockedImportService = importService as jest.Mocked<typeof importService>;
-const mockedTransactionService = transactionService as jest.Mocked<typeof transactionService>;
 
 describe('FileUpload', () => {
   beforeEach(() => {
@@ -76,7 +68,7 @@ describe('FileUpload', () => {
   });
 
   test('uploads pdf statements through import service and navigates to review page', async () => {
-    mockedImportService.uploadStatement.mockResolvedValue({
+    mockedImportService.uploadFile.mockResolvedValue({
       id: 12,
       status: 'awaiting_review',
     } as never);
@@ -90,17 +82,16 @@ describe('FileUpload', () => {
     });
 
     await waitFor(() => {
-      expect(mockedImportService.uploadStatement).toHaveBeenCalledTimes(1);
+      expect(mockedImportService.uploadFile).toHaveBeenCalledTimes(1);
     });
-    expect(mockedImportService.uploadStatement).toHaveBeenCalledWith(expect.any(File));
-    expect(mockedTransactionService.uploadCSV).not.toHaveBeenCalled();
+    expect(mockedImportService.uploadFile).toHaveBeenCalledWith(expect.any(File));
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/imports/12/review');
     });
   });
 
   test('allows pdf uploads with application/octet-stream when the filename is .pdf', async () => {
-    mockedImportService.uploadStatement.mockResolvedValue({
+    mockedImportService.uploadFile.mockResolvedValue({
       id: 22,
       status: 'awaiting_review',
     } as never);
@@ -114,15 +105,17 @@ describe('FileUpload', () => {
     });
 
     await waitFor(() => {
-      expect(mockedImportService.uploadStatement).toHaveBeenCalledTimes(1);
+      expect(mockedImportService.uploadFile).toHaveBeenCalledTimes(1);
     });
-    expect(mockedTransactionService.uploadCSV).not.toHaveBeenCalled();
     expect(screen.queryByText(/unsupported file type/i)).not.toBeInTheDocument();
   });
 
-  test('keeps csv uploads on the transaction import path', async () => {
+  test('routes csv uploads into import review', async () => {
     const onUploadSuccess = jest.fn();
-    mockedTransactionService.uploadCSV.mockResolvedValue([] as never);
+    mockedImportService.uploadFile.mockResolvedValue({
+      id: 31,
+      status: 'awaiting_review',
+    } as never);
 
     render(<FileUpload onUploadSuccess={onUploadSuccess} />);
 
@@ -133,17 +126,17 @@ describe('FileUpload', () => {
     });
 
     await waitFor(() => {
-      expect(mockedTransactionService.uploadCSV).toHaveBeenCalledTimes(1);
+      expect(mockedImportService.uploadFile).toHaveBeenCalledTimes(1);
     });
-    expect(mockedImportService.uploadStatement).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(onUploadSuccess).toHaveBeenCalledTimes(1);
+      expect(mockNavigate).toHaveBeenCalledWith('/imports/31/review');
     });
   });
 
   test('shows pdf-specific upload errors for pdf failures', async () => {
     mockIsAxiosError = true;
-    mockedImportService.uploadStatement.mockRejectedValue({
+    mockedImportService.uploadFile.mockRejectedValue({
       response: {
         status: 415,
         data: {
@@ -165,7 +158,7 @@ describe('FileUpload', () => {
   });
 
   test('keeps selected filename visible after a pdf upload error', async () => {
-    mockedImportService.uploadStatement.mockRejectedValue(new Error('network down') as never);
+    mockedImportService.uploadFile.mockRejectedValue(new Error('network down') as never);
 
     render(<FileUpload onUploadSuccess={jest.fn()} />);
 
@@ -199,7 +192,7 @@ describe('FileUpload', () => {
 
   test('offers open existing when pdf upload returns a duplicate session conflict', async () => {
     mockIsAxiosError = true;
-    mockedImportService.uploadStatement.mockRejectedValue({
+    mockedImportService.uploadFile.mockRejectedValue({
       response: {
         status: 409,
         data: {

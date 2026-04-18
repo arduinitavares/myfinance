@@ -3,6 +3,8 @@ import numpy as np
 from fastapi.testclient import TestClient
 from datetime import date, datetime
 from decimal import Decimal
+import csv
+import io
 
 from app.main import app
 from app.database import SessionLocal
@@ -15,26 +17,16 @@ from app.models.transaction import (
     TransferCategory,
 )
 from app.models.statistics import CategoryStatistics, FinancialStatistics
-from app.routers import transactions as tx_router
-from app.schemas.transaction import TransactionCreate
 from app.schemas.transaction import TransactionRestore
 from app.services import classification_commit_service as classification_commit_module
 from app.services.classification_commit_service import commit_category_change, normalized_category_for
 from app.services.classification_session_service import ClassificationSessionService
-from app.services import csv_import_service as csv_import_module
 from app.routers.suggestions import category_suggestion_service
 
 
 def _reset_database(client):
     response = client.post("/debug/reset-database")
     assert response.status_code == 200
-
-
-def _reset_rate_limiter():
-    try:
-        tx_router._upload_attempts.clear()  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
 
 def _restore_transaction(client, *, description: str):
@@ -806,50 +798,71 @@ def test_suggest_category_returns_empty_for_transfer_without_touching_embeddings
 
 def test_upload_csv_skips_transfer_category_suggestions(monkeypatch):
     client = TestClient(app)
-    _reset_rate_limiter()
     _reset_database(client)
 
-    monkeypatch.setattr(
-        csv_import_module.CSVParser,
-        "parse_csv",
-        lambda file_path, source_filename=None: [
-            TransactionCreate(
-                account_number="BE55000000000001",
-                transaction_date=date(2025, 1, 15),
-                amount=-240.0,
-                currency="EUR",
-                description="Transfer to savings account",
-                counterparty_name="Counterparty",
-                counterparty_account="BE99000000000002",
-                transaction_type=TransactionType.TRANSFER,
-                source_bank="ing",
-            )
-        ],
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Transaction",
+            "Type",
+            "Input Currency",
+            "Input Amount",
+            "Output Currency",
+            "Output Amount",
+            "USD Equivalent",
+            "Fee",
+            "Fee Currency",
+            "Details",
+            "Date / Time (UTC)",
+            "normalizedDisplayDetails",
+        ]
     )
+    writer.writerow(
+        [
+            "NXT_CASHOUT_1",
+            "Transfer Out",
+            "USDC",
+            "-120.00000000",
+            "USDC",
+            "120.00000000",
+            "$120.00",
+            "-",
+            "-",
+            "approved / Bank transfer to BE55000000000001",
+            "2026-03-26 18:19:22",
+            "approved / Bank transfer to BE55000000000001",
+        ]
+    )
+
     monkeypatch.setattr(
-        category_suggestion_service,
-        "suggest_category",
+        "app.imports.enrichment.category_suggestion_service.suggest_category",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("upload should skip category suggestions for transfer rows")
         ),
     )
-    monkeypatch.setattr(csv_import_module.StatisticsService, "update_statistics", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        csv_import_module.AnomalyDetectionService,
-        "detect_anomalies",
-        lambda *args, **kwargs: None,
-    )
 
     response = client.post(
-        "/transactions/upload/",
-        files={"file": ("transfers.csv", b"ignored-by-mock\n", "text/csv")},
+        "/imports/upload",
+        files={"file": ("transfers.csv", output.getvalue().encode("utf-8"), "text/csv")},
     )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert len(payload) == 1
-    assert payload[0]["transaction_type"] == TransactionType.TRANSFER.value
-    assert payload[0]["transfer_category"] is None
+    session_payload = response.json()
+    assert session_payload["status"] == "awaiting_review"
+
+    approve_response = client.post(f"/imports/{session_payload['id']}/approve")
+    assert approve_response.status_code == 200
+
+    db = SessionLocal()
+    try:
+        stored_transfer = db.query(Transaction).order_by(Transaction.id.desc()).first()
+    finally:
+        db.close()
+
+    assert stored_transfer is not None
+    assert stored_transfer.transaction_type == TransactionType.TRANSFER
+    assert stored_transfer.transfer_category == TransferCategory.INTERNAL_TRANSFER
 
 
 def test_transfer_schema_keeps_uncategorized_transfer_rows_uncategorized():

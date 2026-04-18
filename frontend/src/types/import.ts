@@ -46,6 +46,12 @@ export interface ImportTransactionDraft extends DisplayMoneyFields {
   confidence: number | null;
   field_confidence: Record<string, number> | null;
   raw_fields: Record<string, unknown> | null;
+  proposed_transaction_type?: string | null;
+  proposed_expense_category?: string | null;
+  proposed_income_category?: string | null;
+  proposed_transfer_category?: string | null;
+  classification_source?: string | null;
+  recurrence_pattern_id?: number | null;
   edit_source: string;
 }
 

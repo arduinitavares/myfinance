@@ -156,6 +156,21 @@ export const ImportReviewPage: React.FC = () => {
     return null;
   }
 
+  const formatProposal = (transaction: ImportReviewPayload['transactions'][number]) => {
+    const category =
+      transaction.proposed_expense_category ??
+      transaction.proposed_income_category ??
+      transaction.proposed_transfer_category;
+    const summary = [transaction.proposed_transaction_type, category].filter(Boolean).join(' • ');
+    const source = transaction.classification_source ?? null;
+    const recurrence =
+      transaction.recurrence_pattern_id != null ? `Pattern ${transaction.recurrence_pattern_id}` : null;
+    return {
+      summary: summary || null,
+      detail: [source, recurrence].filter(Boolean).join(' • ') || null,
+    };
+  };
+
   return (
     <div className="space-y-8 pb-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -285,12 +300,18 @@ export const ImportReviewPage: React.FC = () => {
                     Locator
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Proposal
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Source
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white text-sm dark:divide-gray-700 dark:bg-gray-900">
-                {review.transactions.map((transaction) => (
+                {review.transactions.map((transaction) => {
+                  const proposal = formatProposal(transaction);
+
+                  return (
                   <tr key={transaction.id}>
                     <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
                       {formatDisplayDate(transaction.transaction_date)}
@@ -319,9 +340,26 @@ export const ImportReviewPage: React.FC = () => {
                     <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
                       {transaction.source_locator}
                     </td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
+                      {proposal.summary ? (
+                        <div>
+                          <div className="font-medium text-gray-900 dark:text-gray-200">
+                            {proposal.summary}
+                          </div>
+                          {proposal.detail ? (
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {proposal.detail}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 dark:text-gray-500">None</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{transaction.edit_source}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

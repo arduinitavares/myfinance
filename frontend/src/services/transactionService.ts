@@ -10,18 +10,6 @@ import {
 import { apiClient } from './apiClient';
 
 export const transactionService = {
-  uploadCSV: async (file: File): Promise<Transaction[]> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const response = await apiClient.post('/transactions/upload/', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return response.data;
-  },
-
   getTransactions: async (
     page: number, 
     pageSize: number,
