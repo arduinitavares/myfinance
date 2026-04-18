@@ -340,6 +340,8 @@ def test_accept_returns_display_fields_for_reporting_currency():
     assert payload["transaction"]["display_currency"] == "USD"
     assert payload["transaction"]["display_fx_rate"] == 1.25
     assert payload["transaction"]["display_rate_date"] == "2025-01-15"
+    assert payload["transaction"]["display_is_available"] is True
+    assert payload["transaction"]["display_unavailable_reason"] is None
 
 
 def test_propose_returns_503_when_runtime_provider_config_is_missing(tmp_path, monkeypatch):

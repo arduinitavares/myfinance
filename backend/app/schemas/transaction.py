@@ -88,6 +88,8 @@ class Transaction(TransactionBase):
     display_currency: Optional[str] = None
     display_fx_rate: Optional[float] = None
     display_rate_date: Optional[date] = None
+    display_is_available: Optional[bool] = None
+    display_unavailable_reason: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -125,6 +127,8 @@ def serialize_display_money(display_money: DisplayMoney) -> dict[str, Any]:
         "display_currency": display_money.display_currency,
         "display_fx_rate": display_money.display_fx_rate,
         "display_rate_date": display_money.display_rate_date,
+        "display_is_available": display_money.is_available,
+        "display_unavailable_reason": display_money.unavailable_reason,
     }
 
 

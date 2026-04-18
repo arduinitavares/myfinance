@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.fx import FXDailyReferenceRate
+from app.services.currency_aliases import normalize_currency_code
 from app.services.ecb_exchange_rates import ECBExchangeRateService
 from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
 
@@ -54,8 +55,8 @@ class CurrencyConversionService:
         reporting_currency: str,
         transaction_date: date,
     ) -> DisplayMoney:
-        normalized_raw_currency = raw_currency.strip().upper()
-        normalized_reporting_currency = reporting_currency.strip().upper()
+        normalized_raw_currency = normalize_currency_code(raw_currency)
+        normalized_reporting_currency = normalize_currency_code(reporting_currency)
         decimal_amount = Decimal(str(raw_amount))
 
         if (
@@ -63,7 +64,7 @@ class CurrencyConversionService:
             or normalized_reporting_currency not in self.SUPPORTED_CURRENCIES
         ):
             return DisplayMoney.unavailable(
-                display_currency=normalized_reporting_currency,
+                display_currency=normalized_reporting_currency or reporting_currency.strip().upper(),
                 reason="unsupported_currency",
             )
 

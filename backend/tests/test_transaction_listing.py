@@ -130,6 +130,8 @@ def test_get_transactions_includes_display_fields_for_selected_reporting_currenc
     assert item["display_currency"] == "USD"
     assert item["display_fx_rate"] == 1.2
     assert item["display_rate_date"] == "2026-02-26"
+    assert item["display_is_available"] is True
+    assert item["display_unavailable_reason"] is None
 
 
 def test_get_transactions_keeps_unavailable_display_shape_when_rate_missing(db_session):
@@ -156,3 +158,5 @@ def test_get_transactions_keeps_unavailable_display_shape_when_rate_missing(db_s
     assert item["display_currency"] == "BRL"
     assert item["display_fx_rate"] is None
     assert item["display_rate_date"] is None
+    assert item["display_is_available"] is False
+    assert item["display_unavailable_reason"] == "missing_rate"

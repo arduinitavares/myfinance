@@ -162,6 +162,8 @@ def test_get_review_payload_includes_display_fields_for_selected_reporting_curre
     assert first_transaction["display_currency"] == "USD"
     assert first_transaction["display_fx_rate"] == 1.2
     assert first_transaction["display_rate_date"] == "2025-12-20"
+    assert first_transaction["display_is_available"] is True
+    assert first_transaction["display_unavailable_reason"] is None
 
 
 def test_get_review_payload_keeps_unavailable_display_shape_when_rate_missing(db_session, monkeypatch):
@@ -181,6 +183,8 @@ def test_get_review_payload_keeps_unavailable_display_shape_when_rate_missing(db
     assert first_transaction["display_currency"] == "USD"
     assert first_transaction["display_fx_rate"] is None
     assert first_transaction["display_rate_date"] is None
+    assert first_transaction["display_is_available"] is False
+    assert first_transaction["display_unavailable_reason"] == "missing_rate"
 
 
 def test_get_review_payload_for_failed_session_returns_issues_and_evidence_without_statement(db_session, monkeypatch):

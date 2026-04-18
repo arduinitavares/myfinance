@@ -3,6 +3,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import get_type_hints
 
 from app.models.fx import FXDailyReferenceRate
+from app.schemas.transaction import serialize_display_money
 from app.services.currency_conversion import CurrencyConversionService, DisplayMoney
 
 
@@ -294,3 +295,44 @@ def test_convert_returns_distinct_unavailable_result_for_unsupported_currency(db
         is_available=False,
         unavailable_reason="unsupported_currency",
     )
+
+
+def test_convert_normalizes_supported_alias_before_conversion(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 4, 17),
+        quoted_currency="USD",
+        units_per_base="1.2500",
+    )
+    service = CurrencyConversionService(db_session)
+
+    result = service.convert(
+        raw_amount=Decimal("10.00"),
+        raw_currency="xUSD",
+        reporting_currency="EUR",
+        transaction_date=date(2026, 4, 17),
+    )
+
+    assert result == DisplayMoney(
+        display_amount=Decimal("8.00"),
+        display_currency="EUR",
+        display_fx_rate=Decimal("0.8"),
+        display_rate_date=date(2026, 4, 17),
+        is_available=True,
+        unavailable_reason=None,
+    )
+
+
+def test_serialize_display_money_includes_explicit_availability_fields():
+    payload = serialize_display_money(
+        DisplayMoney.unavailable(display_currency="BRL", reason="unsupported_currency")
+    )
+
+    assert payload == {
+        "display_amount": None,
+        "display_currency": "BRL",
+        "display_fx_rate": None,
+        "display_rate_date": None,
+        "display_is_available": False,
+        "display_unavailable_reason": "unsupported_currency",
+    }

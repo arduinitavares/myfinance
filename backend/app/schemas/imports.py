@@ -63,6 +63,8 @@ class ImportTransactionDraftResponse(BaseModel):
     display_currency: str | None = None
     display_fx_rate: float | None = None
     display_rate_date: date | None = None
+    display_is_available: bool | None = None
+    display_unavailable_reason: str | None = None
 
 
 class ImportIssueResponse(BaseModel):
