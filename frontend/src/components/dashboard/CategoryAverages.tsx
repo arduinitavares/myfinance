@@ -3,7 +3,10 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { statisticService } from '../../services/statisticService';
 import { TransactionType, TimePeriod } from '../../types/transaction';
 import { Loading } from '../common/Loading';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
+import { formatMoney } from '../../utils/currency';
+import type { CategoryAveragesResponse } from '../../types/statistics';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
 
 // Define the periods similar to FinancialTrends
 const PERIODS = [
@@ -15,29 +18,12 @@ const PERIODS = [
   { label: 'All', value: TimePeriod.ALL_TIME },
 ];
 
-// Define the category average item interface
-interface CategoryAverageItem {
-  category_name: string;
-  transaction_type: string;
-  expense_type: string | null;
-  average_amount: number;
-  total_amount: number;
-  transaction_count: number;
-  average_transaction_amount: number;
-  percentage: number;
-}
-
-interface CategoryAveragesResponse {
-  start_date: string;
-  end_date: string;
-  months_count: number;
-  categories: CategoryAverageItem[];
-}
-
 export const CategoryAverages: React.FC = () => {
+  const { reportingCurrency: selectedReportingCurrency } = useReportingCurrency();
   const [period, setPeriod] = useState<TimePeriod>(TimePeriod.ONE_YEAR);
   const [transactionType, setTransactionType] = useState<TransactionType | undefined>(TransactionType.EXPENSE);
   const [categoryData, setCategoryData] = useState<CategoryAveragesResponse | null>(null);
+  const [reportingCurrency, setReportingCurrency] = useState('EUR');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [chartData, setChartData] = useState<any[]>([]);
@@ -54,6 +40,7 @@ export const CategoryAverages: React.FC = () => {
           period     // Use the time_period parameter
         );
         setCategoryData(data);
+        setReportingCurrency(data.reporting_currency);
         
         // Transform data for the chart
         // Take top 10 categories by average amount
@@ -81,11 +68,11 @@ export const CategoryAverages: React.FC = () => {
     };
 
     fetchCategoryAverages();
-  }, [period, transactionType]);
+  }, [period, selectedReportingCurrency, transactionType]);
 
   // Helper function to format currency
   const formatCurrency = (amount: number) => {
-    return formatMoney(amount, PERSISTED_STATISTICS_CURRENCY, {
+    return formatMoney(amount, reportingCurrency, {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     });
@@ -181,6 +168,7 @@ export const CategoryAverages: React.FC = () => {
 
       {!loading && !error && categoryData && (
         <div>
+          <ConversionSummaryNotice summary={categoryData.conversion_summary} />
           <div className="mb-3 text-xs text-gray-600 dark:text-gray-400">
             Showing monthly averages from {categoryData.start_date} to {categoryData.end_date} ({categoryData.months_count} months)
           </div>

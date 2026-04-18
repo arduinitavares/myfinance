@@ -1,33 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { statisticService } from '../services/statisticService';
-
-// Define the expense type statistics interface
-export interface ExpenseTypeStatistics {
-  expense_type: string;
-  period: string;
-  date: string | null;
-  period_amount: number;
-  period_transaction_count: number;
-  period_percentage: number;
-  total_amount: number;
-  transaction_count: number;
-  total_amount_cumulative: number;
-  total_transaction_count: number;
-  average_transaction_amount: number;
-  yearly_amount: number;
-  yearly_transaction_count: number;
-  categories: {
-    category: string;
-    period_amount: number;
-    period_transaction_count: number;
-    period_percentage: number;
-  }[];
-}
+import type {
+  ConversionSummary,
+  ExpenseTypeStatisticsItem,
+} from '../types/statistics';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 type StatisticsPeriod = 'monthly' | 'yearly' | 'all_time';
 
 export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'monthly', initialDate?: string) => {
-  const [expenseTypeStats, setExpenseTypeStats] = useState<ExpenseTypeStatistics[]>([]);
+  const { reportingCurrency: selectedReportingCurrency } = useReportingCurrency();
+  const [expenseTypeStats, setExpenseTypeStats] = useState<ExpenseTypeStatisticsItem[]>([]);
+  const [reportingCurrency, setReportingCurrency] = useState<string | null>(null);
+  const [conversionSummary, setConversionSummary] = useState<ConversionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<StatisticsPeriod>(initialPeriod);
@@ -41,7 +26,30 @@ export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'mont
       setLoading(true);
       try {
         const data = await statisticService.getExpenseTypeStatistics(fetchPeriod, fetchDate);
-        setExpenseTypeStats(data);
+        setReportingCurrency(data.reporting_currency);
+        setConversionSummary(data.conversion_summary);
+        setExpenseTypeStats(
+          data.items.map((item) => ({
+            ...item,
+            date: item.date ?? null,
+            period_amount: Number(item.period_amount) || 0,
+            period_transaction_count: Number(item.period_transaction_count) || 0,
+            period_percentage: Number(item.period_percentage) || 0,
+            total_amount: Number(item.total_amount) || 0,
+            transaction_count: Number(item.transaction_count) || 0,
+            total_amount_cumulative: Number(item.total_amount_cumulative) || 0,
+            total_transaction_count: Number(item.total_transaction_count) || 0,
+            average_transaction_amount: Number(item.average_transaction_amount) || 0,
+            yearly_amount: Number(item.yearly_amount) || 0,
+            yearly_transaction_count: Number(item.yearly_transaction_count) || 0,
+            categories: item.categories.map((category) => ({
+              ...category,
+              period_amount: Number(category.period_amount) || 0,
+              period_transaction_count: Number(category.period_transaction_count) || 0,
+              period_percentage: Number(category.period_percentage) || 0,
+            })),
+          }))
+        );
         setError(null);
       } catch (err) {
         setError('Failed to fetch expense type statistics');
@@ -55,7 +63,7 @@ export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'mont
 
   useEffect(() => {
     void fetchExpenseTypeStatistics(period, date);
-  }, [date, fetchExpenseTypeStatistics, period]);
+  }, [date, fetchExpenseTypeStatistics, period, selectedReportingCurrency]);
 
   // Helper functions to extract and process the data
   const getEssentialExpenses = () => {
@@ -67,7 +75,13 @@ export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'mont
   };
 
   const getTotalExpenses = () => {
-    return expenseTypeStats.reduce(
+    return expenseTypeStats
+      .filter(
+        (stat) =>
+          stat.expense_type === 'Fixed Essential' ||
+          stat.expense_type === 'Discretionary'
+      )
+      .reduce(
       (total, stat) => total + stat.period_amount,
       0
     );
@@ -106,6 +120,8 @@ export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'mont
 
   return {
     expenseTypeStats,
+    reportingCurrency,
+    conversionSummary,
     period,
     date,
     setPeriod,

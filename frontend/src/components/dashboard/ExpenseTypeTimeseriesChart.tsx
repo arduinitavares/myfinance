@@ -16,7 +16,8 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ChartArea, ChartColumnStacked } from 'lucide-react';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
+import { formatMoney } from '../../utils/currency';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
 
 const PERIODS = [
   { label: '3M', value: TimePeriod.THREE_MONTHS },
@@ -37,7 +38,7 @@ export const ExpenseTypeTimeseriesChart: React.FC = () => {
   const [chartType, setChartType] = useState<'area' | 'bar'>('bar');
 
   // Use the time_period parameter instead of manually calculating date ranges
-  const { timeseriesData, loading } = useExpenseTypeTimeseries(
+  const { conversionSummary, reportingCurrency, timeseriesData, loading } = useExpenseTypeTimeseries(
     undefined, // No specific expense type filter
     undefined, // No explicit start date
     undefined, // No explicit end date
@@ -91,7 +92,7 @@ export const ExpenseTypeTimeseriesChart: React.FC = () => {
       return `${value.toFixed(1)}%`;
     }
     
-    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
+    return formatMoney(value, reportingCurrency ?? 'EUR', {
       notation: 'compact',
     });
   };
@@ -233,6 +234,7 @@ export const ExpenseTypeTimeseriesChart: React.FC = () => {
           </button>
         </div>
       </div>
+      <ConversionSummaryNotice summary={conversionSummary} />
       
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="flex border border-gray-200 dark:border-gray-700 rounded-md overflow-hidden ml-auto">

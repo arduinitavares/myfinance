@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { statisticService } from '../services/statisticService';
-import { CategoryStatistics, TransactionType } from '../types/transaction';
+import { TransactionType } from '../types/transaction';
+import type { CategoryStatisticsItem, ConversionSummary } from '../types/statistics';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 type StatisticsPeriod = 'monthly' | 'yearly' | 'all_time';
 
 export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly', initialDate?: string) => {
-  const [categoryStats, setCategoryStats] = useState<CategoryStatistics[]>([]);
+  const { reportingCurrency: selectedReportingCurrency } = useReportingCurrency();
+  const [categoryStats, setCategoryStats] = useState<CategoryStatisticsItem[]>([]);
+  const [reportingCurrency, setReportingCurrency] = useState<string | null>(null);
+  const [conversionSummary, setConversionSummary] = useState<ConversionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<StatisticsPeriod>(initialPeriod);
@@ -19,7 +24,26 @@ export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly
       setLoading(true);
       try {
         const data = await statisticService.getCategoryStatistics(fetchPeriod, fetchDate);
-        setCategoryStats(data);
+        setReportingCurrency(data.reporting_currency);
+        setConversionSummary(data.conversion_summary);
+        setCategoryStats(
+          data.items.map((item) => ({
+            ...item,
+            category: item.category ?? item.category_name ?? 'Uncategorized',
+            date: item.date ?? null,
+            expense_type: item.expense_type ?? null,
+            period_amount: Number(item.period_amount) || 0,
+            period_transaction_count: Number(item.period_transaction_count) || 0,
+            period_percentage: Number(item.period_percentage) || 0,
+            total_amount: Number(item.total_amount) || 0,
+            transaction_count: Number(item.transaction_count) || 0,
+            total_amount_cumulative: Number(item.total_amount_cumulative) || 0,
+            total_transaction_count: Number(item.total_transaction_count) || 0,
+            average_transaction_amount: Number(item.average_transaction_amount) || 0,
+            yearly_amount: Number(item.yearly_amount) || 0,
+            yearly_transaction_count: Number(item.yearly_transaction_count) || 0,
+          }))
+        );
         setError(null);
       } catch (err) {
         setError('Failed to fetch category statistics');
@@ -33,7 +57,7 @@ export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly
 
   useEffect(() => {
     void fetchCategoryStatistics(period, date);
-  }, [date, fetchCategoryStatistics, period]);
+  }, [date, fetchCategoryStatistics, period, selectedReportingCurrency]);
 
   // Helper functions to extract and process the data
   const getExpenseCategories = () => {
@@ -142,6 +166,8 @@ export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly
 
   return {
     categoryStats,
+    reportingCurrency,
+    conversionSummary,
     period,
     date,
     setPeriod,

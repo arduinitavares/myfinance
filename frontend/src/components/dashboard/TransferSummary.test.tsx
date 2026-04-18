@@ -8,6 +8,7 @@ import {
   TransferSummaryResponse,
 } from '../../services/statisticService';
 import { ReportingCurrencyProvider } from '../../contexts/ReportingCurrencyContext';
+import type { ConversionSummary } from '../../types/statistics';
 
 jest.mock('../../services/apiClient', () => {
   const REPORTING_CURRENCIES = ['EUR', 'USD', 'BRL'] as const;
@@ -50,6 +51,11 @@ const buildTransferSummaryResponse = (
   start_date: '2026-03-01',
   end_date: '2026-03-31',
   reporting_currency: 'EUR',
+  conversion_summary: {
+    converted_transaction_count: 0,
+    unavailable_transaction_count: 0,
+    unavailable_currencies: [],
+  } satisfies ConversionSummary,
   items,
   ...overrides,
 });
@@ -137,6 +143,33 @@ describe('TransferSummary', () => {
     expect(screen.getByText('$1,200')).toBeInTheDocument();
     expect(screen.getByText('$950')).toBeInTheDocument();
     expect(screen.queryByText('€1,200')).not.toBeInTheDocument();
+  });
+
+  test('shows a partial-data warning when some transfer currencies are unavailable', async () => {
+    mockedGetTransferSummary.mockResolvedValueOnce(
+      buildTransferSummaryResponse(
+        {
+          reporting_currency: 'USD',
+          conversion_summary: {
+            converted_transaction_count: 1,
+            unavailable_transaction_count: 1,
+            unavailable_currencies: ['NEXO'],
+          },
+        },
+        [
+          {
+            subtype: 'International Transfer',
+            transaction_count: 2,
+            total_outgoing: 1200,
+            total_incoming: 950,
+          },
+        ]
+      )
+    );
+
+    renderTransferSummary();
+
+    expect(await screen.findByText(/some totals exclude unsupported currencies: nexo\./i)).toBeInTheDocument();
   });
 
   test('shows an empty state when no transfer rows are returned', async () => {

@@ -1,22 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { statisticService } from '../services/statisticService';
 import { TransactionType, TimePeriod } from '../types/transaction';
+import type { CategoryStatisticsItem, ConversionSummary } from '../types/statistics';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
-export interface CategoryTimeseriesData {
-  id: number;
-  period: string;
-  date: string;
+export interface CategoryTimeseriesData extends CategoryStatisticsItem {
   category_name: string;
-  transaction_type: string;
-  expense_type: string | null;
-  period_amount: number;
-  period_transaction_count: number;
-  period_percentage: number;
-  total_amount: number;
-  total_transaction_count: number;
-  average_transaction_amount: number;
-  yearly_amount: number;
-  yearly_transaction_count: number;
+  date: string;
 }
 
 export const useCategoryTimeseries = (
@@ -26,7 +16,10 @@ export const useCategoryTimeseries = (
   end_date?: string,
   time_period?: TimePeriod
 ) => {
+  const { reportingCurrency: selectedReportingCurrency } = useReportingCurrency();
   const [timeseriesData, setTimeseriesData] = useState<CategoryTimeseriesData[]>([]);
+  const [reportingCurrency, setReportingCurrency] = useState<string | null>(null);
+  const [conversionSummary, setConversionSummary] = useState<ConversionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,14 +33,22 @@ export const useCategoryTimeseries = (
         end_date,
         time_period
       );
+      setReportingCurrency(data.reporting_currency);
+      setConversionSummary(data.conversion_summary);
       
       // Transform data to ensure numeric values
-      const transformedData = data.map((item: any) => ({
+      const transformedData = data.items.map((item) => ({
         ...item,
+        category: item.category ?? item.category_name ?? 'Uncategorized',
+        category_name: item.category_name ?? item.category ?? 'Uncategorized',
+        date: item.date ?? '',
+        expense_type: item.expense_type ?? null,
         period_amount: Number(item.period_amount) || 0,
         period_transaction_count: Number(item.period_transaction_count) || 0,
         period_percentage: Number(item.period_percentage) || 0,
         total_amount: Number(item.total_amount) || 0,
+        transaction_count: Number(item.transaction_count) || 0,
+        total_amount_cumulative: Number(item.total_amount_cumulative) || 0,
         total_transaction_count: Number(item.total_transaction_count) || 0,
         average_transaction_amount: Number(item.average_transaction_amount) || 0,
         yearly_amount: Number(item.yearly_amount) || 0,
@@ -62,14 +63,16 @@ export const useCategoryTimeseries = (
     } finally {
       setLoading(false);
     }
-  }, [transaction_type, category_name, start_date, end_date, time_period]);
+  }, [category_name, end_date, start_date, time_period, transaction_type]);
 
   useEffect(() => {
     void fetchTimeseriesData();
-  }, [fetchTimeseriesData]);
+  }, [fetchTimeseriesData, selectedReportingCurrency]);
 
   return {
     timeseriesData,
+    reportingCurrency,
+    conversionSummary,
     loading,
     error,
     refreshData: fetchTimeseriesData

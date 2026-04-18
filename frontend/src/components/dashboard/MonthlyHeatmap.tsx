@@ -1,29 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { statisticService } from '../../services/statisticService';
 import { Loading } from '../common/Loading';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
-
-interface MonthlyStatistics {
-  period: 'monthly' | 'all_time';
-  date: string;
-  period_income: number;
-  period_expenses: number;
-  period_net_savings: number;
-  savings_rate: number;
-  total_income: number;
-  total_expenses: number;
-  total_net_savings: number;
-  income_count: number;
-  expense_count: number;
-  average_income: number;
-  average_expense: number;
-  yearly_income: number;
-  yearly_expenses: number;
-}
-
-interface MonthlyStatisticsResponse {
-  items?: MonthlyStatistics[];
-}
+import { formatMoney } from '../../utils/currency';
+import type { ConversionSummary, FinancialStatisticsTimeseriesItem } from '../../types/statistics';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
 
 interface MonthData {
   month: string; // Format: "YYYY-MM"
@@ -40,9 +21,12 @@ interface YearData {
 }
 
 export const MonthlyHeatmap: React.FC = () => {
+  const { reportingCurrency: selectedReportingCurrency } = useReportingCurrency();
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [yearData, setYearData] = useState<Record<string, YearData>>({});
+  const [reportingCurrency, setReportingCurrency] = useState('EUR');
+  const [conversionSummary, setConversionSummary] = useState<ConversionSummary | null>(null);
   
   // Get only the last 3 years of data, sorted descending
   const years = Object.keys(yearData)
@@ -55,16 +39,14 @@ export const MonthlyHeatmap: React.FC = () => {
       try {
         // Get all available monthly data
         const data = await statisticService.getStatisticsTimeseries();
-        const items = Array.isArray(data)
-          ? data
-          : Array.isArray((data as MonthlyStatisticsResponse | undefined)?.items)
-            ? (data as MonthlyStatisticsResponse).items!
-            : [];
+        const items = data.items;
+        setReportingCurrency(data.reporting_currency);
+        setConversionSummary(data.conversion_summary);
         
         // Process the data into year-month format
         const processedData: Record<string, YearData> = {};
         
-        items.forEach((stat: MonthlyStatistics) => {
+        items.forEach((stat: FinancialStatisticsTimeseriesItem) => {
           if (stat.date) {
             const date = new Date(stat.date);
             const year = date.getFullYear().toString();
@@ -101,7 +83,7 @@ export const MonthlyHeatmap: React.FC = () => {
     };
     
     fetchData();
-  }, []);
+  }, [selectedReportingCurrency]);
   
   const getIntensityClass = (monthData: MonthData | undefined) => {
     if (!monthData) return 'bg-gray-100 dark:bg-gray-800';
@@ -130,7 +112,7 @@ export const MonthlyHeatmap: React.FC = () => {
   };
   
   const formatCurrency = (value: number) => {
-    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY);
+    return formatMoney(value, reportingCurrency);
   };
   
   if (loading) return (<Loading variant="progress" size="medium" />);
@@ -145,6 +127,7 @@ export const MonthlyHeatmap: React.FC = () => {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg p-5 shadow-md hover:shadow-lg transition-all duration-300">
       <h3 className="text-lg font-medium mb-4 dark:text-gray-100">Monthly Financial Activity</h3>
+      <ConversionSummaryNotice summary={conversionSummary} />
       
       <div className="space-y-3">
         {years.map(year => (

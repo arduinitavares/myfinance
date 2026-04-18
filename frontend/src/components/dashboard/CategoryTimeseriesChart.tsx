@@ -16,7 +16,8 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { ChartArea, ChartColumnStacked } from 'lucide-react';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
+import { formatMoney } from '../../utils/currency';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
 
 const PERIODS = [
   { label: '3M', value: TimePeriod.THREE_MONTHS },
@@ -42,7 +43,7 @@ export const CategoryTimeseriesChart: React.FC<CategoryTimeseriesChartProps> = (
   const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({});
 
   // Use the time_period parameter instead of manually calculating date ranges
-  const { timeseriesData, loading } = useCategoryTimeseries(
+  const { conversionSummary, reportingCurrency, timeseriesData, loading } = useCategoryTimeseries(
     transactionType,
     undefined, // No specific category filter
     undefined, // No explicit start date
@@ -172,7 +173,7 @@ export const CategoryTimeseriesChart: React.FC<CategoryTimeseriesChartProps> = (
       return `${value.toFixed(1)}%`;
     } else {
       // Format as currency for bar chart
-      return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
+      return formatMoney(value, reportingCurrency ?? 'EUR', {
         notation: 'compact'
       });
     }
@@ -367,6 +368,7 @@ export const CategoryTimeseriesChart: React.FC<CategoryTimeseriesChartProps> = (
           ))}
         </div>
       </div>
+      <ConversionSummaryNotice summary={conversionSummary} />
       
       {loading ? (
         <Loading />

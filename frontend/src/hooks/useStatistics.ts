@@ -1,40 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { statisticService } from '../services/statisticService';
 import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
-
-interface Statistics {
-  period: 'monthly' | 'all_time';
-  date: string | null;
-  reporting_currency: string;
-  period_income: number;
-  period_expenses: number;
-  period_net_savings: number;
-  savings_rate: number;
-  total_income: number;
-  total_expenses: number;
-  total_net_savings: number;
-  income_count: number;
-  expense_count: number;
-  average_income: number;
-  average_expense: number;
-  yearly_income: number;
-  yearly_expenses: number;
-}
-
-interface StatisticsOverview {
-  current_month: Statistics;
-  last_month: Statistics;
-  previous_year_last_month: Statistics | null;
-  all_time: Statistics;
-}
+import type { StatisticsOverviewResponse } from '../types/statistics';
 
 export const useStatistics = () => {
   const { reportingCurrency } = useReportingCurrency();
-  const [statistics, setStatistics] = useState<StatisticsOverview | null>(null);
+  const [statistics, setStatistics] = useState<StatisticsOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchStatistics = async () => {
+  const fetchStatistics = useCallback(async () => {
     setLoading(true);
     try {
       const data = await statisticService.getStatisticsOverview();
@@ -46,11 +21,11 @@ export const useStatistics = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchStatistics();
-  }, [reportingCurrency]);
+    void fetchStatistics();
+  }, [fetchStatistics, reportingCurrency]);
 
   return {
     statistics,
@@ -58,4 +33,4 @@ export const useStatistics = () => {
     error,
     refreshStatistics: fetchStatistics
   };
-}; 
+};

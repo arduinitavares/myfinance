@@ -11,7 +11,8 @@ import { useStatistics } from '../../hooks/useStatistics';
 import { Loading } from '../common/Loading';
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { ChartBarDecreasing, Grid3x3 } from 'lucide-react';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
+import { formatMoney } from '../../utils/currency';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
 
 const EXPENSE_COLORS = [
   '#EF4444', '#DC2626', '#B91C1C', '#991B1B', '#7F1D1D',
@@ -35,8 +36,10 @@ export const CategoryBreakdown: React.FC = () => {
   const { 
     expenseCategoriesWithPercentage, 
     incomeCategoriesWithPercentage, 
+    conversionSummary,
     loading: categoryLoading, 
     error: categoryError,
+    reportingCurrency,
     setPeriod
   } = useCategoryStatistics();
   
@@ -55,7 +58,7 @@ export const CategoryBreakdown: React.FC = () => {
   );
     
   if (!statistics) return null;
-  const overviewCurrency = statistics.current_month.reporting_currency;
+  const activeCurrency = reportingCurrency ?? statistics.current_month.reporting_currency;
 
   // Get current month name from statistics
   const currentDate = new Date(statistics.current_month.date!);
@@ -124,16 +127,8 @@ export const CategoryBreakdown: React.FC = () => {
     setPeriod(newPeriod);
   };
 
-  // Format currency
-  const formatPersistedCurrency = (value: number) => {
-    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
-      maximumFractionDigits: 0,
-      minimumFractionDigits: 0,
-    });
-  };
-
-  const formatOverviewCurrency = (value: number) => {
-    return formatMoney(value, overviewCurrency, {
+  const formatCurrency = (value: number) => {
+    return formatMoney(value, activeCurrency, {
       maximumFractionDigits: 0,
       minimumFractionDigits: 0,
     });
@@ -212,6 +207,7 @@ export const CategoryBreakdown: React.FC = () => {
           </div>
         </div>
       </div>
+      <ConversionSummaryNotice summary={conversionSummary} />
       
       <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="mt-4">
         <Tabs.List className="flex space-x-2 mb-4">
@@ -242,13 +238,13 @@ export const CategoryBreakdown: React.FC = () => {
                 isAnimationActive={false}
               >
                 <Tooltip 
-                  formatter={(value: number) => formatPersistedCurrency(value)}
+                  formatter={(value: number) => formatCurrency(value)}
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
                       return (
                         <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow border border-gray-200 dark:border-gray-700 dark:text-gray-200">
                           <p className="font-medium">{payload[0].payload.name}</p>
-                          <p>{formatPersistedCurrency(payload[0].value as number)}</p>
+                          <p>{formatCurrency(payload[0].value as number)}</p>
                           <p>{`${payload[0].payload.percentage}%`}</p>
                         </div>
                       );
@@ -268,7 +264,7 @@ export const CategoryBreakdown: React.FC = () => {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} />
                 <XAxis 
                   type="number" 
-                  tickFormatter={(value) => formatPersistedCurrency(value)}
+                  tickFormatter={(value) => formatCurrency(value)}
                   tick={{ fontSize: 12, fill: 'currentColor' }}
                   stroke="#9ca3af"
                   className="dark:text-gray-400"
@@ -282,7 +278,7 @@ export const CategoryBreakdown: React.FC = () => {
                   className="dark:text-gray-400"
                 />
                 <Tooltip 
-                  formatter={(value: number) => formatPersistedCurrency(value)}
+                  formatter={(value: number) => formatCurrency(value)}
                   contentStyle={{ 
                     backgroundColor: 'var(--color-tooltip-bg)', 
                     borderColor: 'var(--color-tooltip-border)',
@@ -334,7 +330,7 @@ export const CategoryBreakdown: React.FC = () => {
             <div className="text-gray-600 dark:text-gray-400">
               {activeTab === 'expenses' ? 'This Month:' : 'This Month:'} {' '}
               <span className="font-medium dark:text-gray-300">
-                {formatOverviewCurrency(
+                {formatCurrency(
                   activeTab === 'expenses' 
                     ? statistics.current_month.period_expenses 
                     : statistics.current_month.period_income
@@ -344,7 +340,7 @@ export const CategoryBreakdown: React.FC = () => {
             <div className="text-gray-600 dark:text-gray-400">
               {activeTab === 'expenses' ? 'Monthly Average:' : 'Monthly Average:'} {' '}
               <span className="font-medium dark:text-gray-300">
-                {formatOverviewCurrency(
+                {formatCurrency(
                   activeTab === 'expenses' 
                     ? yearlyExpenseAverage
                     : yearlyIncomeAverage
@@ -364,7 +360,7 @@ export const CategoryBreakdown: React.FC = () => {
             {selectedPeriod === 'all_time' && (activeTab === 'expenses' ? 'All-time Expenses' : 'All-time Income')}
           </h5>
           <p className={`text-xl font-bold tracking-tight ${activeTab === 'expenses' ? 'text-rose-600' : 'text-emerald-600'}`}>
-            {formatOverviewCurrency(
+            {formatCurrency(
               activeTab === 'expenses' 
                 ? (selectedPeriod === 'yearly' ? statistics.current_month.yearly_expenses : 
                    selectedPeriod === 'all_time' ? statistics.all_time.total_expenses : 

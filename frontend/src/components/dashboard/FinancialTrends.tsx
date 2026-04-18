@@ -3,6 +3,7 @@ import { Loading } from '../common/Loading';
 import { useStatisticsTimeseries } from '../../hooks/useStatisticsTimeseries';
 import { TimeseriesChart } from './TimeseriesChart';
 import { TimePeriod } from '../../types/transaction';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
 
 const PERIODS = [
   { label: '3M', value: TimePeriod.THREE_MONTHS },
@@ -15,7 +16,12 @@ const PERIODS = [
 
 export const FinancialTrends: React.FC = () => {
   const [period, setPeriod] = React.useState<TimePeriod>(TimePeriod.ONE_YEAR);
-  const { timeseriesData, loading } = useStatisticsTimeseries(undefined, undefined, period);
+  const {
+    conversionSummary,
+    reportingCurrency,
+    timeseriesData,
+    loading,
+  } = useStatisticsTimeseries(undefined, undefined, period);
 
   return (
     <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 dark:border-gray-700">
@@ -27,11 +33,18 @@ export const FinancialTrends: React.FC = () => {
           </svg>
         </div>
       </div>
+      <ConversionSummaryNotice summary={conversionSummary} />
       
       {loading ? (
         <Loading />
       ) : timeseriesData && timeseriesData.length > 0 ? (
-        <TimeseriesChart data={timeseriesData} period={period} setPeriod={setPeriod} PERIODS={PERIODS} />
+        <TimeseriesChart
+          data={timeseriesData}
+          period={period}
+          setPeriod={setPeriod}
+          PERIODS={PERIODS}
+          reportingCurrency={reportingCurrency ?? 'EUR'}
+        />
       ) : (
         <div className="h-[400px] flex items-center justify-center text-gray-500 dark:text-gray-400">
           No data available

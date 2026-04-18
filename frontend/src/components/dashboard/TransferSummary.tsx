@@ -10,6 +10,7 @@ import {
   DEFAULT_TRANSFER_SUMMARY_PRESET,
   TransferSummaryPreset,
 } from './transferSummaryRange';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
 
 export const TransferSummary: React.FC = () => {
   const { reportingCurrency } = useReportingCurrency();
@@ -296,6 +297,7 @@ export const TransferSummary: React.FC = () => {
         )}
       </div>
 
+      <ConversionSummaryNotice summary={summary.conversion_summary} />
       {body}
     </div>
   );

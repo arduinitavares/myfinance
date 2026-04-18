@@ -53,7 +53,7 @@ describe('MonthlyHeatmap', () => {
     window.localStorage.clear();
   });
 
-  test('keeps persisted statistics formatted in EUR when the selected currency is USD', async () => {
+  test('formats timeseries values in the selected reporting currency', async () => {
     window.localStorage.setItem('reporting_currency', 'USD');
     const items = [
       {
@@ -94,10 +94,10 @@ describe('MonthlyHeatmap', () => {
     await waitFor(() => {
       const marchCell = container.querySelector('[title^="March 2026"]') as HTMLElement | null;
       expect(marchCell).not.toBeNull();
-      expect(marchCell?.title).toContain('Income: €1,200.00');
-      expect(marchCell?.title).toContain('Expenses: €300.00');
-      expect(marchCell?.title).toContain('Net: €900.00');
-      expect(marchCell?.title).not.toContain('$');
+      expect(marchCell?.title).toContain('Income: $1,200.00');
+      expect(marchCell?.title).toContain('Expenses: $300.00');
+      expect(marchCell?.title).toContain('Net: $900.00');
+      expect(marchCell?.title).not.toContain('€');
     });
   });
 });

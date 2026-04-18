@@ -14,10 +14,10 @@ import {
 import { format, parseISO } from 'date-fns';
 import * as Tabs from '@radix-ui/react-tabs';
 import { TimePeriod } from '../../types/transaction';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
+import { formatMoney } from '../../utils/currency';
 
 interface TimeseriesData {
-    date: string;
+    date: string | null;
     period_income: number;
     period_expenses: number;
     period_net_savings: number;
@@ -32,9 +32,16 @@ interface TimeseriesChartProps {
     period: TimePeriod;
     setPeriod: (period: TimePeriod) => void;
     PERIODS: { label: string; value: TimePeriod }[];
+    reportingCurrency: string;
 }
 
-export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, setPeriod, PERIODS }) => {
+export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({
+    data,
+    period,
+    setPeriod,
+    PERIODS,
+    reportingCurrency,
+}) => {
     const [activeMetric, setActiveMetric] = useState('income_expenses');
     const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({});
 
@@ -69,7 +76,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
 
     // Transform and sort the data
     const sortedData = [...data]
-        .filter(item => item && item.date)
+        .filter((item): item is TimeseriesData & { date: string } => Boolean(item?.date))
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         .map(item => ({
             ...item,
@@ -110,7 +117,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
         if (metric === 'savings_rate') {
         return `${Number(value).toFixed(1)}%`;
         }
-        return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
+        return formatMoney(value, reportingCurrency, {
             notation: 'compact'
         });
     };
@@ -177,7 +184,7 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
                                     if (activeMetric === 'savings_rate') {
                                         return `${value}%`;
                                     }
-                                    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
+                                    return formatMoney(value, reportingCurrency, {
                                         notation: 'compact'
                                     });
                                 }}

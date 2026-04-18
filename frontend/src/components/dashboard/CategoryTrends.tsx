@@ -8,7 +8,8 @@ import { useStatistics } from '../../hooks/useStatistics';
 import { useExpenseTypeStatistics } from '../../hooks/useExpenseTypeStatistics';
 import { Loading } from '../common/Loading';
 import { ChevronDownIcon, CheckIcon } from '@heroicons/react/24/outline';
-import { formatMoney, PERSISTED_STATISTICS_CURRENCY } from '../../utils/currency';
+import { formatMoney } from '../../utils/currency';
+import { ConversionSummaryNotice } from './ConversionSummaryNotice';
 
 export const CategoryTrends: React.FC = () => {
   const [activeTab, setActiveTab] = useState('expense-types');
@@ -24,8 +25,10 @@ export const CategoryTrends: React.FC = () => {
   
   const { 
     timeseriesData, 
+    conversionSummary: timeseriesConversionSummary,
     loading: timeseriesLoading, 
-    error: timeseriesError 
+    error: timeseriesError,
+    reportingCurrency: timeseriesReportingCurrency,
   } = useStatisticsTimeseries();
   
   const { 
@@ -41,9 +44,11 @@ export const CategoryTrends: React.FC = () => {
     discretionaryPercentage,
     topEssentialCategories,
     topDiscretionaryCategories,
+    conversionSummary: expenseTypeConversionSummary,
     setPeriod: setExpenseTypePeriod,
     loading: expenseTypeLoading,
-    error: expenseTypeError
+    error: expenseTypeError,
+    reportingCurrency: expenseTypeReportingCurrency,
   } = useExpenseTypeStatistics(selectedPeriod);
   
   const loading = categoryLoading || timeseriesLoading || statsLoading || expenseTypeLoading;
@@ -64,20 +69,15 @@ export const CategoryTrends: React.FC = () => {
     </div>
   );
   if (!statistics || !timeseriesData || timeseriesData.length === 0) return null;
-  const overviewCurrency = statistics.current_month.reporting_currency;
+  const reportingCurrency =
+    expenseTypeReportingCurrency ??
+    timeseriesReportingCurrency ??
+    statistics.current_month.reporting_currency;
+  const activeConversionSummary =
+    activeTab === 'expense-types' ? expenseTypeConversionSummary : timeseriesConversionSummary;
 
-  // We no longer need these since we removed the Top Categories tab
-  // and now use the expense type data instead
-
-  // Format currency
-  const formatPersistedCurrency = (value: number) => {
-    return formatMoney(value, PERSISTED_STATISTICS_CURRENCY, {
-      notation: 'compact',
-    });
-  };
-
-  const formatOverviewCurrency = (value: number) => {
-    return formatMoney(value, overviewCurrency, {
+  const formatCurrency = (value: number) => {
+    return formatMoney(value, reportingCurrency, {
       notation: 'compact',
     });
   };
@@ -98,7 +98,7 @@ export const CategoryTrends: React.FC = () => {
           {payload.name}
         </text>
         <text x={cx} y={cy} dy={10} textAnchor="middle" className="text-xs dark:fill-gray-200 dark:stroke-none">
-          {formatPersistedCurrency(value)}
+          {formatCurrency(value)}
         </text>
         <text x={cx} y={cy} dy={30} textAnchor="middle" className="text-xs dark:fill-gray-200 dark:stroke-none">
           {`${(percent * 100).toFixed(0)}%`}
@@ -209,6 +209,7 @@ export const CategoryTrends: React.FC = () => {
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
+      <ConversionSummaryNotice summary={activeConversionSummary} />
       
       <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
         <Tabs.List className="flex space-x-4 mb-4">
@@ -260,7 +261,7 @@ export const CategoryTrends: React.FC = () => {
                       <Cell key="cell-1" fill="#EC4899" className="dark:fill-pink-500" />
                     </Pie>
                     <Tooltip 
-                      formatter={(value: number) => formatPersistedCurrency(value)}
+                      formatter={(value: number) => formatCurrency(value)}
                       contentStyle={{ 
                         backgroundColor: 'var(--color-tooltip-bg)', 
                         borderColor: 'var(--color-tooltip-border)',
@@ -306,7 +307,7 @@ export const CategoryTrends: React.FC = () => {
                           </div>
                         </div>
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {formatPersistedCurrency(category.period_amount)}
+                          {formatCurrency(category.period_amount)}
                         </span>
                       </div>
                     );
@@ -316,7 +317,7 @@ export const CategoryTrends: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium dark:text-gray-300">Total Essential</span>
                     <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
-                      {formatPersistedCurrency(essentialExpenses?.period_amount || 0)}
+                      {formatCurrency(essentialExpenses?.period_amount || 0)}
                     </span>
                   </div>
                 </div>
@@ -339,7 +340,7 @@ export const CategoryTrends: React.FC = () => {
                           </div>
                         </div>
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {formatPersistedCurrency(category.period_amount)}
+                          {formatCurrency(category.period_amount)}
                         </span>
                       </div>
                     );
@@ -349,7 +350,7 @@ export const CategoryTrends: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium dark:text-gray-300">Total Discretionary</span>
                     <span className="text-sm font-medium text-pink-600 dark:text-pink-400">
-                      {formatPersistedCurrency(discretionaryExpenses?.period_amount || 0)}
+                      {formatCurrency(discretionaryExpenses?.period_amount || 0)}
                     </span>
                   </div>
                 </div>
@@ -376,13 +377,13 @@ export const CategoryTrends: React.FC = () => {
                 className="dark:text-gray-400"
               />
               <YAxis 
-                tickFormatter={(value) => formatOverviewCurrency(value)} 
+                tickFormatter={(value) => formatCurrency(value)} 
                 tick={{ fontSize: 12, fill: 'currentColor' }}
                 stroke="#9ca3af"
                 className="dark:text-gray-400"
               />
               <Tooltip 
-                formatter={(value: number) => formatOverviewCurrency(value)}
+                formatter={(value: number) => formatCurrency(value)}
                 labelFormatter={(value) => value}
                 contentStyle={{ 
                   backgroundColor: 'var(--color-tooltip-bg)', 

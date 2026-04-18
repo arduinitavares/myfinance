@@ -5,6 +5,16 @@ import {
   TimePeriod
 } from '../types/transaction';
 import { apiClient, type ReportingCurrency } from './apiClient';
+import type {
+  CategoryAveragesResponse,
+  CategoryStatisticsListResponse,
+  CategoryTimeseriesResponse,
+  ConversionSummary,
+  ExpenseTypeStatisticsResponse,
+  ExpenseTypeTimeseriesResponse,
+  FinancialStatisticsTimeseriesResponse,
+  StatisticsOverviewResponse,
+} from '../types/statistics';
 
 export interface TransferSummaryItem {
   subtype: string;
@@ -17,6 +27,7 @@ export interface TransferSummaryResponse {
   start_date: string;
   end_date: string;
   reporting_currency: ReportingCurrency;
+  conversion_summary: ConversionSummary;
   items: TransferSummaryItem[];
 }
 
@@ -24,7 +35,7 @@ export const statisticService = {
   getCategoryStatistics: async (
     period: 'monthly' | 'yearly' | 'all_time' = 'monthly',
     date?: string
-  ) => {
+  ): Promise<CategoryStatisticsListResponse> => {
     const params: Record<string, string> = { period };
     if (date) {
       params.date = date;
@@ -39,7 +50,7 @@ export const statisticService = {
   getExpenseTypeStatistics: async (
     period: 'monthly' | 'yearly' | 'all_time' = 'monthly',
     date?: string
-  ) => {
+  ): Promise<ExpenseTypeStatisticsResponse> => {
     const params: Record<string, string> = { period };
     if (date) {
       params.date = date;
@@ -51,7 +62,7 @@ export const statisticService = {
     return response.data;
   },
 
-  getStatisticsOverview: async () => {
+  getStatisticsOverview: async (): Promise<StatisticsOverviewResponse> => {
     const response = await apiClient.get('/statistics/overview');
     return response.data;
   },
@@ -70,7 +81,11 @@ export const statisticService = {
     return response.data;
   },
 
-  getStatisticsTimeseries: async (start_date?: string, end_date?: string, time_period?: string) => {
+  getStatisticsTimeseries: async (
+    start_date?: string,
+    end_date?: string,
+    time_period?: string
+  ): Promise<FinancialStatisticsTimeseriesResponse> => {
     const params: Record<string, string> = {};
     if (start_date) params.start_date = start_date;
     if (end_date) params.end_date = end_date;
@@ -85,7 +100,7 @@ export const statisticService = {
     start_date?: string, 
     end_date?: string,
     time_period?: TimePeriod
-  ) => {
+  ): Promise<CategoryTimeseriesResponse> => {
     const params: Record<string, string> = {};
     if (transaction_type) params.transaction_type = transaction_type;
     if (category_name) params.category_name = category_name;
@@ -101,7 +116,7 @@ export const statisticService = {
     start_date?: string, 
     end_date?: string,
     time_period?: TimePeriod
-  ) => {
+  ): Promise<ExpenseTypeTimeseriesResponse> => {
     const params: Record<string, string> = {};
     if (expense_type) params.expense_type = expense_type;
     if (start_date) params.start_date = start_date;
@@ -143,7 +158,7 @@ export const statisticService = {
     startDate?: string,
     endDate?: string,
     timePeriod?: TimePeriod
-  ) => {
+  ): Promise<CategoryAveragesResponse> => {
     const params: Record<string, string> = {};
     if (transactionType) params.transaction_type = transactionType;
     if (startDate) params.start_date = startDate;

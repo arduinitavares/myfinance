@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { statisticService } from '../services/statisticService';
 import { TimePeriod } from '../types/transaction';
+import type { ConversionSummary } from '../types/statistics';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 export interface ExpenseTypeTimeseriesItem {
   date: string;
@@ -16,7 +18,10 @@ export const useExpenseTypeTimeseries = (
   end_date?: string,
   time_period?: TimePeriod
 ) => {
+  const { reportingCurrency: selectedReportingCurrency } = useReportingCurrency();
   const [timeseriesData, setTimeseriesData] = useState<ExpenseTypeTimeseriesItem[]>([]);
+  const [reportingCurrency, setReportingCurrency] = useState<string | null>(null);
+  const [conversionSummary, setConversionSummary] = useState<ConversionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,12 +34,11 @@ export const useExpenseTypeTimeseries = (
         end_date,
         time_period
       );
-      
-      // The API returns a root array, so we access it directly
-      const items = Array.isArray(data) ? data : [];
+      setReportingCurrency(data.reporting_currency);
+      setConversionSummary(data.conversion_summary);
       
       // Transform data to ensure numeric values
-      const transformedData = items.map((item: any) => ({
+      const transformedData = data.items.map((item) => ({
         date: item.date,
         expense_type: item.expense_type.toLowerCase().replace(/\s+/g, '_'),
         period_amount: Number(item.period_amount) || 0,
@@ -76,14 +80,16 @@ export const useExpenseTypeTimeseries = (
     } finally {
       setLoading(false);
     }
-  }, [expense_type, start_date, end_date, time_period]);
+  }, [end_date, expense_type, start_date, time_period]);
 
   useEffect(() => {
     void fetchTimeseriesData();
-  }, [fetchTimeseriesData]);
+  }, [fetchTimeseriesData, selectedReportingCurrency]);
 
   return {
     timeseriesData,
+    reportingCurrency,
+    conversionSummary,
     loading,
     error,
     refreshData: fetchTimeseriesData
