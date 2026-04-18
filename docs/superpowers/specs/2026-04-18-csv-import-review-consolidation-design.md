@@ -186,6 +186,8 @@ Expected rules:
 - Beobank CSV: detect the existing supported Beobank export header shapes
 - Nexo CSV: detect the exact ordered comma-delimited Nexo header
 
+For bounded scanning behavior, detector and header-search helpers may scan up to the first 20 physical lines of the file looking for a supported header row. If no supported header is found in that window, detection should return `unknown` rather than scanning the entire file unbounded.
+
 Detection returns:
 
 - `strategy_key`
@@ -271,6 +273,8 @@ A small shared CSV support module is acceptable for:
 
 It must not become a provider registry or own bank-specific semantics.
 
+The preferred implementation uses the Python standard library (`csv`, `io`, and small helper functions) rather than `pandas`. If no runtime code still needs `pandas` after the legacy CSV stack is removed, this migration should drop it from backend dependencies as part of the deletion step.
+
 ### Raw evidence
 
 CSV evidence should remain auditable like PDF evidence.
@@ -322,6 +326,8 @@ Proposal precedence should be:
 
 This keeps strong provider semantics from being overwritten by generic heuristics.
 
+The enrichment step is gap-filling only. It may add missing proposal fields, but it must not overwrite an explicit deterministic extractor proposal that is already present on the draft.
+
 Examples:
 
 - Nexo fee rows keep their deterministic expense and category proposal
@@ -342,6 +348,8 @@ This step should:
 
 This keeps the automation reviewable instead of committing it blindly.
 
+This is also the intentional relocation point for recurrence-pattern matching. In the legacy CSV stack, recurrence matching happened during direct import before commit. After consolidation, recurrence matching moves into pre-review enrichment and is no longer treated as a post-commit hook.
+
 The review page should surface these proposals as imported suggestions, not as final truth.
 
 ## Approval And Commit Behavior
@@ -357,7 +365,8 @@ Fallback sign-based type inference remains acceptable only when the draft truly 
 Provider account identity rules must remain explicit:
 
 - Belfius CSV uses the detected account number hint from the file
-- Beobank CSV uses the file/account identity rules already supported by the current importer
+- Beobank compact CSV infers the account number from a numeric filename stem, matching the current compact-import behavior
+- Beobank debit/credit CSV keeps an empty account number when the file itself does not provide one, matching the current non-compact importer behavior
 - Nexo uses the v1 simplified identity `account_number = "NEXO"` and `source_bank = "Nexo"`
 
 ### Duplicate checks
@@ -367,6 +376,8 @@ Duplicate detection should remain centralized at approval time through the exist
 ### Post-commit hooks
 
 After approval commits transactions, the workflow must handle the downstream effects currently split between the old CSV lane and review approval.
+
+Recurrence-pattern matching is intentionally not in this list because it has moved earlier into pre-review enrichment.
 
 Required post-commit behavior:
 
@@ -384,7 +395,7 @@ The Belfius extractor must support the current export shape with metadata prefac
 
 Behavior:
 
-- scan until the known Belfius transaction header row
+- scan until the known Belfius transaction header row within the bounded detector/header-search window
 - parse statement rows deterministically
 - preserve raw amount and raw currency from the file
 - set explicit account number hints from the statement data
@@ -402,7 +413,9 @@ This includes:
 
 Behavior:
 
-- preserve the current account identity behavior where filename-based account inference is needed
+- preserve the current split account identity behavior:
+  - compact export -> numeric filename stem becomes `account_number`
+  - debit/credit export -> `account_number` remains empty when the file has no account identifier
 - emit deterministic transaction type proposals from debit/credit semantics
 - leave category proposals empty unless later enrichment adds them
 
