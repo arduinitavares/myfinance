@@ -1,9 +1,8 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 
 from ..database import Base
-from .transaction import ExpenseCategory, IncomeCategory, TransactionType, TransferCategory
 
 
 class ImportSession(Base):
@@ -68,11 +67,12 @@ class ImportTransactionDraft(Base):
     source_locator = Column(String(255), nullable=False)
     inferred_category = Column(String(100), nullable=True)
     category_source = Column(String(50), nullable=True)
-    proposed_transaction_type = Column(Enum(TransactionType), nullable=True)
-    proposed_expense_category = Column(Enum(ExpenseCategory), nullable=True)
-    proposed_income_category = Column(Enum(IncomeCategory), nullable=True)
-    proposed_transfer_category = Column(Enum(TransferCategory), nullable=True)
-    proposal_source = Column(String(50), nullable=True)
+    proposed_transaction_type = Column(String(50), nullable=True)
+    proposed_expense_category = Column(String(100), nullable=True)
+    proposed_income_category = Column(String(100), nullable=True)
+    proposed_transfer_category = Column(String(100), nullable=True)
+    classification_source = Column(String(50), nullable=True)
+    recurrence_pattern_id = Column(Integer, nullable=True)
     confidence = Column(Float, nullable=True)
     field_confidence = Column(Text, nullable=True)
     raw_fields = Column(Text, nullable=True)

@@ -2,10 +2,8 @@ import React, { useRef, useState } from 'react';
 import axios from 'axios';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Progress from '@radix-ui/react-progress';
-import * as Toast from '@radix-ui/react-toast';
 import { useNavigate } from 'react-router-dom';
 import { importService } from '../services/importService';
-import { transactionService } from '../services/transactionService';
 
 interface FileUploadProps {
   onUploadSuccess: () => void;
@@ -32,8 +30,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
   const [batchLoading, setBatchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicateSessionId, setDuplicateSessionId] = useState<number | null>(null);
-  const [showToast, setShowToast] = useState(false);
-  const [importedCount, setImportedCount] = useState<number | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -80,17 +76,10 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
         throw new Error('File too large. The maximum allowed size is 5 MB.');
       }
 
-      if (fileKind === 'pdf') {
-        const session = await importService.uploadStatement(file);
-        navigate(`/imports/${session.id}/review`);
-        return;
-      }
-
-      const result = await transactionService.uploadCSV(file);
-      setImportedCount(Array.isArray(result) ? result.length : null);
+      const session = await importService.uploadFile(file);
       setSelectedFileName(null);
       onUploadSuccess();
-      setShowToast(true);
+      navigate(`/imports/${session.id}/review`);
     } catch (err) {
       let message = 'Error uploading file. Please try again.';
       if (axios.isAxiosError(err)) {
@@ -245,24 +234,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess }) => {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-
-      <Toast.Provider>
-        <Toast.Root
-          open={showToast}
-          onOpenChange={setShowToast}
-          className="bg-green-50 border border-green-200 rounded-lg shadow-lg p-4"
-        >
-          <Toast.Title className="text-green-900 font-medium">
-            Success
-          </Toast.Title>
-          <Toast.Description className="text-green-800 mt-1">
-            {importedCount != null
-              ? `File uploaded successfully. Imported ${importedCount} new transaction${importedCount === 1 ? '' : 's'}.`
-              : 'File uploaded successfully.'}
-          </Toast.Description>
-        </Toast.Root>
-        <Toast.Viewport className="fixed bottom-0 right-0 flex flex-col p-6 gap-2 w-96 m-0 list-none z-50" />
-      </Toast.Provider>
     </div>
   );
 }; 

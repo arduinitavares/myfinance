@@ -46,7 +46,7 @@ jest.mock('react-router-dom', () => ({
 
 jest.mock('../../services/importService', () => ({
   importService: {
-    uploadStatement: jest.fn(),
+    uploadFile: jest.fn(),
     getReview: jest.fn(),
     approve: jest.fn(),
     reject: jest.fn(),
@@ -146,6 +146,37 @@ const unavailablePayload = {
   ],
 };
 
+const proposalPayload = {
+  ...firstPayload,
+  transactions: [
+    {
+      ...firstPayload.transactions[0],
+      proposed_transaction_type: 'Expense',
+      proposed_expense_category: 'Groceries',
+      classification_source: 'recurrence_pattern',
+      recurrence_pattern_id: 17,
+    },
+  ],
+};
+
+const csvStatementPayload = {
+  ...firstPayload,
+  session: {
+    ...firstPayload.session,
+    file_name: 'nexo.csv',
+    mime_type: 'text/csv',
+    strategy_key: 'nexo_csv',
+    provider_hint: 'nexo',
+    extractor_id: 'nexo_csv_v1',
+  },
+  statement: {
+    ...firstPayload.statement,
+    account_number_hint: 'NEXO',
+    card_number_hint: null,
+    currency: null,
+  },
+};
+
 const secondPayload = {
   ...firstPayload,
   session: {
@@ -223,7 +254,7 @@ const nexoProposalPayload = {
       source_locator: 'csv:r4:NXT_CASHOUT_1',
       proposed_transaction_type: 'Transfer',
       proposed_transfer_category: 'Internal Transfer',
-      proposal_source: 'deterministic_extracted',
+      classification_source: 'deterministic_nexo_csv',
       raw_fields: {
         source_locator: 'csv:r4:NXT_CASHOUT_1',
       },
@@ -237,7 +268,7 @@ const nexoProposalPayload = {
       proposed_expense_category: null,
       proposed_income_category: null,
       proposed_transfer_category: null,
-      proposal_source: null,
+      classification_source: null,
       raw_fields: {
         source_locator: 'csv:r2:NXT_PURCHASE_1',
       },
@@ -280,13 +311,13 @@ describe('ImportReviewPage', () => {
 
     renderImportReviewPage();
 
-    expect(await screen.findByRole('columnheader', { name: /proposed/i })).toBeInTheDocument();
+    expect(await screen.findByRole('columnheader', { name: /proposal/i })).toBeInTheDocument();
     const proposalCell = screen.getByText('Transfer • Internal Transfer').closest('td');
     expect(proposalCell).not.toBeNull();
-    expect(within(proposalCell as HTMLElement).getByText('deterministic_extracted')).toBeInTheDocument();
-    const fallbackCell = screen.getByText('Needs classification').closest('td');
+    expect(within(proposalCell as HTMLElement).getByText('deterministic_nexo_csv')).toBeInTheDocument();
+    const fallbackCell = screen.getByText('None').closest('td');
     expect(fallbackCell).not.toBeNull();
-    expect(within(fallbackCell as HTMLElement).queryByText('deterministic_extracted')).not.toBeInTheDocument();
+    expect(within(fallbackCell as HTMLElement).queryByText('deterministic_nexo_csv')).not.toBeInTheDocument();
   });
 
   test('shows raw context when a draft transaction has unavailable FX', async () => {
@@ -296,6 +327,25 @@ describe('ImportReviewPage', () => {
 
     expect(await screen.findByText('FX unavailable')).toBeInTheDocument();
     expect(screen.getByText(/Raw -NEXO\s42\.00/)).toBeInTheDocument();
+  });
+
+  test('renders proposal metadata for draft transactions', async () => {
+    mockedImportService.getReview.mockResolvedValue(proposalPayload as never);
+
+    renderImportReviewPage();
+
+    expect(await screen.findByText('Expense • Groceries')).toBeInTheDocument();
+    expect(screen.getByText('recurrence_pattern • Pattern 17')).toBeInTheDocument();
+  });
+
+  test('shows account hints for csv review sessions when no card hint exists', async () => {
+    mockedImportService.getReview.mockResolvedValue(csvStatementPayload as never);
+
+    renderImportReviewPage();
+
+    expect(await screen.findByText('Account')).toBeInTheDocument();
+    expect(screen.getByText('NEXO')).toBeInTheDocument();
+    expect(screen.queryByText('Card')).not.toBeInTheDocument();
   });
 
   test('approve calls the service and navigates to transactions', async () => {

@@ -1,9 +1,12 @@
-import csv
-import io
-
 from app.imports.contracts import DetectionResult, ImportStrategyKey
-
-from .nexo_csv import NEXO_CSV_HEADER
+from app.imports.csv_support import (
+    BELFIUS_HEADER,
+    BEOBANK_COMPACT_HEADER,
+    BEOBANK_DEBIT_CREDIT_HEADER,
+    NEXO_HEADER,
+    decode_csv_bytes,
+    find_header_row,
+)
 
 
 class ImportDetector:
@@ -20,9 +23,50 @@ class ImportDetector:
                 notes=[],
             )
 
-        charset_hint, decoded_sample = self._decode_sample(sample)
-        header_row = self._csv_header(decoded_sample)
-        if header_row == NEXO_CSV_HEADER:
+        decoded, charset_hint = decode_csv_bytes(sample)
+        lines = decoded.splitlines()
+
+        if find_header_row(lines, delimiter=";", expected_header=BELFIUS_HEADER):
+            return DetectionResult(
+                strategy_key=ImportStrategyKey.BELFIUS_CSV,
+                provider_hint="belfius",
+                language_hint=None,
+                charset_hint=charset_hint,
+                confidence=0.95,
+                page_count=None,
+                password_protected=False,
+                notes=["Matched Belfius CSV transaction header"],
+            )
+
+        if find_header_row(lines, delimiter=";", expected_header=BEOBANK_COMPACT_HEADER):
+            return DetectionResult(
+                strategy_key=ImportStrategyKey.BEOBANK_CSV,
+                provider_hint="beobank",
+                language_hint=None,
+                charset_hint=charset_hint,
+                confidence=0.95,
+                page_count=None,
+                password_protected=False,
+                notes=["Matched Beobank compact CSV header"],
+            )
+
+        if find_header_row(lines, delimiter=";", expected_header=BEOBANK_DEBIT_CREDIT_HEADER) or find_header_row(
+            lines,
+            delimiter=",",
+            expected_header=BEOBANK_DEBIT_CREDIT_HEADER,
+        ):
+            return DetectionResult(
+                strategy_key=ImportStrategyKey.BEOBANK_CSV,
+                provider_hint="beobank",
+                language_hint=None,
+                charset_hint=charset_hint,
+                confidence=0.95,
+                page_count=None,
+                password_protected=False,
+                notes=["Matched Beobank debit/credit CSV header"],
+            )
+
+        if find_header_row(lines, delimiter=",", expected_header=NEXO_HEADER):
             return DetectionResult(
                 strategy_key=ImportStrategyKey.NEXO_CSV,
                 provider_hint="nexo",
@@ -31,7 +75,7 @@ class ImportDetector:
                 confidence=1.0,
                 page_count=None,
                 password_protected=False,
-                notes=["Matched deterministic Nexo CSV header"],
+                notes=["Matched Nexo CSV header"],
             )
 
         return DetectionResult(
@@ -44,17 +88,3 @@ class ImportDetector:
             password_protected=False,
             notes=["No registered detector matched the uploaded file"],
         )
-
-    @staticmethod
-    def _decode_sample(sample: bytes) -> tuple[str, str]:
-        try:
-            return "utf-8", sample.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            return "latin-1", sample.decode("latin-1")
-
-    @staticmethod
-    def _csv_header(decoded_sample: str) -> list[str]:
-        for line in decoded_sample.splitlines():
-            if line.strip():
-                return [cell.strip().replace("\ufeff", "") for cell in next(csv.reader(io.StringIO(line)))]
-        return []

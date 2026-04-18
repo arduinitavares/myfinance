@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.models.fx import FXDailyReferenceRate
-from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft
+from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
 from app.models.statistics import FinancialStatistics, StatisticsPeriod
 from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
 from app.imports.state_machine import ImportSessionStatus
@@ -190,6 +190,38 @@ def test_get_review_payload_returns_statement_transactions_issues_and_evidence(d
     assert payload["transactions"][0]["raw_fields"]["source_locator"] == "pdf:p2:l4"
     assert payload["issues"] == []
     assert payload["evidence"]["text_blocks"][0]["page_number"] == 1
+
+
+def test_get_review_payload_returns_persisted_review_time_proposals(db_session, monkeypatch):
+    session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
+
+    statement_draft = db_session.query(ImportStatementDraft).filter_by(import_session_id=session["id"]).one()
+    first_draft = (
+        db_session.query(ImportTransactionDraft)
+        .filter_by(import_statement_draft_id=statement_draft.id)
+        .order_by(ImportTransactionDraft.id.asc())
+        .first()
+    )
+    assert first_draft is not None
+    first_draft.proposed_transaction_type = "Expense"
+    first_draft.proposed_expense_category = "Groceries"
+    first_draft.proposed_income_category = None
+    first_draft.proposed_transfer_category = None
+    first_draft.classification_source = "deterministic"
+    first_draft.recurrence_pattern_id = 17
+    db_session.commit()
+
+    response = client.get(f"/imports/{session['id']}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_transaction = payload["transactions"][0]
+    assert first_transaction["proposed_transaction_type"] == "Expense"
+    assert first_transaction["proposed_expense_category"] == "Groceries"
+    assert first_transaction["proposed_income_category"] is None
+    assert first_transaction["proposed_transfer_category"] is None
+    assert first_transaction["classification_source"] == "deterministic"
+    assert first_transaction["recurrence_pattern_id"] == 17
 
 
 def test_get_review_payload_includes_display_fields_for_selected_reporting_currency(db_session, monkeypatch):

@@ -1,12 +1,9 @@
-from enum import Enum
 from datetime import date, datetime
 from typing import Any
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .transaction import serialize_display_money
-from ..models.transaction import ExpenseCategory, IncomeCategory, TransactionType, TransferCategory
 from ..services.currency_conversion import DisplayMoney
 
 
@@ -56,15 +53,18 @@ class ImportTransactionDraftResponse(BaseModel):
     currency: str
     debit_credit: str | None = None
     source_locator: str
+    inferred_category: str | None = None
+    category_source: str | None = None
     proposed_transaction_type: str | None = None
     proposed_expense_category: str | None = None
     proposed_income_category: str | None = None
     proposed_transfer_category: str | None = None
-    proposal_source: Literal["deterministic_extracted", "ai_extracted", "user_edited"] | None = None
+    classification_source: str | None = None
+    recurrence_pattern_id: int | None = None
     confidence: float | None = None
     field_confidence: dict[str, float] | None = None
     raw_fields: dict[str, Any] | None = None
-    edit_source: Literal["deterministic_extracted", "ai_extracted", "user_edited"]
+    edit_source: str
     display_amount: float | None = None
     display_currency: str | None = None
     display_fx_rate: float | None = None
@@ -136,9 +136,6 @@ def build_import_transaction_draft_response_payload(
     transaction_draft: Any,
     display_money: DisplayMoney,
 ) -> dict[str, Any]:
-    def enum_value(value: Any) -> Any:
-        return value.value if isinstance(value, Enum) else value
-
     payload = {
         "id": transaction_draft.id,
         "transaction_date": transaction_draft.transaction_date,
@@ -148,11 +145,14 @@ def build_import_transaction_draft_response_payload(
         "currency": transaction_draft.currency,
         "debit_credit": transaction_draft.debit_credit,
         "source_locator": transaction_draft.source_locator,
-        "proposed_transaction_type": enum_value(transaction_draft.proposed_transaction_type),
-        "proposed_expense_category": enum_value(transaction_draft.proposed_expense_category),
-        "proposed_income_category": enum_value(transaction_draft.proposed_income_category),
-        "proposed_transfer_category": enum_value(transaction_draft.proposed_transfer_category),
-        "proposal_source": transaction_draft.proposal_source,
+        "inferred_category": transaction_draft.inferred_category,
+        "category_source": transaction_draft.category_source,
+        "proposed_transaction_type": transaction_draft.proposed_transaction_type,
+        "proposed_expense_category": transaction_draft.proposed_expense_category,
+        "proposed_income_category": transaction_draft.proposed_income_category,
+        "proposed_transfer_category": transaction_draft.proposed_transfer_category,
+        "classification_source": transaction_draft.classification_source,
+        "recurrence_pattern_id": transaction_draft.recurrence_pattern_id,
         "confidence": transaction_draft.confidence,
         "field_confidence": None,
         "raw_fields": None,

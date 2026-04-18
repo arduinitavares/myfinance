@@ -13,13 +13,19 @@ from .contracts import (
     ProviderDescription,
     RawEvidence,
 )
+from .belfius_csv import BelfiusCsvExtractor
+from .beobank_csv import BeobankCsvExtractor
+from .nexo_csv import NexoCsvExtractor
 
 __all__: list[str] = [
+    "BelfiusCsvExtractor",
+    "BeobankCsvExtractor",
     "DetectionResult",
     "ExtractedTransaction",
     "ExtractionResult",
     "ImportIssue",
     "ImportStrategyKey",
+    "NexoCsvExtractor",
     "ProviderDescription",
     "RawEvidence",
 ]

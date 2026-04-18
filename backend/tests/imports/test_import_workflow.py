@@ -4,7 +4,7 @@ import pytest
 
 from app.config import settings
 from app.imports.artifacts import ArtifactStore
-from app.imports.contracts import ExtractionResult, RawEvidence
+from app.imports.contracts import ExtractionResult, ExtractedTransaction, RawEvidence
 from app.imports.pipeline import ImportPipelineService
 from app.imports.state_machine import ImportSessionStatus
 from app.imports.workflow import ImportApprovalConflictError, ImportSessionStateError, ImportWorkflowService
@@ -38,6 +38,43 @@ def _successful_result(session_id: int, attempt_number: int) -> tuple[RawEvidenc
             overall_confidence=1.0,
         ),
     )
+
+
+def _nexo_successful_result(
+    session_id: int,
+    attempt_number: int,
+    *,
+    transactions: list[ExtractedTransaction],
+) -> tuple[RawEvidence, ExtractionResult]:
+    return (
+        RawEvidence(
+            text_blocks=[
+                {
+                    "page_number": 1,
+                    "raw_text": "Transaction,Type,Input Currency\n",
+                    "lines": ["Transaction,Type,Input Currency"],
+                }
+            ],
+            ocr_blocks=[],
+            snippets=[],
+        ),
+        ExtractionResult(
+            extractor_id="nexo_csv_v1",
+            raw_artifact_ref=f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json",
+            source_metadata={"provider_hint": "nexo", "file_type": "csv"},
+            statement_metadata={"account_number_hint": "NEXO"},
+            transactions=transactions,
+            issues=[],
+            overall_confidence=1.0,
+        ),
+    )
+
+
+def _minimal_nexo_header_bytes() -> bytes:
+    return (
+        "Transaction,Type,Input Currency,Input Amount,Output Currency,Output Amount,USD Equivalent,"
+        "Fee,Fee Currency,Details,Date / Time (UTC),normalizedDisplayDetails\n"
+    ).encode("utf-8")
 
 
 def test_extract_detected_session_moves_pdf_statement_to_awaiting_review_and_persists_drafts(
@@ -105,6 +142,245 @@ def test_extract_detected_session_moves_pdf_statement_to_awaiting_review_and_per
     meta_payload = json.loads((settings.imports_dir / str(session.id) / "meta.json").read_text(encoding="utf-8"))
     assert meta_payload["state"] == ImportSessionStatus.AWAITING_REVIEW.value
     assert meta_payload["attempt_count"] == 1
+
+
+def test_extract_detected_session_routes_nexo_csv_and_persists_proposal_fields(db_session):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-25",
+                        source_description="Albert Heijn 3143 | Gent | BEL",
+                        signed_amount=-6.24,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category=None,
+                        proposed_income_category=None,
+                        proposed_transfer_category=None,
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_PURCHASE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    session, detection = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+
+    assert detection.strategy_key.value == "nexo_csv"
+
+    extracted_session = ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
+    assert extracted_session.extractor_id == "nexo_csv_v1"
+    assert extracted_session.raw_artifact_ref == f"imports/{session.id}/attempts/1/evidence/raw.json"
+
+    statement_draft = db_session.query(ImportStatementDraft).one()
+    assert statement_draft.account_number_hint == "NEXO"
+
+    transaction_draft = db_session.query(ImportTransactionDraft).one()
+    assert transaction_draft.source_description == "Albert Heijn 3143 | Gent | BEL"
+    assert transaction_draft.currency == "xUSD"
+    assert transaction_draft.proposed_transaction_type == "Expense"
+    assert transaction_draft.proposed_expense_category is None
+    assert transaction_draft.classification_source == "deterministic_nexo_csv"
+    assert transaction_draft.source_locator == "csv:r2:NXT_PURCHASE_1"
+
+
+def test_extract_detected_session_skips_upload_suggestions_for_transfer_drafts(db_session, monkeypatch):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-26",
+                        source_description="Bank transfer to BE55000000000001",
+                        signed_amount=-120.0,
+                        currency="USDC",
+                        debit_credit="debit",
+                        proposed_transaction_type="Transfer",
+                        proposed_transfer_category="Internal Transfer",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_CASHOUT_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(
+        "app.imports.enrichment.category_suggestion_service.suggest_category",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("transfer drafts should not trigger category suggestions")
+        ),
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+
+    extracted_session = ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
+    transaction_draft = db_session.query(ImportTransactionDraft).one()
+    assert transaction_draft.proposed_transaction_type == "Transfer"
+    assert transaction_draft.proposed_transfer_category == "Internal Transfer"
+
+
+def test_extract_detected_session_applies_upload_suggestions_to_unclassified_expense_drafts(
+    db_session, monkeypatch
+):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-25",
+                        source_description="Albert Heijn 3143 | Gent | BEL",
+                        signed_amount=-6.24,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category=None,
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_PURCHASE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(
+        "app.imports.enrichment.category_suggestion_service.suggest_category",
+        lambda description, amount, transaction_type: [("Groceries", 0.91)],
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    transaction_draft = db_session.query(ImportTransactionDraft).one()
+    assert transaction_draft.proposed_transaction_type == "Expense"
+    assert transaction_draft.proposed_expense_category == "Groceries"
+    assert transaction_draft.classification_source == "deterministic_nexo_csv"
+
+
+def test_approve_session_commits_proposed_transfer_fields_for_nexo_csv(db_session):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-26",
+                        source_description="Bank transfer to BE55000000000001",
+                        signed_amount=-120.0,
+                        currency="USDC",
+                        debit_credit="debit",
+                        proposed_transaction_type="Transfer",
+                        proposed_transfer_category="Internal Transfer",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_CASHOUT_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+    transaction = db_session.query(Transaction).one()
+    assert transaction.account_number == "NEXO"
+    assert transaction.source_bank == "Nexo"
+    assert transaction.transaction_type == TransactionType.TRANSFER
+    assert transaction.transfer_category == TransferCategory.INTERNAL_TRANSFER
+    assert transaction.classification_source == "deterministic_nexo_csv"
+
+
+def test_approve_session_runs_post_commit_hooks_for_classified_expense_rows(db_session, monkeypatch):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-08",
+                        source_description="2.0% Weekday FX Fee",
+                        signed_amount=-0.16,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category="Financial Fees",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_FEE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    add_transaction_calls = []
+    anomaly_calls = []
+
+    monkeypatch.setattr(
+        "app.imports.workflow.category_suggestion_service.add_transaction",
+        lambda transaction: add_transaction_calls.append(transaction.id),
+    )
+    monkeypatch.setattr(
+        "app.imports.workflow.AnomalyDetectionService.detect_anomalies",
+        lambda db, transaction_ids, force_redetection=False: anomaly_calls.append(list(transaction_ids)),
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    ImportWorkflowService(db_session).approve_session(session.id)
+
+    committed_transaction = db_session.query(Transaction).one()
+    assert add_transaction_calls == [committed_transaction.id]
+    assert anomaly_calls == [[committed_transaction.id]]
 
 
 def test_extract_detected_session_accepts_belfius_account_pdf_and_commits_with_belfius_hints(
@@ -214,23 +490,23 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
 
     first_draft = transaction_drafts[0]
     assert first_draft.source_locator == "csv:r2:NXT1001"
-    assert first_draft.proposed_transaction_type == TransactionType.EXPENSE
+    assert first_draft.proposed_transaction_type == "Expense"
     assert first_draft.proposed_expense_category is None
     assert first_draft.proposed_income_category is None
     assert first_draft.proposed_transfer_category is None
-    assert first_draft.proposal_source == "deterministic_extracted"
+    assert first_draft.classification_source == "deterministic_nexo_csv"
 
     second_draft = transaction_drafts[1]
     assert second_draft.source_locator == "csv:r3:NXT1002"
-    assert second_draft.proposed_transaction_type == TransactionType.EXPENSE
-    assert second_draft.proposed_expense_category == ExpenseCategory.FINANCIAL_FEES
-    assert second_draft.proposal_source == "deterministic_extracted"
+    assert second_draft.proposed_transaction_type == "Expense"
+    assert second_draft.proposed_expense_category == "Financial Fees"
+    assert second_draft.classification_source == "deterministic_nexo_csv"
 
     third_draft = transaction_drafts[2]
     assert third_draft.source_locator == "csv:r4:NXT1003"
-    assert third_draft.proposed_transaction_type == TransactionType.TRANSFER
-    assert third_draft.proposed_transfer_category == TransferCategory.INTERNAL_TRANSFER
-    assert third_draft.proposal_source == "deterministic_extracted"
+    assert third_draft.proposed_transaction_type == "Transfer"
+    assert third_draft.proposed_transfer_category == "Internal Transfer"
+    assert third_draft.classification_source == "deterministic_nexo_csv"
 
     approved_session = ImportWorkflowService(db_session).approve_session(session.id)
     assert approved_session.status == ImportSessionStatus.COMMITTED.value
@@ -253,24 +529,24 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
     "proposal_updates, expected_message",
     [
         (
-            {"proposed_transaction_type": None, "proposed_expense_category": ExpenseCategory.FINANCIAL_FEES},
+            {"proposed_transaction_type": None, "proposed_expense_category": "Financial Fees"},
             "a transaction type is required when any category proposal is present",
         ),
         (
-            {"proposed_transaction_type": TransactionType.EXPENSE, "proposed_income_category": IncomeCategory.SALARY},
+            {"proposed_transaction_type": "Expense", "proposed_income_category": "Salary"},
             "Expense cannot carry income_category",
         ),
         (
             {
-                "proposed_transaction_type": TransactionType.INCOME,
-                "proposed_transfer_category": TransferCategory.INTERNAL_TRANSFER,
+                "proposed_transaction_type": "Income",
+                "proposed_transfer_category": "Internal Transfer",
             },
             "Income cannot carry transfer_category",
         ),
         (
             {
-                "proposed_transaction_type": TransactionType.TRANSFER,
-                "proposed_expense_category": ExpenseCategory.FINANCIAL_FEES,
+                "proposed_transaction_type": "Transfer",
+                "proposed_expense_category": "Financial Fees",
             },
             "Transfer cannot carry expense_category",
         ),

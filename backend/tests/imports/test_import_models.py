@@ -4,13 +4,8 @@ from app.database import engine
 from app.database import Base
 import app.database_manager as database_manager
 import app.config as config_module
+from app.imports.contracts import ExtractedTransaction, ImportStrategyKey
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
-from app.models.transaction import ExpenseCategory, TransactionType
-from app.schemas.imports import (
-    ImportTransactionDraftResponse,
-    build_import_transaction_draft_response_payload,
-)
-from app.services.currency_conversion import DisplayMoney
 from app.schemas.transaction import Transaction, TransactionCreate
 
 
@@ -115,47 +110,36 @@ def test_import_schema_includes_statement_and_transaction_metadata_columns():
         "proposed_expense_category",
         "proposed_income_category",
         "proposed_transfer_category",
-        "proposal_source",
+        "classification_source",
+        "recurrence_pattern_id",
     } <= transaction_columns.keys()
 
 
-def test_import_transaction_draft_response_exposes_proposal_fields():
-    transaction_draft = type(
-        "Draft",
-        (),
-        {
-            "id": 17,
-            "transaction_date": None,
-            "source_description": "Bancontact payment",
-            "canonical_description_en": None,
-            "signed_amount": -12.5,
-            "currency": "EUR",
-            "debit_credit": "debit",
-            "source_locator": "csv:row:3",
-            "proposed_transaction_type": TransactionType.EXPENSE,
-            "proposed_expense_category": ExpenseCategory.GROCERIES,
-            "proposed_income_category": None,
-            "proposed_transfer_category": None,
-            "proposal_source": "deterministic_extracted",
-            "confidence": 0.83,
-            "edit_source": "deterministic_extracted",
-        },
-    )()
+def test_import_strategy_key_includes_nexo_csv():
+    assert ImportStrategyKey.NEXO_CSV.value == "nexo_csv"
 
-    payload = build_import_transaction_draft_response_payload(
-        transaction_draft,
-        DisplayMoney.unavailable(display_currency="EUR", reason="missing_transaction_date"),
+
+def test_extracted_transaction_exposes_review_time_proposals():
+    transaction = ExtractedTransaction(
+        transaction_date="2026-04-11",
+        source_description="Nexo card purchase",
+        signed_amount=-10.0,
+        currency="EUR",
+        debit_credit="debit",
+        source_locator="csv:row:2",
+        proposed_transaction_type="Expense",
+        proposed_expense_category="Groceries",
+        proposed_income_category=None,
+        proposed_transfer_category=None,
+        classification_source="deterministic",
+        recurrence_pattern_id=42,
     )
 
-    assert "inferred_category" not in payload
-    assert "category_source" not in payload
-    assert payload["proposed_transaction_type"] == "Expense"
-    assert payload["proposed_expense_category"] == "Groceries"
-    assert payload["proposal_source"] == "deterministic_extracted"
-
-    response = ImportTransactionDraftResponse.model_validate(payload)
-    assert response.proposed_expense_category == "Groceries"
-    assert response.proposal_source == "deterministic_extracted"
+    dumped = transaction.model_dump()
+    assert dumped["proposed_transaction_type"] == "Expense"
+    assert dumped["proposed_expense_category"] == "Groceries"
+    assert dumped["classification_source"] == "deterministic"
+    assert dumped["recurrence_pattern_id"] == 42
 
 
 def test_transactions_include_import_traceability_columns():
@@ -224,9 +208,11 @@ def test_init_database_backfills_missing_import_transaction_draft_proposal_colum
     db_path = tmp_path / "legacy_import_drafts.sqlite"
     temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
 
-    Base.metadata.create_all(bind=temp_engine)
+    Base.metadata.create_all(
+        bind=temp_engine,
+        tables=[table for table in Base.metadata.sorted_tables if table.name != "import_transaction_drafts"],
+    )
     with temp_engine.begin() as conn:
-        conn.execute(text("DROP TABLE import_transaction_drafts"))
         conn.execute(
             text(
                 """
@@ -245,7 +231,7 @@ def test_init_database_backfills_missing_import_transaction_draft_proposal_colum
                     confidence FLOAT,
                     field_confidence TEXT,
                     raw_fields TEXT,
-                    edit_source VARCHAR(50) NOT NULL DEFAULT 'ai_extracted'
+                    edit_source VARCHAR(50) NOT NULL
                 )
                 """
             )
@@ -260,7 +246,8 @@ def test_init_database_backfills_missing_import_transaction_draft_proposal_colum
         "proposed_expense_category",
         "proposed_income_category",
         "proposed_transfer_category",
-        "proposal_source",
+        "classification_source",
+        "recurrence_pattern_id",
     } <= transaction_columns
 
 

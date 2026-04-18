@@ -13,7 +13,6 @@ from app.main import app
 from app.models.transaction import Transaction
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession, ImportStatementDraft, ImportTransactionDraft
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
-from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
 
 
 client = TestClient(app)
@@ -25,29 +24,145 @@ def _configure_batch_dir(monkeypatch, batch_dir):
     monkeypatch.setattr("app.imports.batch_folder.settings", patched_settings)
 
 
-def _make_minimal_ing_csv(*, description: str = "Test CSV row") -> bytes:
+def _make_minimal_beobank_compact_csv(*, description: str = "Test CSV row") -> bytes:
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")
     writer.writerow(
         [
-            "Account Number",
-            "Account Name",
-            "Counterparty account",
-            "Booking date",
-            "Amount",
-            "Currency",
-            "Description",
+            "Datum",
+            "Waardedatum",
+            "Debet",
+            "Krediet",
+            "Omschrijving",
+            "Saldo",
         ]
     )
     writer.writerow(
         [
-            "BE1234567890",
-            "Main Account",
-            "BE0987654321",
-            "01/01/2025",
-            "1.00",
-            "EUR",
+            "03/01/2026",
+            "03/01/2026",
+            "-10,00",
+            "",
             description,
+            "375,53",
+        ]
+    )
+    return output.getvalue().encode("latin-1")
+
+
+def _make_minimal_nexo_csv() -> bytes:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Transaction",
+            "Type",
+            "Input Currency",
+            "Input Amount",
+            "Output Currency",
+            "Output Amount",
+            "USD Equivalent",
+            "Fee",
+            "Fee Currency",
+            "Details",
+            "Date / Time (UTC)",
+            "normalizedDisplayDetails",
+        ]
+    )
+    writer.writerow(
+        [
+            "NXT_PURCHASE_1",
+            "Nexo Card Purchase",
+            "xUSD",
+            "-6.24000000",
+            "EUR",
+            "5.38000000",
+            "$6.24",
+            "-",
+            "-",
+            "approved / Albert Heijn 3143 | Gent | BEL",
+            "2026-03-25 17:19:21",
+            "approved / Albert Heijn 3143 | Gent | BEL",
+        ]
+    )
+    writer.writerow(
+        [
+            "NXT_FEE_1",
+            "Nexo Card Transaction Fee",
+            "xUSD",
+            "-0.16000000",
+            "xUSD",
+            "0.16000000",
+            "$0.16",
+            "-",
+            "-",
+            "approved / 2.0% Weekday FX Fee",
+            "2026-03-08 23:32:35",
+            "approved / 2.0% Weekday FX Fee",
+        ]
+    )
+    writer.writerow(
+        [
+            "NXT_INTERNAL_1",
+            "Transfer Out",
+            "USDC",
+            "-33.45699600",
+            "USDC",
+            "33.45699600",
+            "$33.45",
+            "-",
+            "-",
+            "approved / Auto Transfer from Savings Wallet to Credit Line Wallet",
+            "2026-03-25 17:19:22",
+            "approved / Auto Transfer from Savings Wallet to Credit Line Wallet",
+        ]
+    )
+    writer.writerow(
+        [
+            "NXT_CASHOUT_1",
+            "Transfer Out",
+            "USDC",
+            "-120.00000000",
+            "USDC",
+            "120.00000000",
+            "$120.00",
+            "-",
+            "-",
+            "approved / Bank transfer to BE55000000000001",
+            "2026-03-26 18:19:22",
+            "approved / Bank transfer to BE55000000000001",
+        ]
+    )
+    writer.writerow(
+        [
+            "NXT_CASHBACK_1",
+            "Cashback",
+            "NEXO",
+            "0.13428538",
+            "NEXO",
+            "0.13428538",
+            "$0.12",
+            "-",
+            "-",
+            "approved / Albert Heijn 3143 | Gent | BEL",
+            "2026-03-26 11:09:41",
+            "approved / Albert Heijn 3143 | Gent | BEL",
+        ]
+    )
+    writer.writerow(
+        [
+            "NXT_WITHDRAWAL_1",
+            "Credit Card Withdrawal Credit",
+            "xUSD",
+            "-6.24000000",
+            "xUSD",
+            "6.24000000",
+            "$6.24",
+            "-",
+            "-",
+            "approved / Nexo Card Loan Withdrawal",
+            "2026-03-25 17:19:22",
+            "approved / Nexo Card Loan Withdrawal",
         ]
     )
     return output.getvalue().encode("utf-8")
@@ -57,7 +172,7 @@ def test_batch_folder_endpoint_processes_pdf_and_csv_and_ignores_junk_files(db_s
     batch_dir = tmp_path / "bank_files"
     batch_dir.mkdir()
     (batch_dir / ".DS_Store").write_text("junk", encoding="utf-8")
-    (batch_dir / "b-transactions.csv").write_bytes(_make_minimal_ing_csv(description="CSV import row"))
+    (batch_dir / "b-transactions.csv").write_bytes(_make_minimal_beobank_compact_csv(description="CSV import row"))
     (batch_dir / "A-statement.PDF").write_bytes(b"%PDF-1.7\nstub")
     _configure_batch_dir(monkeypatch, batch_dir)
     monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
@@ -97,19 +212,19 @@ def test_batch_folder_endpoint_processes_pdf_and_csv_and_ignores_junk_files(db_s
 
     assert csv_item["id"] is not None
     assert csv_item["status"] == "processed"
-    assert csv_item["message"] == "Imported 1 new transaction from CSV; skipped 0 duplicate rows."
-    assert csv_item["session_id"] is None
-    assert csv_item["session_status"] is None
+    assert csv_item["message"] is None
+    assert csv_item["session_id"] is not None
+    assert csv_item["session_status"] == "awaiting_review"
     assert csv_item["existing_session_id"] is None
     assert csv_item["existing_session_status"] is None
-    assert csv_item["strategy_key"] is None
-    assert csv_item["extractor_id"] is None
+    assert csv_item["strategy_key"] == "beobank_csv"
+    assert csv_item["extractor_id"] == "beobank_csv_v1"
     assert csv_item["started_at"] is not None
     assert csv_item["completed_at"] is not None
 
     db_session.expire_all()
-    assert db_session.query(ImportSession).count() == 1
-    assert db_session.query(Transaction).count() == 1
+    assert db_session.query(ImportSession).count() == 2
+    assert db_session.query(Transaction).count() == 0
     persisted_batch = db_session.get(ImportBatchRun, payload["id"])
     assert persisted_batch is not None
     assert db_session.query(ImportBatchItem).filter(ImportBatchItem.batch_run_id == payload["id"]).count() == 2
@@ -120,45 +235,13 @@ def test_batch_folder_endpoint_processes_pdf_and_csv_and_ignores_junk_files(db_s
     assert persisted_response.json()["items"][0]["id"] == pdf_item["id"]
 
 
-def test_batch_folder_routes_nexo_csv_to_import_review_session_instead_of_csv_service(
+def test_batch_folder_imports_supported_nexo_rows_and_skips_internal_plumbing(
     db_session, monkeypatch, tmp_path
 ):
     batch_dir = tmp_path / "bank_files"
     batch_dir.mkdir()
-    (batch_dir / "nexo.csv").write_bytes(
-        build_nexo_csv_bytes(
-            nexo_row(
-                "NXT1001",
-                "Nexo Card Purchase",
-                "xUSD",
-                "-12.34",
-                "approved / Coffee Shop",
-                "2026-04-10 09:15:30",
-            ),
-            nexo_row(
-                "NXT1002",
-                "Nexo Card Transaction Fee",
-                "xUSD",
-                "-0.16",
-                "approved / Card fee",
-                "2026-04-10 09:15:31",
-            ),
-            nexo_row(
-                "NXT1003",
-                "Transfer Out",
-                "EUR",
-                "-250.00",
-                "approved / Bank transfer to BE6800000000000000",
-                "2026-04-11 11:22:33",
-            ),
-        )
-    )
+    (batch_dir / "nexo-transactions.csv").write_bytes(_make_minimal_nexo_csv())
     _configure_batch_dir(monkeypatch, batch_dir)
-
-    def explode(*args, **kwargs):
-        raise AssertionError("CsvImportService should not be called for a Nexo CSV")
-
-    monkeypatch.setattr("app.services.csv_import_service.CsvImportService.import_file", explode)
 
     response = client.post("/imports/batch-folder")
 
@@ -169,27 +252,35 @@ def test_batch_folder_routes_nexo_csv_to_import_review_session_instead_of_csv_se
     assert payload["skipped_existing_count"] == 0
     assert payload["unsupported_count"] == 0
     assert payload["failed_count"] == 0
-
-    item = payload["items"][0]
-    assert item["filename"] == "nexo.csv"
-    assert item["status"] == "processed"
-    assert item["session_id"] is not None
-    assert item["session_status"] == "awaiting_review"
-    assert item["strategy_key"] == "nexo_csv"
-    assert item["extractor_id"] == "nexo_csv_v1"
-    assert item["message"] is None
+    assert payload["items"][0]["status"] == "processed"
+    assert payload["items"][0]["message"] is None
+    assert payload["items"][0]["session_id"] is not None
+    assert payload["items"][0]["session_status"] == "awaiting_review"
+    assert payload["items"][0]["strategy_key"] == "nexo_csv"
+    assert payload["items"][0]["extractor_id"] == "nexo_csv_v1"
 
     db_session.expire_all()
     assert db_session.query(Transaction).count() == 0
-    assert db_session.query(ImportSession).count() == 1
-    assert db_session.query(ImportStatementDraft).count() == 1
-    assert db_session.query(ImportTransactionDraft).count() == 3
+    session = db_session.get(ImportSession, payload["items"][0]["session_id"])
+    assert session is not None
+    assert session.status == "awaiting_review"
+    statement = db_session.query(ImportStatementDraft).filter_by(import_session_id=session.id).one()
+    drafts = (
+        db_session.query(ImportTransactionDraft)
+        .filter_by(import_statement_draft_id=statement.id)
+        .order_by(ImportTransactionDraft.id.asc())
+        .all()
+    )
+    assert statement.account_number_hint == "NEXO"
+    assert len(drafts) == 3
+    assert [draft.currency for draft in drafts] == ["xUSD", "xUSD", "USDC"]
+    assert [draft.proposed_transaction_type for draft in drafts] == ["Expense", "Expense", "Transfer"]
 
 
 def test_batch_folder_rerun_skips_existing_pdf_and_reports_csv_duplicate_rows(db_session, monkeypatch, tmp_path):
     batch_dir = tmp_path / "bank_files"
     batch_dir.mkdir()
-    (batch_dir / "b-transactions.csv").write_bytes(_make_minimal_ing_csv(description="Repeatable CSV row"))
+    (batch_dir / "b-transactions.csv").write_bytes(_make_minimal_beobank_compact_csv(description="Repeatable CSV row"))
     (batch_dir / "A-statement.PDF").write_bytes(b"%PDF-1.7\nstub")
     _configure_batch_dir(monkeypatch, batch_dir)
     monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
@@ -208,8 +299,8 @@ def test_batch_folder_rerun_skips_existing_pdf_and_reports_csv_duplicate_rows(db
     second_payload = second_response.json()
     assert second_payload["status"] == "completed"
     assert second_payload["total_files"] == 2
-    assert second_payload["processed_count"] == 1
-    assert second_payload["skipped_existing_count"] == 1
+    assert second_payload["processed_count"] == 0
+    assert second_payload["skipped_existing_count"] == 2
     assert second_payload["unsupported_count"] == 0
     assert second_payload["failed_count"] == 0
 
@@ -220,14 +311,13 @@ def test_batch_folder_rerun_skips_existing_pdf_and_reports_csv_duplicate_rows(db
     assert pdf_item["existing_session_status"] is not None
 
     assert csv_item["filename"] == "b-transactions.csv"
-    assert csv_item["status"] == "processed"
-    assert csv_item["message"] == "Imported 0 new transactions from CSV; skipped 1 duplicate row."
+    assert csv_item["status"] == "skipped_existing"
     assert csv_item["session_id"] is None
-    assert csv_item["existing_session_id"] is None
+    assert csv_item["existing_session_id"] is not None
 
     db_session.expire_all()
-    assert db_session.query(ImportSession).count() == 1
-    assert db_session.query(Transaction).count() == 1
+    assert db_session.query(ImportSession).count() == 2
+    assert db_session.query(Transaction).count() == 0
 
 
 def test_batch_folder_latest_returns_persisted_failed_run(db_session):

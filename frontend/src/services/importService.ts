@@ -2,7 +2,7 @@ import { ImportBatchRun, ImportReviewPayload, ImportSession } from '../types/imp
 import { apiClient } from './apiClient';
 
 export const importService = {
-  async uploadStatement(file: File): Promise<ImportSession> {
+  async uploadFile(file: File): Promise<ImportSession> {
     const formData = new FormData();
     formData.append('file', file);
 

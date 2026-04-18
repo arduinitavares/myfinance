@@ -8,12 +8,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.imports.contracts import ImportStrategyKey
 from app.imports.pipeline import ImportPipelineService, ImportUploadDuplicateError
-from app.imports.state_machine import ImportSessionStatus, assert_transition_allowed
+from app.imports.state_machine import ImportSessionStatus
 from app.imports.workflow import ImportWorkflowService
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
-from app.services.csv_import_service import CsvImportService
+
+from .contracts import ImportStrategyKey
 
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_FILES = 200
 MAX_SUPPORTED_PDFS = 50
 MAX_BATCH_FILE_SIZE_BYTES = 5 * 1024 * 1024
+REVIEWABLE_BATCH_STRATEGIES = {
+    ImportStrategyKey.PDF_STATEMENT,
+    ImportStrategyKey.BELFIUS_CSV,
+    ImportStrategyKey.BEOBANK_CSV,
+    ImportStrategyKey.NEXO_CSV,
+}
 
 
 class ImportBatchRunNotFoundError(Exception):
@@ -146,20 +152,7 @@ class ImportBatchFolderService:
         return item
 
     def _process_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
-        if self._is_supported_csv(file_path):
-            csv_strategy = self._detect_csv_strategy(file_path)
-            if csv_strategy == ImportStrategyKey.NEXO_CSV:
-                self._process_reviewable_file(
-                    batch_run,
-                    item,
-                    file_path,
-                    content_type="text/csv",
-                )
-                return
-            self._process_csv_file(batch_run, item, file_path)
-            return
-
-        if not self._is_supported_pdf(file_path):
+        if not self._is_supported_batch_file(file_path):
             suffix = file_path.suffix.lower() or "(no extension)"
             self._finalize_item(
                 batch_run,
@@ -169,47 +162,11 @@ class ImportBatchFolderService:
             )
             return
 
-        self._process_reviewable_file(batch_run, item, file_path, content_type="application/pdf")
-
-    def _process_csv_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
-        try:
-            result = CsvImportService.import_file(
-                self.db,
-                file_path=str(file_path),
-                source_filename=file_path.name,
-            )
-        except Exception as exc:
-            self._finalize_item(
-                batch_run,
-                item,
-                status="failed",
-                message=str(exc),
-            )
-            return
-
-        self._finalize_item(
-            batch_run,
-            item,
-            status="processed",
-            message=self._format_csv_result_message(
-                imported_count=result.imported_count,
-                skipped_duplicate_count=result.skipped_duplicate_count,
-            ),
-        )
-
-    def _process_reviewable_file(
-        self,
-        batch_run: ImportBatchRun,
-        item: ImportBatchItem,
-        file_path: Path,
-        *,
-        content_type: str,
-    ) -> None:
         try:
             file_bytes = file_path.read_bytes()
             session, detection = self.pipeline.start_upload(
                 filename=file_path.name,
-                content_type=content_type,
+                content_type=self._content_type_for_batch_file(file_path),
                 file_bytes=file_bytes,
             )
         except ImportUploadDuplicateError as exc:
@@ -233,11 +190,11 @@ class ImportBatchFolderService:
             )
             return
 
-        if detection.strategy_key not in {ImportStrategyKey.PDF_STATEMENT, ImportStrategyKey.NEXO_CSV}:
-            session = self._mark_session_failed(
+        if detection.strategy_key not in REVIEWABLE_BATCH_STRATEGIES:
+            session = self.workflow.fail_session(
                 session.id,
                 stage="detection",
-                message=f"Unsupported batch import strategy: {detection.strategy_key.value}",
+                message=f"Unsupported import strategy for batch import: {detection.strategy_key.value}",
             )
             snapshot = self.workflow.get_session_snapshot(session.id)
             self._finalize_item(
@@ -271,20 +228,6 @@ class ImportBatchFolderService:
             strategy_key=snapshot["strategy_key"],
             extractor_id=snapshot["extractor_id"],
         )
-
-    def _mark_session_failed(self, session_id: int, *, stage: str, message: str) -> ImportSession:
-        session = self.db.get(ImportSession, session_id)
-        if session is None:
-            raise ValueError(f"Import session {session_id} was not found.")
-        if session.status == ImportSessionStatus.DETECTED.value:
-            assert_transition_allowed(ImportSessionStatus.DETECTED, ImportSessionStatus.FAILED)
-            session.status = ImportSessionStatus.FAILED.value
-        session.error_stage = stage
-        session.error_message = message
-        self.db.commit()
-        self.db.refresh(session)
-        self._sync_session_meta_state(session.id, session.status)
-        return session
 
     def _finalize_item(
         self,
@@ -405,21 +348,6 @@ class ImportBatchFolderService:
             ],
         }
 
-    def _sync_session_meta_state(self, session_id: int, state: str) -> None:
-        try:
-            payload = self.workflow.artifacts.read_meta(str(session_id))
-            stage_timestamps = dict(payload.get("stage_timestamps", {}))
-            now = self._utcnow().isoformat(timespec="seconds")
-            if state == ImportSessionStatus.FAILED.value:
-                stage_timestamps["failed"] = now
-            else:
-                stage_timestamps[state] = now
-            payload["state"] = state
-            payload["stage_timestamps"] = stage_timestamps
-            self.workflow.artifacts.write_meta(str(session_id), payload)
-        except Exception:
-            logger.warning("Failed to sync import meta state for session %s", session_id, exc_info=True)
-
     @staticmethod
     def _is_supported_batch_file(file_path: Path) -> bool:
         return ImportBatchFolderService._is_supported_pdf(file_path) or ImportBatchFolderService._is_supported_csv(file_path)
@@ -432,14 +360,9 @@ class ImportBatchFolderService:
     def _is_supported_csv(file_path: Path) -> bool:
         return file_path.suffix.lower() == ".csv"
 
-    def _detect_csv_strategy(self, file_path: Path) -> ImportStrategyKey:
-        file_bytes = file_path.read_bytes()
-        detection = self.pipeline.detector.detect(
-            filename=file_path.name,
-            content_type="text/csv",
-            sample=file_bytes[:4096],
-        )
-        return detection.strategy_key
+    @staticmethod
+    def _content_type_for_batch_file(file_path: Path) -> str:
+        return "text/csv" if ImportBatchFolderService._is_supported_csv(file_path) else "application/pdf"
 
     @staticmethod
     def _is_ignored_batch_file(file_path: Path) -> bool:
@@ -447,15 +370,6 @@ class ImportBatchFolderService:
         return (
             lowered_name in {".ds_store", "thumbs.db", "desktop.ini"}
             or lowered_name.startswith("._")
-        )
-
-    @staticmethod
-    def _format_csv_result_message(*, imported_count: int, skipped_duplicate_count: int) -> str:
-        transaction_label = "transaction" if imported_count == 1 else "transactions"
-        duplicate_label = "duplicate row" if skipped_duplicate_count == 1 else "duplicate rows"
-        return (
-            f"Imported {imported_count} new {transaction_label} from CSV; "
-            f"skipped {skipped_duplicate_count} {duplicate_label}."
         )
 
     @staticmethod
