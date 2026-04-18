@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { importService } from '../../services/importService';
 import { ImportReviewPage } from './ImportReviewPage';
@@ -198,6 +198,53 @@ const committedPayload = {
   },
 };
 
+const nexoProposalPayload = {
+  ...firstPayload,
+  session: {
+    ...firstPayload.session,
+    file_name: 'nexo-transactions.csv',
+    mime_type: 'text/csv',
+    strategy_key: 'nexo_csv',
+    provider_hint: 'nexo',
+    extractor_id: 'nexo_csv_v1',
+  },
+  statement: {
+    ...firstPayload.statement,
+    account_number_hint: 'NEXO',
+    card_number_hint: null,
+    currency: null,
+    transaction_count: 2,
+  },
+  transactions: [
+    {
+      ...firstPayload.transactions[0],
+      id: 11,
+      source_description: 'Bank transfer to BE55000000000001',
+      source_locator: 'csv:r4:NXT_CASHOUT_1',
+      proposed_transaction_type: 'Transfer',
+      proposed_transfer_category: 'Internal Transfer',
+      proposal_source: 'deterministic_extracted',
+      raw_fields: {
+        source_locator: 'csv:r4:NXT_CASHOUT_1',
+      },
+    },
+    {
+      ...firstPayload.transactions[0],
+      id: 12,
+      source_description: 'Albert Heijn 3143 | Gent | BEL',
+      source_locator: 'csv:r2:NXT_PURCHASE_1',
+      proposed_transaction_type: null,
+      proposed_expense_category: null,
+      proposed_income_category: null,
+      proposed_transfer_category: null,
+      proposal_source: null,
+      raw_fields: {
+        source_locator: 'csv:r2:NXT_PURCHASE_1',
+      },
+    },
+  ],
+};
+
 const renderImportReviewPage = () =>
   render(
     <ReportingCurrencyProvider>
@@ -226,6 +273,20 @@ describe('ImportReviewPage', () => {
     expect(screen.getByText(/-\€14\.20/)).toBeInTheDocument();
     expect(screen.getByText('Uw transacties')).toBeInTheDocument();
     expect(screen.getByText('15/12/2025 DE TRAITEUR BV GENT BE 14,20')).toBeInTheDocument();
+  });
+
+  test('renders proposed classifications and classification fallback in the review table', async () => {
+    mockedImportService.getReview.mockResolvedValue(nexoProposalPayload as never);
+
+    renderImportReviewPage();
+
+    expect(await screen.findByRole('columnheader', { name: /proposed/i })).toBeInTheDocument();
+    const proposalCell = screen.getByText('Transfer • Internal Transfer').closest('td');
+    expect(proposalCell).not.toBeNull();
+    expect(within(proposalCell as HTMLElement).getByText('deterministic_extracted')).toBeInTheDocument();
+    const fallbackCell = screen.getByText('Needs classification').closest('td');
+    expect(fallbackCell).not.toBeNull();
+    expect(within(fallbackCell as HTMLElement).queryByText('deterministic_extracted')).not.toBeInTheDocument();
   });
 
   test('shows raw context when a draft transaction has unavailable FX', async () => {

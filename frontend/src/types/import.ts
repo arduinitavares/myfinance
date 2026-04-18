@@ -41,8 +41,11 @@ export interface ImportTransactionDraft extends DisplayMoneyFields {
   currency: string;
   debit_credit: string | null;
   source_locator: string;
-  inferred_category: string | null;
-  category_source: string | null;
+  proposed_transaction_type: string | null;
+  proposed_expense_category: string | null;
+  proposed_income_category: string | null;
+  proposed_transfer_category: string | null;
+  proposal_source: string | null;
   confidence: number | null;
   field_confidence: Record<string, number> | null;
   raw_fields: Record<string, unknown> | null;
