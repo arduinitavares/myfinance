@@ -93,6 +93,93 @@ def test_statistics_timeseries_endpoint_returns_wrapper_payload(db_session):
     assert "items" in payload
 
 
+def test_statistics_timeseries_partial_month_same_month_range_returns_empty_wrapper(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 10),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="Mid-month salary",
+        amount=5000.0,
+        transaction_type=TransactionType.INCOME,
+        transaction_date=date(2026, 3, 10),
+        income_category=IncomeCategory.SALARY,
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/statistics/timeseries",
+        params={"start_date": "2026-03-01", "end_date": "2026-03-15"},
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reporting_currency": "USD",
+        "conversion_summary": {
+            "converted_transaction_count": 0,
+            "unavailable_transaction_count": 0,
+            "unavailable_currencies": [],
+        },
+        "items": [],
+    }
+
+
+def test_statistics_timeseries_partial_month_cross_month_range_only_counts_completed_month_buckets(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 2, 28),
+        quoted_currency="USD",
+        units_per_base="1.1000",
+    )
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 10),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="February salary",
+        amount=1000.0,
+        transaction_type=TransactionType.INCOME,
+        transaction_date=date(2026, 2, 28),
+        income_category=IncomeCategory.SALARY,
+    )
+    march_transaction = _create_transaction(
+        db_session,
+        description="March unsupported fee",
+        amount=-15.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 3, 10),
+        expense_category=ExpenseCategory.FINANCIAL_FEES,
+    )
+    march_transaction.currency = "NEXO"
+    db_session.commit()
+
+    response = client.get(
+        "/statistics/timeseries",
+        params={"start_date": "2026-02-15", "end_date": "2026-03-15"},
+        headers={"X-Reporting-Currency": "USD"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["conversion_summary"] == {
+        "converted_transaction_count": 1,
+        "unavailable_transaction_count": 0,
+        "unavailable_currencies": [],
+    }
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["date"] == "2026-02-28"
+    assert payload["items"][0]["period_income"] == 1100.0
+    assert payload["items"][0]["total_income"] == 1100.0
+    assert payload["items"][0]["yearly_income"] == 1100.0
+
+
 def test_statistics_overview_endpoint_includes_conversion_summary_on_each_item(db_session):
     _store_rate(
         db_session,

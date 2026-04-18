@@ -74,16 +74,21 @@ describe('MonthlyHeatmap', () => {
         yearly_expenses: 300,
       },
     ];
+    const wrapperResponse = {
+      reporting_currency: 'USD',
+      conversion_summary: {
+        converted_transaction_count: 1,
+        unavailable_transaction_count: 0,
+        unavailable_currencies: [],
+      },
+      items,
+    };
+    Object.defineProperty(wrapperResponse, 'forEach', {
+      value: items.forEach.bind(items),
+      enumerable: false,
+    });
     mockedGetStatisticsTimeseries.mockResolvedValueOnce(
-      Object.assign([...items], {
-        reporting_currency: 'USD',
-        conversion_summary: {
-          converted_transaction_count: 1,
-          unavailable_transaction_count: 0,
-          unavailable_currencies: [],
-        },
-        items,
-      }) as Awaited<ReturnType<typeof statisticService.getStatisticsTimeseries>>
+      wrapperResponse as Awaited<ReturnType<typeof statisticService.getStatisticsTimeseries>>
     );
 
     const { container } = renderMonthlyHeatmap();

@@ -126,6 +126,7 @@ class ReportingCurrencyAnalyticsService:
     class _PreparedFinancialTransaction:
         transaction_date: date
         month_end: date
+        raw_currency: str
         transaction_type: TransactionType
         display_amount: Decimal | None
         is_available: bool
@@ -151,6 +152,7 @@ class ReportingCurrencyAnalyticsService:
                 self._PreparedFinancialTransaction(
                     transaction_date=transaction.transaction_date,
                     month_end=self._month_end(transaction.transaction_date),
+                    raw_currency=transaction.currency,
                     transaction_type=transaction.transaction_type,
                     display_amount=(
                         StatisticsService._to_decimal(display_money.display_amount)
@@ -429,11 +431,18 @@ class ReportingCurrencyAnalyticsService:
         end: date,
         reporting_currency: str,
     ) -> dict[str, Any]:
-        prepared_transactions, conversion_summary = self._prepare_financial_transactions(
+        target_month_ends = self._month_ends_between(start, end)
+        if not target_month_ends:
+            return {
+                "reporting_currency": reporting_currency,
+                "conversion_summary": ConversionSummary().as_payload(),
+                "items": [],
+            }
+
+        prepared_transactions, _ = self._prepare_financial_transactions(
             end=end,
             reporting_currency=reporting_currency,
         )
-        target_month_ends = self._month_ends_between(start, end)
 
         if not prepared_transactions or not any(
             start <= prepared.transaction_date <= end for prepared in prepared_transactions
@@ -444,11 +453,22 @@ class ReportingCurrencyAnalyticsService:
                 "items": [],
             }
 
+        last_target_month_end = target_month_ends[-1]
+        contributing_transactions = [
+            prepared for prepared in prepared_transactions if prepared.month_end <= last_target_month_end
+        ]
+        if not contributing_transactions:
+            return {
+                "reporting_currency": reporting_currency,
+                "conversion_summary": ConversionSummary().as_payload(),
+                "items": [],
+            }
+
         transactions_by_month_end: dict[date, list[ReportingCurrencyAnalyticsService._PreparedFinancialTransaction]] = {}
-        for prepared in prepared_transactions:
+        for prepared in contributing_transactions:
             transactions_by_month_end.setdefault(prepared.month_end, []).append(prepared)
 
-        first_month_end = prepared_transactions[0].month_end
+        first_month_end = contributing_transactions[0].month_end
         processing_start = min(first_month_end, target_month_ends[0])
         target_month_end_set = set(target_month_ends)
         items = []
@@ -526,6 +546,16 @@ class ReportingCurrencyAnalyticsService:
 
         return {
             "reporting_currency": reporting_currency,
-            "conversion_summary": conversion_summary.as_payload(),
+            "conversion_summary": {
+                "converted_transaction_count": sum(1 for prepared in contributing_transactions if prepared.is_available),
+                "unavailable_transaction_count": sum(1 for prepared in contributing_transactions if not prepared.is_available),
+                "unavailable_currencies": sorted(
+                    {
+                        prepared.raw_currency.strip().upper()
+                        for prepared in contributing_transactions
+                        if not prepared.is_available and prepared.raw_currency.strip()
+                    }
+                ),
+            },
             "items": items,
         }
