@@ -13,6 +13,10 @@ interface TimeseriesData {
     total_net_savings: number;
 }
 
+interface TimeseriesResponse {
+    items?: any[];
+}
+
 export const useStatisticsTimeseries = (start_date?: string, end_date?: string, time_period?: TimePeriod) => {
     const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]);
     const [loading, setLoading] = useState(true);
@@ -22,7 +26,12 @@ export const useStatisticsTimeseries = (start_date?: string, end_date?: string, 
         setLoading(true);
         try {
             const data = await statisticService.getStatisticsTimeseries(start_date, end_date, time_period);
-            const transformedData = data.map((item: any) => ({
+            const items = Array.isArray(data)
+                ? data
+                : Array.isArray((data as TimeseriesResponse | undefined)?.items)
+                    ? (data as TimeseriesResponse).items!
+                    : [];
+            const transformedData = items.map((item: any) => ({
                 date: item.date,
                 period_income: Number(item.period_income) || 0,
                 period_expenses: Number(item.period_expenses) || 0,

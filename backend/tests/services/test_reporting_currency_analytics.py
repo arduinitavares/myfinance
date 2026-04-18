@@ -101,6 +101,60 @@ def test_build_financial_timeseries_excludes_unconvertible_rows_from_totals_but_
     assert payload["items"][0]["period_expenses"] == 0.0
 
 
+def test_build_financial_timeseries_conversion_summary_covers_all_transactions_feeding_returned_metrics(db_session):
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 2, 28),
+        quoted_currency="USD",
+        units_per_base="1.1000",
+    )
+    _store_rate(
+        db_session,
+        rate_date=date(2026, 3, 31),
+        quoted_currency="USD",
+        units_per_base="1.2000",
+    )
+    _create_transaction(
+        db_session,
+        description="February salary",
+        amount=1000.0,
+        transaction_type=TransactionType.INCOME,
+        transaction_date=date(2026, 2, 28),
+        income_category=IncomeCategory.SALARY,
+    )
+    _create_transaction(
+        db_session,
+        description="March salary",
+        amount=5000.0,
+        transaction_type=TransactionType.INCOME,
+        transaction_date=date(2026, 3, 31),
+        income_category=IncomeCategory.SALARY,
+    )
+    historical_unsupported = _create_transaction(
+        db_session,
+        description="Historical unsupported fee",
+        amount=-15.0,
+        transaction_type=TransactionType.EXPENSE,
+        transaction_date=date(2026, 2, 28),
+        expense_category=ExpenseCategory.FINANCIAL_FEES,
+    )
+    historical_unsupported.currency = "NEXO"
+    db_session.commit()
+
+    payload = ReportingCurrencyAnalyticsService(db_session).build_financial_timeseries(
+        start=date(2026, 3, 1),
+        end=date(2026, 3, 31),
+        reporting_currency="USD",
+    )
+
+    assert payload["conversion_summary"]["converted_transaction_count"] == 2
+    assert payload["conversion_summary"]["unavailable_transaction_count"] == 1
+    assert payload["conversion_summary"]["unavailable_currencies"] == ["NEXO"]
+    assert payload["items"][0]["period_income"] == 6000.0
+    assert payload["items"][0]["total_income"] == 7100.0
+    assert payload["items"][0]["yearly_income"] == 7100.0
+
+
 def test_build_transfer_summary_excludes_unconvertible_rows_from_totals_but_reports_them(db_session):
     _store_rate(
         db_session,
@@ -138,3 +192,14 @@ def test_build_transfer_summary_excludes_unconvertible_rows_from_totals_but_repo
     items = {item["subtype"]: item for item in payload["items"]}
     assert items["Credit Card Settlement"]["total_outgoing"] == 120.0
     assert items["Internal Transfer"]["total_outgoing"] == 0.0
+
+
+def test_resolve_reporting_window_raises_stable_invalid_date_message(db_session):
+    try:
+        ReportingCurrencyAnalyticsService.resolve_reporting_window(
+            db_session,
+            start_date="2026-99-01",
+        )
+        assert False, "expected resolve_reporting_window to raise ValueError"
+    except ValueError as exc:
+        assert str(exc) == "Invalid date format. Use YYYY-MM-DD"

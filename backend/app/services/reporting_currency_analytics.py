@@ -58,7 +58,10 @@ class ReportingCurrencyAnalyticsService:
     def _parse_iso_date(value: str | None) -> date | None:
         if value is None:
             return None
-        return datetime.strptime(value, "%Y-%m-%d").date()
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError("Invalid date format. Use YYYY-MM-DD") from exc
 
     @classmethod
     def resolve_reporting_window(
@@ -118,6 +121,47 @@ class ReportingCurrencyAnalyticsService:
         for transaction in transactions:
             summary.record(self._display_money(transaction, reporting_currency), transaction.currency)
         return summary
+
+    @dataclass(frozen=True)
+    class _PreparedFinancialTransaction:
+        transaction_date: date
+        month_end: date
+        transaction_type: TransactionType
+        display_amount: Decimal | None
+        is_available: bool
+
+    def _prepare_financial_transactions(
+        self,
+        *,
+        end: date,
+        reporting_currency: str,
+    ) -> tuple[list[_PreparedFinancialTransaction], ConversionSummary]:
+        transactions = self.db.query(Transaction).filter(
+            Transaction.transaction_type.in_([TransactionType.INCOME, TransactionType.EXPENSE]),
+            Transaction.transaction_date <= end,
+        ).order_by(Transaction.transaction_date.asc(), Transaction.id.asc()).all()
+
+        prepared: list[ReportingCurrencyAnalyticsService._PreparedFinancialTransaction] = []
+        conversion_summary = ConversionSummary()
+
+        for transaction in transactions:
+            display_money = self._display_money(transaction, reporting_currency)
+            conversion_summary.record(display_money, transaction.currency)
+            prepared.append(
+                self._PreparedFinancialTransaction(
+                    transaction_date=transaction.transaction_date,
+                    month_end=self._month_end(transaction.transaction_date),
+                    transaction_type=transaction.transaction_type,
+                    display_amount=(
+                        StatisticsService._to_decimal(display_money.display_amount)
+                        if display_money.is_available and display_money.display_amount is not None
+                        else None
+                    ),
+                    is_available=display_money.is_available and display_money.display_amount is not None,
+                )
+            )
+
+        return prepared, conversion_summary
 
     def _summarize_financial_transactions(
         self,
@@ -385,33 +429,103 @@ class ReportingCurrencyAnalyticsService:
         end: date,
         reporting_currency: str,
     ) -> dict[str, Any]:
-        financial_transactions = self.db.query(Transaction).filter(
-            Transaction.transaction_type.in_([TransactionType.INCOME, TransactionType.EXPENSE]),
-            Transaction.transaction_date >= start,
-            Transaction.transaction_date <= end,
-        ).all()
+        prepared_transactions, conversion_summary = self._prepare_financial_transactions(
+            end=end,
+            reporting_currency=reporting_currency,
+        )
+        target_month_ends = self._month_ends_between(start, end)
 
+        if not prepared_transactions or not any(
+            start <= prepared.transaction_date <= end for prepared in prepared_transactions
+        ):
+            return {
+                "reporting_currency": reporting_currency,
+                "conversion_summary": ConversionSummary().as_payload(),
+                "items": [],
+            }
+
+        transactions_by_month_end: dict[date, list[ReportingCurrencyAnalyticsService._PreparedFinancialTransaction]] = {}
+        for prepared in prepared_transactions:
+            transactions_by_month_end.setdefault(prepared.month_end, []).append(prepared)
+
+        first_month_end = prepared_transactions[0].month_end
+        processing_start = min(first_month_end, target_month_ends[0])
+        target_month_end_set = set(target_month_ends)
         items = []
-        if financial_transactions:
-            for month_end in self._month_ends_between(start, end):
-                stats, _ = self._financial_snapshot(
-                    period=StatisticsPeriod.MONTHLY,
-                    target_date=month_end,
-                    reporting_currency=reporting_currency,
+
+        cumulative_income = Decimal("0")
+        cumulative_expenses = Decimal("0")
+        yearly_totals: dict[int, dict[str, Decimal]] = {}
+
+        for month_end in self._month_ends_between(processing_start, end):
+            month_transactions = transactions_by_month_end.get(month_end, [])
+            month_income = Decimal("0")
+            month_expenses = Decimal("0")
+            income_count = 0
+            expense_count = 0
+            converted_income_count = 0
+            converted_expense_count = 0
+
+            for prepared in month_transactions:
+                year_totals = yearly_totals.setdefault(
+                    prepared.transaction_date.year,
+                    {"income": Decimal("0"), "expenses": Decimal("0")},
                 )
-                items.append(
-                    {
-                        "period": StatisticsPeriod.MONTHLY.value,
-                        "date": month_end.isoformat(),
-                        **stats,
-                    }
-                )
+
+                if prepared.transaction_type == TransactionType.INCOME:
+                    income_count += 1
+                    if prepared.is_available and prepared.display_amount is not None:
+                        month_income += prepared.display_amount
+                        cumulative_income += prepared.display_amount
+                        year_totals["income"] += prepared.display_amount
+                        converted_income_count += 1
+                else:
+                    expense_count += 1
+                    if prepared.is_available and prepared.display_amount is not None:
+                        display_expense = abs(prepared.display_amount)
+                        month_expenses += display_expense
+                        cumulative_expenses += display_expense
+                        year_totals["expenses"] += display_expense
+                        converted_expense_count += 1
+
+            if month_end not in target_month_end_set:
+                continue
+
+            period_net_savings = month_income - month_expenses
+            year_totals = yearly_totals.setdefault(
+                month_end.year,
+                {"income": Decimal("0"), "expenses": Decimal("0")},
+            )
+            items.append(
+                {
+                    "period": StatisticsPeriod.MONTHLY.value,
+                    "date": month_end.isoformat(),
+                    "period_income": StatisticsService._quantized_float(month_income),
+                    "period_expenses": StatisticsService._quantized_float(month_expenses),
+                    "period_net_savings": StatisticsService._quantized_float(period_net_savings),
+                    "savings_rate": float(period_net_savings / month_income * 100) if month_income > 0 else 0.0,
+                    "total_income": StatisticsService._quantized_float(cumulative_income),
+                    "total_expenses": StatisticsService._quantized_float(cumulative_expenses),
+                    "total_net_savings": StatisticsService._quantized_float(cumulative_income - cumulative_expenses),
+                    "income_count": income_count,
+                    "expense_count": expense_count,
+                    "average_income": (
+                        StatisticsService._quantized_float(month_income / converted_income_count)
+                        if converted_income_count > 0
+                        else 0.0
+                    ),
+                    "average_expense": (
+                        StatisticsService._quantized_float(month_expenses / converted_expense_count)
+                        if converted_expense_count > 0
+                        else 0.0
+                    ),
+                    "yearly_income": StatisticsService._quantized_float(year_totals["income"]),
+                    "yearly_expenses": StatisticsService._quantized_float(year_totals["expenses"]),
+                }
+            )
 
         return {
             "reporting_currency": reporting_currency,
-            "conversion_summary": self._conversion_summary_for(
-                financial_transactions,
-                reporting_currency=reporting_currency,
-            ).as_payload(),
+            "conversion_summary": conversion_summary.as_payload(),
             "items": items,
         }
