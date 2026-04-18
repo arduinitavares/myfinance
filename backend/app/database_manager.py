@@ -75,9 +75,39 @@ def _ensure_import_traceability_transaction_columns() -> None:
         )
 
 
+def _ensure_import_transaction_draft_proposal_columns() -> None:
+    inspector = inspect(engine)
+    if "import_transaction_drafts" not in inspector.get_table_names():
+        return
+
+    transaction_columns = {column["name"] for column in inspector.get_columns("import_transaction_drafts")}
+    with engine.begin() as conn:
+        if "proposed_transaction_type" not in transaction_columns:
+            conn.execute(
+                text("ALTER TABLE import_transaction_drafts ADD COLUMN proposed_transaction_type VARCHAR(50)")
+            )
+        if "proposed_expense_category" not in transaction_columns:
+            conn.execute(
+                text("ALTER TABLE import_transaction_drafts ADD COLUMN proposed_expense_category VARCHAR(100)")
+            )
+        if "proposed_income_category" not in transaction_columns:
+            conn.execute(
+                text("ALTER TABLE import_transaction_drafts ADD COLUMN proposed_income_category VARCHAR(100)")
+            )
+        if "proposed_transfer_category" not in transaction_columns:
+            conn.execute(
+                text("ALTER TABLE import_transaction_drafts ADD COLUMN proposed_transfer_category VARCHAR(100)")
+            )
+        if "classification_source" not in transaction_columns:
+            conn.execute(text("ALTER TABLE import_transaction_drafts ADD COLUMN classification_source VARCHAR(50)"))
+        if "recurrence_pattern_id" not in transaction_columns:
+            conn.execute(text("ALTER TABLE import_transaction_drafts ADD COLUMN recurrence_pattern_id INTEGER"))
+
+
 def ensure_runtime_schema_compatibility() -> None:
     _ensure_classification_transaction_columns()
     _ensure_import_traceability_transaction_columns()
+    _ensure_import_transaction_draft_proposal_columns()
 
 def init_database():
     """Initialize the database and create all tables"""

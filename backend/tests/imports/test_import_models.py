@@ -4,6 +4,7 @@ from app.database import engine
 from app.database import Base
 import app.database_manager as database_manager
 import app.config as config_module
+from app.imports.contracts import ExtractedTransaction, ImportStrategyKey
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
 from app.schemas.transaction import Transaction, TransactionCreate
 
@@ -105,7 +106,40 @@ def test_import_schema_includes_statement_and_transaction_metadata_columns():
         "confidence",
         "field_confidence",
         "raw_fields",
+        "proposed_transaction_type",
+        "proposed_expense_category",
+        "proposed_income_category",
+        "proposed_transfer_category",
+        "classification_source",
+        "recurrence_pattern_id",
     } <= transaction_columns.keys()
+
+
+def test_import_strategy_key_includes_nexo_csv():
+    assert ImportStrategyKey.NEXO_CSV.value == "nexo_csv"
+
+
+def test_extracted_transaction_exposes_review_time_proposals():
+    transaction = ExtractedTransaction(
+        transaction_date="2026-04-11",
+        source_description="Nexo card purchase",
+        signed_amount=-10.0,
+        currency="EUR",
+        debit_credit="debit",
+        source_locator="csv:row:2",
+        proposed_transaction_type="Expense",
+        proposed_expense_category="Groceries",
+        proposed_income_category=None,
+        proposed_transfer_category=None,
+        classification_source="deterministic",
+        recurrence_pattern_id=42,
+    )
+
+    dumped = transaction.model_dump()
+    assert dumped["proposed_transaction_type"] == "Expense"
+    assert dumped["proposed_expense_category"] == "Groceries"
+    assert dumped["classification_source"] == "deterministic"
+    assert dumped["recurrence_pattern_id"] == 42
 
 
 def test_transactions_include_import_traceability_columns():
@@ -168,6 +202,53 @@ def test_init_database_backfills_missing_transaction_traceability_columns(tmp_pa
 
     transaction_indexes = inspect(temp_engine).get_indexes("transactions")
     assert any(index["name"] == "ix_transactions_import_session_id" for index in transaction_indexes)
+
+
+def test_init_database_backfills_missing_import_transaction_draft_proposal_columns(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy_import_drafts.sqlite"
+    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+
+    Base.metadata.create_all(
+        bind=temp_engine,
+        tables=[table for table in Base.metadata.sorted_tables if table.name != "import_transaction_drafts"],
+    )
+    with temp_engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE import_transaction_drafts (
+                    id INTEGER PRIMARY KEY,
+                    import_statement_draft_id INTEGER NOT NULL,
+                    transaction_date DATE,
+                    source_description TEXT NOT NULL,
+                    canonical_description_en TEXT,
+                    signed_amount FLOAT NOT NULL,
+                    currency VARCHAR(10) NOT NULL,
+                    debit_credit VARCHAR(10),
+                    source_locator VARCHAR(255) NOT NULL,
+                    inferred_category VARCHAR(100),
+                    category_source VARCHAR(50),
+                    confidence FLOAT,
+                    field_confidence TEXT,
+                    raw_fields TEXT,
+                    edit_source VARCHAR(50) NOT NULL
+                )
+                """
+            )
+        )
+
+    monkeypatch.setattr(database_manager, "engine", temp_engine)
+    database_manager.init_database()
+
+    transaction_columns = {column["name"] for column in inspect(temp_engine).get_columns("import_transaction_drafts")}
+    assert {
+        "proposed_transaction_type",
+        "proposed_expense_category",
+        "proposed_income_category",
+        "proposed_transfer_category",
+        "classification_source",
+        "recurrence_pattern_id",
+    } <= transaction_columns
 
 
 def test_transaction_read_schema_exposes_traceability_fields_only():

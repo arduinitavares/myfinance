@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 class ImportStrategyKey(str, Enum):
     BELFIUS_CSV = "belfius_csv"
     BEOBANK_CSV = "beobank_csv"
+    NEXO_CSV = "nexo_csv"
     PDF_STATEMENT = "pdf_statement"
     UNKNOWN = "unknown"
 
@@ -46,6 +47,12 @@ class ExtractedTransaction(BaseModel):
     debit_credit: str
     inferred_category: Optional[str] = None
     category_source: Optional[str] = None
+    proposed_transaction_type: Optional[str] = None
+    proposed_expense_category: Optional[str] = None
+    proposed_income_category: Optional[str] = None
+    proposed_transfer_category: Optional[str] = None
+    classification_source: Optional[str] = None
+    recurrence_pattern_id: Optional[int] = None
     confidence: dict[str, float] = Field(default_factory=dict)
     source_locator: str
     edit_source: Literal["deterministic_extracted", "ai_extracted", "user_edited"] = "ai_extracted"

@@ -55,6 +55,12 @@ class ImportTransactionDraftResponse(BaseModel):
     source_locator: str
     inferred_category: str | None = None
     category_source: str | None = None
+    proposed_transaction_type: str | None = None
+    proposed_expense_category: str | None = None
+    proposed_income_category: str | None = None
+    proposed_transfer_category: str | None = None
+    classification_source: str | None = None
+    recurrence_pattern_id: int | None = None
     confidence: float | None = None
     field_confidence: dict[str, float] | None = None
     raw_fields: dict[str, Any] | None = None
@@ -141,6 +147,12 @@ def build_import_transaction_draft_response_payload(
         "source_locator": transaction_draft.source_locator,
         "inferred_category": transaction_draft.inferred_category,
         "category_source": transaction_draft.category_source,
+        "proposed_transaction_type": transaction_draft.proposed_transaction_type,
+        "proposed_expense_category": transaction_draft.proposed_expense_category,
+        "proposed_income_category": transaction_draft.proposed_income_category,
+        "proposed_transfer_category": transaction_draft.proposed_transfer_category,
+        "classification_source": transaction_draft.classification_source,
+        "recurrence_pattern_id": transaction_draft.recurrence_pattern_id,
         "confidence": transaction_draft.confidence,
         "field_confidence": None,
         "raw_fields": None,
