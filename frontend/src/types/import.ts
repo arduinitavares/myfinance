@@ -31,6 +31,7 @@ export interface ImportStatementDraft {
   review_status: string;
 }
 
+// Import drafts carry the shared explicit line-item display-money contract.
 export interface ImportTransactionDraft extends DisplayMoneyFields {
   id: number;
   transaction_date: string | null;

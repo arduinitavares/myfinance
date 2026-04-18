@@ -309,6 +309,8 @@ export const ImportReviewPage: React.FC = () => {
                         rawCurrency={transaction.currency}
                         displayAmount={transaction.display_amount}
                         displayCurrency={transaction.display_currency}
+                        displayIsAvailable={transaction.display_is_available}
+                        displayUnavailableReason={transaction.display_unavailable_reason}
                         primaryClassName="text-gray-900 dark:text-gray-200"
                         unavailableClassName="font-medium text-amber-700 dark:text-amber-300"
                         secondaryClassName="text-xs text-gray-500 dark:text-gray-400"

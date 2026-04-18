@@ -269,6 +269,40 @@ describe('TransactionList', () => {
     expect(screen.queryByText(/FX unavailable/i)).not.toBeInTheDocument();
   });
 
+  test('passes explicit display availability fields through to the amount cell', async () => {
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 22,
+            account_number: 'BE022',
+            transaction_date: '2026-04-14',
+            amount: -42,
+            currency: 'NEXO',
+            display_amount: null,
+            display_currency: 'USD',
+            display_is_available: false,
+            display_unavailable_reason: 'unsupported_currency',
+            description: 'Unsupported asset',
+            transaction_type: TransactionType.EXPENSE,
+            source_bank: 'Nexo',
+          },
+        ]}
+        totalTransactions={1}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={async () => {}}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    expect(await screen.findByText('FX unavailable')).toBeInTheDocument();
+  });
+
   test('updates transfer rows using transfer categories', () => {
     const onTransactionUpdate = jest.fn().mockResolvedValue(undefined);
 

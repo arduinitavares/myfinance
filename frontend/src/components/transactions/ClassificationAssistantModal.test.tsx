@@ -139,6 +139,31 @@ describe('ClassificationAssistantModal', () => {
     ).toBeInTheDocument();
   });
 
+  test('shows unavailable FX context for unsupported currencies', async () => {
+    render(
+      <ClassificationAssistantModal
+        open
+        transaction={buildTransaction({
+          id: 45,
+          transaction_date: '2026-01-08',
+          description: 'Unsupported asset',
+          amount: -42,
+          currency: 'NEXO',
+          display_amount: null,
+          display_currency: 'USD',
+          display_is_available: false,
+          display_unavailable_reason: 'unsupported_currency',
+        })}
+        onOpenChange={() => {}}
+        onSaved={async () => {}}
+        getNextTransaction={() => null}
+      />
+    );
+
+    expect(await screen.findByText('FX unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/Raw -NEXO\s42\.00/)).toBeInTheDocument();
+  });
+
   test('save and next closes the modal when there is no next row', async () => {
     const onOpenChange = jest.fn();
 

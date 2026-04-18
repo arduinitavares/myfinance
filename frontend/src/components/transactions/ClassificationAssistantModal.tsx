@@ -261,6 +261,8 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
                     rawCurrency={transaction.currency}
                     displayAmount={transaction.display_amount}
                     displayCurrency={transaction.display_currency}
+                    displayIsAvailable={transaction.display_is_available}
+                    displayUnavailableReason={transaction.display_unavailable_reason}
                     showRawWhenConverted
                     primaryClassName="text-gray-600 dark:text-gray-300"
                     unavailableClassName="font-medium text-amber-700 dark:text-amber-300"

@@ -130,6 +130,22 @@ const firstPayload = {
   },
 };
 
+const unavailablePayload = {
+  ...firstPayload,
+  transactions: [
+    {
+      ...firstPayload.transactions[0],
+      signed_amount: -42,
+      currency: 'NEXO',
+      display_amount: null,
+      display_currency: 'USD',
+      display_is_available: false,
+      display_unavailable_reason: 'unsupported_currency',
+      source_description: 'Unsupported asset',
+    },
+  ],
+};
+
 const secondPayload = {
   ...firstPayload,
   session: {
@@ -210,6 +226,15 @@ describe('ImportReviewPage', () => {
     expect(screen.getByText(/-\€14\.20/)).toBeInTheDocument();
     expect(screen.getByText('Uw transacties')).toBeInTheDocument();
     expect(screen.getByText('15/12/2025 DE TRAITEUR BV GENT BE 14,20')).toBeInTheDocument();
+  });
+
+  test('shows raw context when a draft transaction has unavailable FX', async () => {
+    mockedImportService.getReview.mockResolvedValue(unavailablePayload as never);
+
+    renderImportReviewPage();
+
+    expect(await screen.findByText('FX unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/Raw -NEXO\s42\.00/)).toBeInTheDocument();
   });
 
   test('approve calls the service and navigates to transactions', async () => {

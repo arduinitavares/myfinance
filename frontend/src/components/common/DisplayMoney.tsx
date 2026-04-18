@@ -7,6 +7,8 @@ interface DisplayMoneyProps {
   rawCurrency: string;
   displayAmount?: number | null;
   displayCurrency?: string | null;
+  displayIsAvailable?: boolean | null;
+  displayUnavailableReason?: string | null;
   absolute?: boolean;
   showRawWhenConverted?: boolean;
   formatOptions?: Intl.NumberFormatOptions;
@@ -20,6 +22,8 @@ export const DisplayMoney: React.FC<DisplayMoneyProps> = ({
   rawCurrency,
   displayAmount,
   displayCurrency,
+  displayIsAvailable,
+  displayUnavailableReason,
   absolute = false,
   showRawWhenConverted = false,
   formatOptions,
@@ -32,6 +36,8 @@ export const DisplayMoney: React.FC<DisplayMoneyProps> = ({
     rawCurrency,
     displayAmount,
     displayCurrency,
+    displayIsAvailable,
+    displayUnavailableReason,
     absolute,
     showRawWhenConverted,
     formatOptions,

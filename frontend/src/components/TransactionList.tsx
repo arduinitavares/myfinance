@@ -265,6 +265,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       rawCurrency={transaction.currency}
                       displayAmount={transaction.display_amount}
                       displayCurrency={transaction.display_currency}
+                      displayIsAvailable={transaction.display_is_available}
+                      displayUnavailableReason={transaction.display_unavailable_reason}
                       absolute
                       primaryClassName="font-medium"
                       unavailableClassName="font-medium text-amber-700 dark:text-amber-300"

@@ -71,6 +71,8 @@ export interface DisplayMoneyFields {
   display_currency?: string | null;
   display_fx_rate?: number | null;
   display_rate_date?: string | null;
+  display_is_available?: boolean | null;
+  display_unavailable_reason?: string | null;
 }
 
 export interface Transaction extends DisplayMoneyFields {
