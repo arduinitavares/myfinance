@@ -23,15 +23,18 @@ export const formatMoney = (
   amount: number,
   currency: string,
   options: Intl.NumberFormatOptions = {}
-): string => {
+): string =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    ...options,
+  }).format(amount);
+
+const formatLineItemRawText = (amount: number, currency: string, options: Intl.NumberFormatOptions = {}) => {
   try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-      ...options,
-    }).format(amount);
+    return formatMoney(amount, currency, options);
   } catch (error) {
     if (!(error instanceof RangeError)) {
       throw error;
@@ -60,7 +63,7 @@ export const resolveDisplayMoney = ({
   formatOptions = {},
 }: ResolveDisplayMoneyOptions): ResolvedDisplayMoney => {
   const normalizeAmount = (amount: number) => (absolute ? Math.abs(amount) : amount);
-  const rawText = formatMoney(normalizeAmount(rawAmount), rawCurrency, formatOptions);
+  const rawText = formatLineItemRawText(normalizeAmount(rawAmount), rawCurrency, formatOptions);
 
   if (displayIsAvailable === false) {
     return {
