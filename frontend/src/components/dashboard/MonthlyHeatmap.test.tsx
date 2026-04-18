@@ -83,10 +83,6 @@ describe('MonthlyHeatmap', () => {
       },
       items,
     };
-    Object.defineProperty(wrapperResponse, 'forEach', {
-      value: items.forEach.bind(items),
-      enumerable: false,
-    });
     mockedGetStatisticsTimeseries.mockResolvedValueOnce(
       wrapperResponse as Awaited<ReturnType<typeof statisticService.getStatisticsTimeseries>>
     );

@@ -21,6 +21,10 @@ interface MonthlyStatistics {
   yearly_expenses: number;
 }
 
+interface MonthlyStatisticsResponse {
+  items?: MonthlyStatistics[];
+}
+
 interface MonthData {
   month: string; // Format: "YYYY-MM"
   income: number;
@@ -51,11 +55,16 @@ export const MonthlyHeatmap: React.FC = () => {
       try {
         // Get all available monthly data
         const data = await statisticService.getStatisticsTimeseries();
+        const items = Array.isArray(data)
+          ? data
+          : Array.isArray((data as MonthlyStatisticsResponse | undefined)?.items)
+            ? (data as MonthlyStatisticsResponse).items!
+            : [];
         
         // Process the data into year-month format
         const processedData: Record<string, YearData> = {};
         
-        data.forEach((stat: MonthlyStatistics) => {
+        items.forEach((stat: MonthlyStatistics) => {
           if (stat.date) {
             const date = new Date(stat.date);
             const year = date.getFullYear().toString();
