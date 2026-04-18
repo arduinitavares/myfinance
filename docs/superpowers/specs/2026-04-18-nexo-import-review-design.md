@@ -205,6 +205,8 @@ Otherwise normal detection behavior continues.
 - `pdf_statement`
 - `nexo_csv`
 
+This phase extends the existing `ImportPipelineService.start_upload` method to accept supported CSV uploads in addition to PDFs. It does not introduce a parallel `start_csv_upload` entry point.
+
 ### Batch-folder routing
 
 Batch-folder import must detect CSV files before routing them.
@@ -216,6 +218,8 @@ Rules:
 - a recognized Nexo CSV must never be handed to `CsvImportService`
 
 This keeps Nexo off the legacy lane without forcing a broad CSV migration.
+
+The current batch flow does not have this hook yet: `_process_file` sends every supported CSV directly to `_process_csv_file`, which immediately calls `CsvImportService` without detection or `ImportSession` creation. This phase must therefore restructure `ImportBatchFolderService._process_file` so CSV files are content-detected before routing. Recognized Nexo CSVs then go through `ImportPipelineService` plus `ImportWorkflowService`, while non-Nexo CSVs continue to `CsvImportService` unchanged.
 
 ## Extractor Design
 
@@ -266,6 +270,8 @@ All committed Nexo rows use:
 - `account_number = "NEXO"`
 
 This is an explicit v1 simplification. The system is not modeling separate Nexo wallets or sub-accounts in this phase.
+
+The workflow source-bank helper should add an explicit `"nexo"` branch instead of relying on the current provider-name `.title()` fallthrough.
 
 ## Shared Contract Migration
 
