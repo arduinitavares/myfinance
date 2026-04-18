@@ -242,6 +242,14 @@ def test_statistics_overview_excludes_transfer_transactions():
             transaction_type=TransactionType.EXPENSE,
             expense_category=ExpenseCategory.GROCERIES,
         )
+        usd_expense = _create_transaction(
+            db_session,
+            description="USD utilities",
+            amount=-80.0,
+            transaction_type=TransactionType.EXPENSE,
+            expense_category=ExpenseCategory.UTILITIES,
+        )
+        usd_expense.currency = "USD"
         _create_transaction(
             db_session,
             description="Card settlement",
@@ -265,15 +273,16 @@ def test_statistics_overview_excludes_transfer_transactions():
 
         assert eur_current_month["reporting_currency"] == "EUR"
         assert eur_current_month["period_income"] == 5000.0
-        assert eur_current_month["period_expenses"] == 125.0
+        assert eur_current_month["period_expenses"] == 189.0
         assert eur_current_month["income_count"] == 1
-        assert eur_current_month["expense_count"] == 1
+        assert eur_current_month["expense_count"] == 2
         assert eur_current_month["total_income"] == 5000.0
-        assert eur_current_month["total_expenses"] == 125.0
-        assert eur_current_month["total_net_savings"] == 4875.0
+        assert eur_current_month["total_expenses"] == 189.0
+        assert eur_current_month["total_net_savings"] == 4811.0
+        assert eur_current_month["average_expense"] == 94.5
         assert eur_all_time["reporting_currency"] == "EUR"
         assert eur_all_time["total_income"] == 5000.0
-        assert eur_all_time["total_expenses"] == 125.0
+        assert eur_all_time["total_expenses"] == 189.0
 
         usd_response = client.get(
             "/statistics/overview",
@@ -287,15 +296,59 @@ def test_statistics_overview_excludes_transfer_transactions():
 
         assert usd_current_month["reporting_currency"] == "USD"
         assert usd_current_month["period_income"] == 6250.0
-        assert usd_current_month["period_expenses"] == 156.25
+        assert usd_current_month["period_expenses"] == 236.25
         assert usd_current_month["total_income"] == 6250.0
-        assert usd_current_month["total_expenses"] == 156.25
-        assert usd_current_month["total_net_savings"] == 6093.75
+        assert usd_current_month["total_expenses"] == 236.25
+        assert usd_current_month["total_net_savings"] == 6013.75
         assert usd_current_month["average_income"] == 6250.0
-        assert usd_current_month["average_expense"] == 156.25
+        assert usd_current_month["average_expense"] == 118.12
         assert usd_all_time["reporting_currency"] == "USD"
         assert usd_all_time["total_income"] == 6250.0
-        assert usd_all_time["total_expenses"] == 156.25
+        assert usd_all_time["total_expenses"] == 236.25
+    finally:
+        db_session.close()
+
+
+def test_statistics_overview_keeps_previous_year_month_when_only_transfers_exist():
+    client = TestClient(app)
+    _reset_database(client)
+    db_session = SessionLocal()
+
+    try:
+        _create_transaction(
+            db_session,
+            description="Salary",
+            amount=5000.0,
+            transaction_type=TransactionType.INCOME,
+            income_category=IncomeCategory.SALARY,
+        )
+        prior_year_transfer = _create_transaction(
+            db_session,
+            description="Previous year transfer",
+            amount=-240.0,
+            transaction_type=TransactionType.TRANSFER,
+            transfer_category=TransferCategory.INTERNAL_TRANSFER,
+        )
+        prior_year_transfer.transaction_date = date(2024, 12, 20)
+        db_session.commit()
+
+        from app.services.statistics_service import StatisticsService
+
+        StatisticsService.initialize_statistics(db_session)
+        StatisticsService.initialize_category_statistics(db_session)
+
+        response = client.get("/statistics/overview")
+        assert response.status_code == 200
+
+        payload = response.json()
+        previous_year_last_month = payload["previous_year_last_month"]
+
+        assert previous_year_last_month is not None
+        assert previous_year_last_month["reporting_currency"] == "EUR"
+        assert previous_year_last_month["date"] == "2024-12-31"
+        assert previous_year_last_month["period_income"] == 0.0
+        assert previous_year_last_month["period_expenses"] == 0.0
+        assert previous_year_last_month["total_net_savings"] == 0.0
     finally:
         db_session.close()
 

@@ -44,6 +44,7 @@ export const FinancialOverview: React.FC = () => {
     </div>
   );
   if (!statistics) return null;
+  const reportingCurrency = statistics.current_month.reporting_currency;
 
   const calculateChange = (current: number, previous: number): string => {
     if (previous === 0) return '+0.0%';
@@ -77,6 +78,7 @@ export const FinancialOverview: React.FC = () => {
             statistics.last_month.total_net_savings
           )}
           previousAmount={statistics.last_month.total_net_savings}
+          currency={reportingCurrency}
           colorType="neutral"
         />
         <BaseMetricCard
@@ -88,6 +90,7 @@ export const FinancialOverview: React.FC = () => {
             statistics.last_month.yearly_income
           )}
           previousAmount={statistics.last_month.yearly_income}
+          currency={reportingCurrency}
           colorType="income"
         />
         <BaseMetricCard
@@ -99,6 +102,7 @@ export const FinancialOverview: React.FC = () => {
             statistics.last_month.yearly_expenses
           )}
           previousAmount={statistics.last_month.yearly_expenses}
+          currency={reportingCurrency}
           colorType="expense"
         />
         <BaseMetricCard
@@ -110,6 +114,7 @@ export const FinancialOverview: React.FC = () => {
             previousYearlyIncomeAverage
           )}
           previousAmount={previousYearlyIncomeAverage}
+          currency={reportingCurrency}
           colorType="income"
           period={currentMonth}
         />
@@ -138,6 +143,7 @@ export const FinancialOverview: React.FC = () => {
             statistics.last_month.period_income
           )}
           previousAmount={statistics.last_month.period_income}
+          currency={reportingCurrency}
           colorType="income"
         />
         <BaseMetricCard
@@ -149,6 +155,7 @@ export const FinancialOverview: React.FC = () => {
             statistics.last_month.period_expenses
           )}
           previousAmount={statistics.last_month.period_expenses}
+          currency={reportingCurrency}
           colorType="expense"
         />
         <BaseMetricCard
@@ -160,6 +167,7 @@ export const FinancialOverview: React.FC = () => {
             previousYearlyExpenseAverage
           )}
           previousAmount={previousYearlyExpenseAverage}
+          currency={reportingCurrency}
           colorType="expense"
           period={currentMonth}
         />

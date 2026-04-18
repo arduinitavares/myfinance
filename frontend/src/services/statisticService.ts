@@ -1,22 +1,22 @@
-import axios from 'axios';
 import { 
   TransactionType,
   WeekdayDistribution,
   SuggestCategoryResponse,
   TimePeriod
 } from '../types/transaction';
-import { API_BASE_URL } from '../config';
+import { apiClient, type ReportingCurrency } from './apiClient';
 
 export interface TransferSummaryItem {
   subtype: string;
   transaction_count: number;
-  total_outgoing_eur: number;
-  total_incoming_eur: number;
+  total_outgoing: number;
+  total_incoming: number;
 }
 
 export interface TransferSummaryResponse {
   start_date: string;
   end_date: string;
+  reporting_currency: ReportingCurrency;
   items: TransferSummaryItem[];
 }
 
@@ -30,7 +30,7 @@ export const statisticService = {
       params.date = date;
     }
     
-    const response = await axios.get(`${API_BASE_URL}/statistics/by-category`, {
+    const response = await apiClient.get('/statistics/by-category', {
       params
     });
     return response.data;
@@ -45,14 +45,14 @@ export const statisticService = {
       params.date = date;
     }
     
-    const response = await axios.get(`${API_BASE_URL}/statistics/by-expense-type`, {
+    const response = await apiClient.get('/statistics/by-expense-type', {
       params
     });
     return response.data;
   },
 
   getStatisticsOverview: async () => {
-    const response = await axios.get(`${API_BASE_URL}/statistics/overview`);
+    const response = await apiClient.get('/statistics/overview');
     return response.data;
   },
 
@@ -61,12 +61,12 @@ export const statisticService = {
     if (start_date) params.start_date = start_date;
     if (end_date) params.end_date = end_date;
 
-    const response = await axios.get(`${API_BASE_URL}/statistics/transfers/summary`, { params });
+    const response = await apiClient.get('/statistics/transfers/summary', { params });
     return response.data;
   },
 
   initializeStatistics: async () => {
-    const response = await axios.post(`${API_BASE_URL}/statistics/initialize`);
+    const response = await apiClient.post('/statistics/initialize');
     return response.data;
   },
 
@@ -75,7 +75,7 @@ export const statisticService = {
     if (start_date) params.start_date = start_date;
     if (end_date) params.end_date = end_date;
     if (time_period) params.time_period = time_period;
-    const response = await axios.get(`${API_BASE_URL}/statistics/timeseries`, { params });
+    const response = await apiClient.get('/statistics/timeseries', { params });
     return response.data;
   },
 
@@ -92,7 +92,7 @@ export const statisticService = {
     if (start_date) params.start_date = start_date;
     if (end_date) params.end_date = end_date;
     if (time_period) params.time_period = time_period;
-    const response = await axios.get(`${API_BASE_URL}/statistics/category/timeseries`, { params });
+    const response = await apiClient.get('/statistics/category/timeseries', { params });
     return response.data;
   },
 
@@ -107,7 +107,7 @@ export const statisticService = {
     if (start_date) params.start_date = start_date;
     if (end_date) params.end_date = end_date;
     if (time_period) params.time_period = time_period;
-    const response = await axios.get(`${API_BASE_URL}/statistics/expense-type/timeseries`, { params });
+    const response = await apiClient.get('/statistics/expense-type/timeseries', { params });
     return response.data;
   },
 
@@ -116,7 +116,7 @@ export const statisticService = {
     amount: number,
     transactionType: TransactionType
   ): Promise<SuggestCategoryResponse> => {
-    const response = await axios.post(`${API_BASE_URL}/suggestions/category`, {
+    const response = await apiClient.post('/suggestions/category', {
       description,
       amount,
       transaction_type: transactionType
@@ -134,7 +134,7 @@ export const statisticService = {
     if (startDate) params.start_date = startDate;
     if (endDate) params.end_date = endDate;
     
-    const response = await axios.get(`${API_BASE_URL}/statistics/weekday-distribution`, { params });
+    const response = await apiClient.get('/statistics/weekday-distribution', { params });
     return response.data;
   },
 
@@ -150,7 +150,7 @@ export const statisticService = {
     if (endDate) params.end_date = endDate;
     if (timePeriod) params.time_period = timePeriod;
     
-    const response = await axios.get(`${API_BASE_URL}/statistics/category/averages`, { params });
+    const response = await apiClient.get('/statistics/category/averages', { params });
     return response.data;
   },
 };

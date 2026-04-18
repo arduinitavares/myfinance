@@ -3,6 +3,31 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { importService } from '../../services/importService';
 import { ImportReviewPage } from './ImportReviewPage';
+import { ReportingCurrencyProvider } from '../../contexts/ReportingCurrencyContext';
+
+jest.mock('../../services/apiClient', () => {
+  const REPORTING_CURRENCIES = ['EUR', 'USD', 'BRL'] as const;
+  const DEFAULT_REPORTING_CURRENCY = 'EUR';
+  const STORAGE_KEY = 'reporting_currency';
+
+  const readStoredReportingCurrency = () => {
+    const storedValue = localStorage.getItem(STORAGE_KEY);
+    return REPORTING_CURRENCIES.includes(storedValue as (typeof REPORTING_CURRENCIES)[number])
+      ? storedValue
+      : DEFAULT_REPORTING_CURRENCY;
+  };
+
+  return {
+    REPORTING_CURRENCIES,
+    DEFAULT_REPORTING_CURRENCY,
+    readStoredReportingCurrency,
+    setReportingCurrency: (currency: string) => {
+      localStorage.setItem(STORAGE_KEY, currency);
+      return currency;
+    },
+    syncReportingCurrencyFromStorage: readStoredReportingCurrency,
+  };
+});
 
 jest.mock('axios', () => ({
   __esModule: true,
@@ -69,6 +94,8 @@ const firstPayload = {
       canonical_description_en: null,
       signed_amount: -14.2,
       currency: 'EUR',
+      display_amount: -14.2,
+      display_currency: 'EUR',
       debit_credit: 'debit',
       source_locator: 'pdf:p2:l3',
       inferred_category: null,
@@ -155,15 +182,23 @@ const committedPayload = {
   },
 };
 
+const renderImportReviewPage = () =>
+  render(
+    <ReportingCurrencyProvider>
+      <ImportReviewPage />
+    </ReportingCurrencyProvider>
+  );
+
 describe('ImportReviewPage', () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    window.localStorage.clear();
     mockSessionId = '12';
     mockedImportService.getReview.mockResolvedValue(firstPayload as never);
   });
 
   test('renders issues and evidence on the import review page', async () => {
-    render(<ImportReviewPage />);
+    renderImportReviewPage();
 
     expect(
       await screen.findByText(/not imported yet\. these draft rows will only appear in transactions after you approve this import/i)
@@ -172,6 +207,7 @@ describe('ImportReviewPage', () => {
     expect(await screen.findByText(/minor metadata gap/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /evidence/i })).toBeInTheDocument();
     expect(screen.getByText('DE TRAITEUR BV GENT BE')).toBeInTheDocument();
+    expect(screen.getByText(/-\€14\.20/)).toBeInTheDocument();
     expect(screen.getByText('Uw transacties')).toBeInTheDocument();
     expect(screen.getByText('15/12/2025 DE TRAITEUR BV GENT BE 14,20')).toBeInTheDocument();
   });
@@ -182,7 +218,7 @@ describe('ImportReviewPage', () => {
       status: 'committed',
     } as never);
 
-    render(<ImportReviewPage />);
+    renderImportReviewPage();
 
     fireEvent.click(await screen.findByRole('button', { name: /approve & import 1 transaction/i }));
 
@@ -197,7 +233,7 @@ describe('ImportReviewPage', () => {
   test('disables approve when the latest review payload contains a blocking issue', async () => {
     mockedImportService.getReview.mockResolvedValue(blockingPayload as never);
 
-    render(<ImportReviewPage />);
+    renderImportReviewPage();
 
     const approveButton = await screen.findByRole('button', { name: /approve & import 1 transaction/i });
     expect(approveButton).toBeDisabled();
@@ -213,7 +249,7 @@ describe('ImportReviewPage', () => {
       status: 'rejected',
     } as never);
 
-    render(<ImportReviewPage />);
+    renderImportReviewPage();
 
     fireEvent.click(await screen.findByRole('button', { name: /reject/i }));
 
@@ -234,7 +270,7 @@ describe('ImportReviewPage', () => {
       status: 'awaiting_review',
     } as never);
 
-    render(<ImportReviewPage />);
+    renderImportReviewPage();
 
     expect(await screen.findByText(/minor metadata gap/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
@@ -249,7 +285,7 @@ describe('ImportReviewPage', () => {
   test('disables retry when the session is not in a retryable state', async () => {
     mockedImportService.getReview.mockResolvedValue(committedPayload as never);
 
-    render(<ImportReviewPage />);
+    renderImportReviewPage();
 
     expect(await screen.findByRole('button', { name: /retry/i })).toBeDisabled();
     expect(mockedImportService.retry).not.toHaveBeenCalled();

@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { 
   Transaction, 
   ExpenseCategory, 
@@ -8,14 +7,14 @@ import {
   TransactionType,
   SortParams
 } from '../types/transaction';
-import { API_BASE_URL } from '../config';
+import { apiClient } from './apiClient';
 
 export const transactionService = {
   uploadCSV: async (file: File): Promise<Transaction[]> => {
     const formData = new FormData();
     formData.append('file', file);
     
-    const response = await axios.post(`${API_BASE_URL}/transactions/upload/`, formData, {
+    const response = await apiClient.post('/transactions/upload/', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -48,7 +47,7 @@ export const transactionService = {
       sort_direction: sortParams.direction,
       ...filters
     };
-    const response = await axios.get(`${API_BASE_URL}/transactions/`, { params });
+    const response = await apiClient.get('/transactions/', { params });
     return response.data;
   },
 
@@ -57,8 +56,8 @@ export const transactionService = {
     category: ExpenseCategory | IncomeCategory | TransferCategory,
     transactionType: TransactionType
   ): Promise<Transaction> => {
-    const response = await axios.patch(
-      `${API_BASE_URL}/transactions/${transactionId}/category`,
+    const response = await apiClient.patch(
+      `/transactions/${transactionId}/category`,
       null,
       {
         params: {
@@ -71,7 +70,7 @@ export const transactionService = {
   },
 
   async deleteTransaction(transactionId: number): Promise<void> {
-    const response = await axios.delete(`${API_BASE_URL}/transactions/${transactionId}`);
+    const response = await apiClient.delete(`/transactions/${transactionId}`);
 
     if (!response.data) {
       throw new Error('Failed to delete transaction');
@@ -79,8 +78,8 @@ export const transactionService = {
   },
   
   async restoreTransaction(transaction: Transaction): Promise<Transaction> {
-    const response = await axios.post(
-      `${API_BASE_URL}/transactions/restore`,
+    const response = await apiClient.post(
+      '/transactions/restore',
       transaction
     );
     

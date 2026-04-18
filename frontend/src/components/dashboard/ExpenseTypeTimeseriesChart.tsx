@@ -16,6 +16,8 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ChartArea, ChartColumnStacked } from 'lucide-react';
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
+import { formatMoney } from '../../utils/currency';
 
 const PERIODS = [
   { label: '3M', value: TimePeriod.THREE_MONTHS },
@@ -32,6 +34,7 @@ const EXPENSE_TYPE_COLORS = {
 };
 
 export const ExpenseTypeTimeseriesChart: React.FC = () => {
+  const { reportingCurrency } = useReportingCurrency();
   const [period, setPeriod] = useState<TimePeriod>(TimePeriod.ONE_YEAR);
   const [chartType, setChartType] = useState<'area' | 'bar'>('bar');
 
@@ -90,11 +93,9 @@ export const ExpenseTypeTimeseriesChart: React.FC = () => {
       return `${value.toFixed(1)}%`;
     }
     
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'EUR',
-      notation: 'compact'
-    }).format(value);
+    return formatMoney(value, reportingCurrency, {
+      notation: 'compact',
+    });
   };
 
   const renderChart = () => {

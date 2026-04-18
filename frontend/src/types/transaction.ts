@@ -66,7 +66,14 @@ export enum IncomeCategory {
   OTHER = "Other Income"
 }
 
-export interface Transaction {
+export interface DisplayMoneyFields {
+  display_amount?: number | null;
+  display_currency?: string | null;
+  display_fx_rate?: number | null;
+  display_rate_date?: string | null;
+}
+
+export interface Transaction extends DisplayMoneyFields {
   id: number;
   account_number: string;
   transaction_date: string;

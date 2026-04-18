@@ -6,6 +6,7 @@ interface BaseMetricCardProps {
   amount: number;
   change: string;
   previousAmount: number;
+  currency?: string;
   isPercentage?: boolean;
   colorType?: 'income' | 'expense' | 'neutral';
   period?: string;
@@ -17,6 +18,7 @@ export const BaseMetricCard: React.FC<BaseMetricCardProps> = ({
   amount,
   change,
   previousAmount,
+  currency = 'EUR',
   isPercentage = false,
   colorType = 'neutral',
   period
@@ -49,7 +51,7 @@ export const BaseMetricCard: React.FC<BaseMetricCardProps> = ({
     }
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'EUR',
+      currency,
       maximumFractionDigits: 2,
     }).format(value);
   };

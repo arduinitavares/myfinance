@@ -3,7 +3,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { statisticService } from '../../services/statisticService';
 import { TransactionType, TimePeriod } from '../../types/transaction';
 import { Loading } from '../common/Loading';
-import { format as formatDate } from 'date-fns';
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
+import { formatMoney } from '../../utils/currency';
 
 // Define the periods similar to FinancialTrends
 const PERIODS = [
@@ -35,6 +36,7 @@ interface CategoryAveragesResponse {
 }
 
 export const CategoryAverages: React.FC = () => {
+  const { reportingCurrency } = useReportingCurrency();
   const [period, setPeriod] = useState<TimePeriod>(TimePeriod.ONE_YEAR);
   const [transactionType, setTransactionType] = useState<TransactionType | undefined>(TransactionType.EXPENSE);
   const [categoryData, setCategoryData] = useState<CategoryAveragesResponse | null>(null);
@@ -81,16 +83,14 @@ export const CategoryAverages: React.FC = () => {
     };
 
     fetchCategoryAverages();
-  }, [period, transactionType]);
+  }, [period, reportingCurrency, transactionType]);
 
   // Helper function to format currency
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'EUR',
+    return formatMoney(amount, reportingCurrency, {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
-    }).format(amount);
+    });
   };
 
   // Custom tooltip for the chart

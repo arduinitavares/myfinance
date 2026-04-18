@@ -235,6 +235,40 @@ describe('TransactionList', () => {
     expect(screen.getByRole('button', { name: 'Internal Transfer' })).toBeInTheDocument();
   });
 
+  test('renders converted display amounts when the API supplies reporting-currency fields', () => {
+    render(
+      <TransactionList
+        transactions={[
+          {
+            id: 11,
+            account_number: 'BE011',
+            transaction_date: '2026-04-13',
+            amount: -52.3,
+            currency: 'EUR',
+            display_amount: -59.71,
+            display_currency: 'USD',
+            description: 'OPENAI *CHATGPT SUBSCR DUBLIN IE',
+            transaction_type: TransactionType.EXPENSE,
+            expense_category: ExpenseCategory.ENTERTAINMENT,
+            source_bank: 'Beobank',
+          },
+        ]}
+        totalTransactions={1}
+        currentPage={1}
+        totalPages={1}
+        onPageChange={() => {}}
+        sortParams={{ field: 'date', direction: 'desc' }}
+        onSortChange={() => {}}
+        onTransactionUpdate={async () => {}}
+        onTransactionDelete={async () => {}}
+        onTransactionsRefresh={async () => {}}
+      />
+    );
+
+    expect(screen.getByText('$59.71')).toBeInTheDocument();
+    expect(screen.queryByText(/FX unavailable/i)).not.toBeInTheDocument();
+  });
+
   test('updates transfer rows using transfer categories', () => {
     const onTransactionUpdate = jest.fn().mockResolvedValue(undefined);
 

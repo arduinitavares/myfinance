@@ -11,6 +11,7 @@ import { useStatistics } from '../../hooks/useStatistics';
 import { Loading } from '../common/Loading';
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { ChartBarDecreasing, Grid3x3 } from 'lucide-react';
+import { formatMoney } from '../../utils/currency';
 
 const EXPENSE_COLORS = [
   '#EF4444', '#DC2626', '#B91C1C', '#991B1B', '#7F1D1D',
@@ -54,6 +55,7 @@ export const CategoryBreakdown: React.FC = () => {
   );
     
   if (!statistics) return null;
+  const reportingCurrency = statistics.current_month.reporting_currency;
 
   // Get current month name from statistics
   const currentDate = new Date(statistics.current_month.date!);
@@ -124,11 +126,10 @@ export const CategoryBreakdown: React.FC = () => {
 
   // Format currency
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'EUR',
-      maximumFractionDigits: 0
-    }).format(value);
+    return formatMoney(value, reportingCurrency, {
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    });
   };
 
   const formatPercent = (value: number) => {

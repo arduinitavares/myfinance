@@ -2,7 +2,36 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { TransferSummary } from './TransferSummary';
-import { statisticService } from '../../services/statisticService';
+import {
+  statisticService,
+  TransferSummaryItem,
+  TransferSummaryResponse,
+} from '../../services/statisticService';
+import { ReportingCurrencyProvider } from '../../contexts/ReportingCurrencyContext';
+
+jest.mock('../../services/apiClient', () => {
+  const REPORTING_CURRENCIES = ['EUR', 'USD', 'BRL'] as const;
+  const DEFAULT_REPORTING_CURRENCY = 'EUR';
+  const STORAGE_KEY = 'reporting_currency';
+
+  const readStoredReportingCurrency = () => {
+    const storedValue = localStorage.getItem(STORAGE_KEY);
+    return REPORTING_CURRENCIES.includes(storedValue as (typeof REPORTING_CURRENCIES)[number])
+      ? storedValue
+      : DEFAULT_REPORTING_CURRENCY;
+  };
+
+  return {
+    REPORTING_CURRENCIES,
+    DEFAULT_REPORTING_CURRENCY,
+    readStoredReportingCurrency,
+    setReportingCurrency: (currency: string) => {
+      localStorage.setItem(STORAGE_KEY, currency);
+      return currency;
+    },
+    syncReportingCurrencyFromStorage: readStoredReportingCurrency,
+  };
+});
 
 jest.mock('../../services/statisticService', () => ({
   statisticService: {
@@ -14,26 +43,43 @@ const mockedGetTransferSummary = statisticService.getTransferSummary as jest.Moc
   typeof statisticService.getTransferSummary
 >;
 
+const buildTransferSummaryResponse = (
+  overrides: Partial<TransferSummaryResponse> = {},
+  items: TransferSummaryItem[] = []
+): TransferSummaryResponse => ({
+  start_date: '2026-03-01',
+  end_date: '2026-03-31',
+  reporting_currency: 'EUR',
+  items,
+  ...overrides,
+});
+
+const renderTransferSummary = () =>
+  render(
+    <ReportingCurrencyProvider>
+      <TransferSummary />
+    </ReportingCurrencyProvider>
+  );
+
 describe('TransferSummary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
   });
 
   test('shows loading state while transfer summary is being fetched', async () => {
-    mockedGetTransferSummary.mockResolvedValueOnce({
-      start_date: '2026-03-01',
-      end_date: '2026-03-31',
-      items: [
+    mockedGetTransferSummary.mockResolvedValueOnce(
+      buildTransferSummaryResponse({}, [
         {
           subtype: 'Internal Transfer',
           transaction_count: 3,
-          total_outgoing_eur: 1200,
-          total_incoming_eur: 950,
+          total_outgoing: 1200,
+          total_incoming: 950,
         },
-      ],
-    });
+      ])
+    );
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     expect(screen.getByText(/loading\.\.\./i)).toBeInTheDocument();
 
@@ -41,10 +87,8 @@ describe('TransferSummary', () => {
   });
 
   test('renders transfer summary rows', async () => {
-    mockedGetTransferSummary.mockResolvedValueOnce({
-      start_date: '2026-03-01',
-      end_date: '2026-03-31',
-      items: [
+    mockedGetTransferSummary.mockResolvedValueOnce(
+      buildTransferSummaryResponse({}, [
         {
           subtype: 'Internal Transfer',
           transaction_count: 3,
@@ -57,10 +101,10 @@ describe('TransferSummary', () => {
           total_outgoing: 500,
           total_incoming: 0,
         },
-      ],
-    } as any);
+      ])
+    );
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     expect(await screen.findByText('Transfers & Settlements')).toBeInTheDocument();
     expect(screen.getByText('Internal Transfer')).toBeInTheDocument();
@@ -72,14 +116,33 @@ describe('TransferSummary', () => {
     expect(screen.getByText('2')).toBeInTheDocument();
   });
 
-  test('shows an empty state when no transfer rows are returned', async () => {
-    mockedGetTransferSummary.mockResolvedValueOnce({
-      start_date: '2026-03-01',
-      end_date: '2026-03-31',
-      items: [],
-    });
+  test('formats transfer summary rows using the response reporting currency', async () => {
+    mockedGetTransferSummary.mockResolvedValueOnce(
+      buildTransferSummaryResponse(
+        { reporting_currency: 'USD' },
+        [
+          {
+            subtype: 'International Transfer',
+            transaction_count: 2,
+            total_outgoing: 1200,
+            total_incoming: 950,
+          },
+        ]
+      )
+    );
 
-    render(<TransferSummary />);
+    renderTransferSummary();
+
+    expect(await screen.findByText('International Transfer')).toBeInTheDocument();
+    expect(screen.getByText('$1,200')).toBeInTheDocument();
+    expect(screen.getByText('$950')).toBeInTheDocument();
+    expect(screen.queryByText('€1,200')).not.toBeInTheDocument();
+  });
+
+  test('shows an empty state when no transfer rows are returned', async () => {
+    mockedGetTransferSummary.mockResolvedValueOnce(buildTransferSummaryResponse());
+
+    renderTransferSummary();
 
     expect(await screen.findByText(/no transfer summary data available/i)).toBeInTheDocument();
   });
@@ -88,7 +151,7 @@ describe('TransferSummary', () => {
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockedGetTransferSummary.mockRejectedValueOnce(new Error('network failed'));
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     expect(await screen.findByText(/failed to load transfer summary/i)).toBeInTheDocument();
     await waitFor(() => expect(mockedGetTransferSummary).toHaveBeenCalledTimes(1));
@@ -98,18 +161,16 @@ describe('TransferSummary', () => {
 
   test('boots with backend defaults, then requests last month with explicit dates', async () => {
     mockedGetTransferSummary
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-04-01',
         end_date: '2026-04-10',
-        items: [],
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-03-01',
         end_date: '2026-03-31',
-        items: [],
-      });
+      }));
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(presetSelect).toHaveValue('this_month');
@@ -127,18 +188,16 @@ describe('TransferSummary', () => {
 
   test('shows the month picker for specific month and waits for a valid month before fetching', async () => {
     mockedGetTransferSummary
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-04-01',
         end_date: '2026-04-10',
-        items: [],
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-02-01',
         end_date: '2026-02-28',
-        items: [],
-      });
+      }));
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     await act(async () => {
@@ -161,56 +220,56 @@ describe('TransferSummary', () => {
 
   test('re-applies the saved specific month when switching back to that preset', async () => {
     mockedGetTransferSummary
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-04-01',
         end_date: '2026-04-10',
         items: [
           {
             subtype: 'Default summary',
             transaction_count: 1,
-            total_outgoing_eur: 100,
-            total_incoming_eur: 50,
+            total_outgoing: 100,
+            total_incoming: 50,
           },
         ],
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-02-01',
         end_date: '2026-02-28',
         items: [
           {
             subtype: 'Specific month summary',
             transaction_count: 2,
-            total_outgoing_eur: 200,
-            total_incoming_eur: 100,
+            total_outgoing: 200,
+            total_incoming: 100,
           },
         ],
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-03-01',
         end_date: '2026-03-31',
         items: [
           {
             subtype: 'Last month summary',
             transaction_count: 3,
-            total_outgoing_eur: 300,
-            total_incoming_eur: 150,
+            total_outgoing: 300,
+            total_incoming: 150,
           },
         ],
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-02-01',
         end_date: '2026-02-28',
         items: [
           {
             subtype: 'Specific month summary',
             transaction_count: 2,
-            total_outgoing_eur: 200,
-            total_incoming_eur: 100,
+            total_outgoing: 200,
+            total_incoming: 100,
           },
         ],
-      });
+      }));
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
 
@@ -247,18 +306,18 @@ describe('TransferSummary', () => {
     let resolveSecondRequest: ((value: Awaited<ReturnType<typeof statisticService.getTransferSummary>>) => void) | undefined;
 
     mockedGetTransferSummary
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-04-01',
         end_date: '2026-04-10',
         items: [
           {
             subtype: 'Internal Transfer',
             transaction_count: 1,
-            total_outgoing_eur: 100,
-            total_incoming_eur: 50,
+            total_outgoing: 100,
+            total_incoming: 50,
           },
         ],
-      })
+      }))
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -266,7 +325,7 @@ describe('TransferSummary', () => {
           })
       );
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(await screen.findByText('Transfers & Settlements')).toBeInTheDocument();
@@ -280,11 +339,10 @@ describe('TransferSummary', () => {
     expect(screen.queryByText(/loading\.\.\./i)).not.toBeInTheDocument();
 
     await act(async () => {
-      resolveSecondRequest?.({
+      resolveSecondRequest?.(buildTransferSummaryResponse({
         start_date: '2026-03-01',
         end_date: '2026-03-31',
-        items: [],
-      });
+      }));
     });
 
     expect(await screen.findByText(/showing 01\/03\/2026 to 31\/03\/2026/i)).toBeInTheDocument();
@@ -292,23 +350,23 @@ describe('TransferSummary', () => {
 
   test('shows the transfer-summary error inside the existing card shell after a filtered request fails', async () => {
     mockedGetTransferSummary
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-04-01',
         end_date: '2026-04-10',
         items: [
           {
             subtype: 'Internal Transfer',
             transaction_count: 1,
-            total_outgoing_eur: 100,
-            total_incoming_eur: 50,
+            total_outgoing: 100,
+            total_incoming: 50,
           },
         ],
-      })
+      }))
       .mockRejectedValueOnce(new Error('network failed'));
 
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(await screen.findByText('Transfers & Settlements')).toBeInTheDocument();
@@ -334,18 +392,18 @@ describe('TransferSummary', () => {
       | undefined;
 
     mockedGetTransferSummary
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(buildTransferSummaryResponse({
         start_date: '2026-04-01',
         end_date: '2026-04-10',
         items: [
           {
             subtype: 'Initial summary',
             transaction_count: 1,
-            total_outgoing_eur: 100,
-            total_incoming_eur: 50,
+            total_outgoing: 100,
+            total_incoming: 50,
           },
         ],
-      })
+      }))
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -359,7 +417,7 @@ describe('TransferSummary', () => {
           })
       );
 
-    render(<TransferSummary />);
+    renderTransferSummary();
 
     const presetSelect = await screen.findByLabelText(/transfer summary preset/i);
     expect(await screen.findByText('Initial summary')).toBeInTheDocument();
@@ -373,36 +431,36 @@ describe('TransferSummary', () => {
     });
 
     await act(async () => {
-      resolveLast3Months?.({
+      resolveLast3Months?.(buildTransferSummaryResponse({
         start_date: '2026-02-01',
         end_date: '2026-04-10',
         items: [
           {
             subtype: 'Latest summary',
             transaction_count: 4,
-            total_outgoing_eur: 400,
-            total_incoming_eur: 250,
+            total_outgoing: 400,
+            total_incoming: 250,
           },
         ],
-      });
+      }));
     });
 
     expect(await screen.findByText('Latest summary')).toBeInTheDocument();
     expect(screen.getByText(/showing 01\/02\/2026 to 10\/04\/2026/i)).toBeInTheDocument();
 
     await act(async () => {
-      resolveLastMonth?.({
+      resolveLastMonth?.(buildTransferSummaryResponse({
         start_date: '2026-03-01',
         end_date: '2026-03-31',
         items: [
           {
             subtype: 'Stale summary',
             transaction_count: 2,
-            total_outgoing_eur: 200,
-            total_incoming_eur: 150,
+            total_outgoing: 200,
+            total_incoming: 150,
           },
         ],
-      });
+      }));
     });
 
     expect(screen.getByText('Latest summary')).toBeInTheDocument();

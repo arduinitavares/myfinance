@@ -13,8 +13,10 @@ import {
 import { transactionService } from '../services/transactionService';
 import { useActionHistory } from './useActionHistory';
 import { statisticService } from '../services/statisticService';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 export const useTransactions = () => {
+  const { reportingCurrency } = useReportingCurrency();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [statistics, setStatistics] = useState<CategoryStatistics[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,7 +185,7 @@ const fetchData = async (filtersOverride?: {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line
-  }, [currentPage, sortParams, debouncedSearch, categoryFilter, classificationStatus, dateRange]);
+  }, [currentPage, sortParams, debouncedSearch, categoryFilter, classificationStatus, dateRange, reportingCurrency]);
 
   const handleUndo = async () => {
     const success = await undoLastAction();

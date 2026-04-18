@@ -5,6 +5,7 @@ import { UndoButton } from '../components/UndoButton';
 import { Sidebar } from '../components/common/Sidebar';
 import { ThemeToggle } from '../components/common/ThemeToggle';
 import { LogoutButton } from '../components/auth/LogoutButton';
+import { ReportingCurrencySelector } from '../components/common/ReportingCurrencySelector';
 import { useTransactions } from '../hooks/useTransactions';
 import { UserGreeting } from '../components/dashboard/UserGreeting';
 
@@ -77,7 +78,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           <div className="max-w-7xl mx-auto px-6">
             <div className="flex justify-between items-center mb-6">
               <UserGreeting />
-              <div className="flex space-x-3 items-center">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <ReportingCurrencySelector />
                 <ThemeToggle />
                 {showUndoButton && (
                   <UndoButton onUndo={handleUndo} canUndo={canUndo} />

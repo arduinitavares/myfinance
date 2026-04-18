@@ -1,3 +1,5 @@
+import { DisplayMoneyFields } from './transaction';
+
 export interface ImportSession {
   id: number;
   file_name: string;
@@ -29,7 +31,7 @@ export interface ImportStatementDraft {
   review_status: string;
 }
 
-export interface ImportTransactionDraft {
+export interface ImportTransactionDraft extends DisplayMoneyFields {
   id: number;
   transaction_date: string | null;
   source_description: string;

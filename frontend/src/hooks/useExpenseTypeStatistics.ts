@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { statisticService } from '../services/statisticService';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 // Define the expense type statistics interface
 export interface ExpenseTypeStatistics {
@@ -27,32 +28,36 @@ export interface ExpenseTypeStatistics {
 type StatisticsPeriod = 'monthly' | 'yearly' | 'all_time';
 
 export const useExpenseTypeStatistics = (initialPeriod: StatisticsPeriod = 'monthly', initialDate?: string) => {
+  const { reportingCurrency } = useReportingCurrency();
   const [expenseTypeStats, setExpenseTypeStats] = useState<ExpenseTypeStatistics[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<StatisticsPeriod>(initialPeriod);
   const [date, setDate] = useState<string | undefined>(initialDate);
 
-  const fetchExpenseTypeStatistics = async (
-    fetchPeriod: StatisticsPeriod = period,
-    fetchDate?: string
-  ) => {
-    setLoading(true);
-    try {
-      const data = await statisticService.getExpenseTypeStatistics(fetchPeriod, fetchDate);
-      setExpenseTypeStats(data);
-      setError(null);
-    } catch (err) {
-      setError('Failed to fetch expense type statistics');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchExpenseTypeStatistics = useCallback(
+    async (
+      fetchPeriod: StatisticsPeriod = period,
+      fetchDate?: string
+    ) => {
+      setLoading(true);
+      try {
+        const data = await statisticService.getExpenseTypeStatistics(fetchPeriod, fetchDate);
+        setExpenseTypeStats(data);
+        setError(null);
+      } catch (err) {
+        setError('Failed to fetch expense type statistics');
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [period]
+  );
 
   useEffect(() => {
-    fetchExpenseTypeStatistics(period, date);
-  }, [period, date]);
+    void fetchExpenseTypeStatistics(period, date);
+  }, [date, fetchExpenseTypeStatistics, period, reportingCurrency]);
 
   // Helper functions to extract and process the data
   const getEssentialExpenses = () => {

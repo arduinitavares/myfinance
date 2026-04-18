@@ -6,6 +6,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import { Pagination } from './common/Pagination';
 import { ClassificationAssistantModal } from './transactions/ClassificationAssistantModal';
 import { formatDisplayDate } from '../utils/date';
+import { DisplayMoney } from './common/DisplayMoney';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -83,9 +84,33 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   useEffect(() => {
     setDrafts(
-      Object.fromEntries(transactions.map((transaction) => [transaction.id, buildDraft(transaction)]))
+      Object.fromEntries(
+        transactions.map((transaction) => [
+          transaction.id,
+          {
+            transactionType: transaction.transaction_type,
+            category: getDisplayedCategory(transaction) ?? '',
+          },
+        ])
+      )
     );
   }, [transactions]);
+
+  useEffect(() => {
+    if (!selectedTransaction) {
+      return;
+    }
+
+    const refreshedTransaction = transactions.find((transaction) => transaction.id === selectedTransaction.id);
+    if (!refreshedTransaction) {
+      setSelectedTransaction(null);
+      return;
+    }
+
+    if (refreshedTransaction !== selectedTransaction) {
+      setSelectedTransaction(refreshedTransaction);
+    }
+  }, [selectedTransaction, transactions]);
 
   const getDraft = (transaction: Transaction): RowDraft => drafts[transaction.id] ?? buildDraft(transaction);
 
@@ -235,10 +260,16 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       ? 'text-green-600' 
                       : 'text-red-600'
                   }`}>
-                    {new Intl.NumberFormat('en-US', {
-                      style: 'currency',
-                      currency: transaction.currency,
-                    }).format(Math.abs(transaction.amount))}
+                    <DisplayMoney
+                      rawAmount={transaction.amount}
+                      rawCurrency={transaction.currency}
+                      displayAmount={transaction.display_amount}
+                      displayCurrency={transaction.display_currency}
+                      absolute
+                      primaryClassName="font-medium"
+                      unavailableClassName="font-medium text-amber-700 dark:text-amber-300"
+                      secondaryClassName="text-[11px] text-gray-500 dark:text-gray-400"
+                    />
                   </td>
                   <td className="w-[150px] px-6 py-4 whitespace-nowrap text-gray-900 dark:text-gray-200 align-top">
                     <label className="sr-only" htmlFor={`type-select-${transaction.id}`}>

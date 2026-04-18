@@ -1,10 +1,10 @@
-import { API_BASE_URL } from '../config';
 import { 
   ProjectionScenario, 
   ProjectionScenarioCreate, 
   ProjectionTimeseries,
   ScenarioComparison
 } from '../types/projections';
+import { apiFetch } from './apiClient';
 
 interface RecomputeResult {
   scenario_id: number;
@@ -19,7 +19,7 @@ interface RecomputeResult {
 
 // Fetch all scenarios
 export async function fetchScenarios(): Promise<ProjectionScenario[]> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios`);
+  const response = await apiFetch('/projections/scenarios');
   if (!response.ok) {
     throw new Error(`Failed to fetch scenarios: ${response.statusText}`);
   }
@@ -28,7 +28,7 @@ export async function fetchScenarios(): Promise<ProjectionScenario[]> {
 
 // Fetch a specific scenario with details
 export async function fetchScenarioDetail(scenarioId: number): Promise<ProjectionScenario> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/${scenarioId}`);
+  const response = await apiFetch(`/projections/scenarios/${scenarioId}`);
   if (!response.ok) {
     throw new Error(`Failed to fetch scenario: ${response.statusText}`);
   }
@@ -37,7 +37,7 @@ export async function fetchScenarioDetail(scenarioId: number): Promise<Projectio
 
 // Create a new scenario
 export async function createScenario(scenarioData: ProjectionScenarioCreate): Promise<ProjectionScenario> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios`, {
+  const response = await apiFetch('/projections/scenarios', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -52,7 +52,7 @@ export async function createScenario(scenarioData: ProjectionScenarioCreate): Pr
 
 // Update an existing scenario
 export async function updateScenario(scenarioId: number, scenarioData: ProjectionScenarioCreate): Promise<ProjectionScenario> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/${scenarioId}`, {
+  const response = await apiFetch(`/projections/scenarios/${scenarioId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -67,7 +67,7 @@ export async function updateScenario(scenarioId: number, scenarioData: Projectio
 
 // Delete a scenario
 export async function deleteScenario(scenarioId: number): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/${scenarioId}`, {
+  const response = await apiFetch(`/projections/scenarios/${scenarioId}`, {
     method: 'DELETE',
   });
   if (!response.ok) {
@@ -77,7 +77,7 @@ export async function deleteScenario(scenarioId: number): Promise<void> {
 
 // Calculate projection for a scenario
 export async function calculateProjection(scenarioId: number, timeHorizon: number = 120): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/${scenarioId}/calculate?time_horizon=${timeHorizon}`, {
+  const response = await apiFetch(`/projections/scenarios/${scenarioId}/calculate?time_horizon=${timeHorizon}`, {
     method: 'POST',
   });
   if (!response.ok) {
@@ -87,7 +87,7 @@ export async function calculateProjection(scenarioId: number, timeHorizon: numbe
 
 // Fetch projection results for a scenario
 export async function fetchProjectionResults(scenarioId: number): Promise<ProjectionTimeseries> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/${scenarioId}/results`);
+  const response = await apiFetch(`/projections/scenarios/${scenarioId}/results`);
   if (!response.ok) {
     throw new Error(`Failed to fetch projection results: ${response.statusText}`);
   }
@@ -96,7 +96,7 @@ export async function fetchProjectionResults(scenarioId: number): Promise<Projec
 
 // Compare multiple scenarios
 export async function compareScenarios(scenarioIds: number[]): Promise<ScenarioComparison> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/compare`, {
+  const response = await apiFetch('/projections/scenarios/compare', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -111,7 +111,7 @@ export async function compareScenarios(scenarioIds: number[]): Promise<ScenarioC
 
 // Recompute base scenario parameters using latest historical data
 export async function recomputeBaseScenario(): Promise<RecomputeResult> {
-  const response = await fetch(`${API_BASE_URL}/projections/scenarios/base/recompute`, {
+  const response = await apiFetch('/projections/scenarios/base/recompute', {
     method: 'POST',
   });
   if (!response.ok) {

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { statisticService } from '../services/statisticService';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 interface Statistics {
   period: 'monthly' | 'all_time';
   date: string | null;
+  reporting_currency: string;
   period_income: number;
   period_expenses: number;
   period_net_savings: number;
@@ -27,6 +29,7 @@ interface StatisticsOverview {
 }
 
 export const useStatistics = () => {
+  const { reportingCurrency } = useReportingCurrency();
   const [statistics, setStatistics] = useState<StatisticsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +50,7 @@ export const useStatistics = () => {
 
   useEffect(() => {
     fetchStatistics();
-  }, []);
+  }, [reportingCurrency]);
 
   return {
     statistics,

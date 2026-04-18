@@ -318,9 +318,6 @@ def _calculate_overview_stats(
     target_date: date | None,
     reporting_currency: str,
 ):
-    if reporting_currency == "EUR":
-        return StatisticsService.calculate_statistics(db, period, target_date)
-
     return StatisticsService.calculate_statistics_for_reporting_currency(
         db,
         period,
@@ -388,7 +385,6 @@ def get_statistics_overview(
 
         previous_year_last_month = date(current_month.year - 1, 12, 31)
         previous_year_last_month_has_activity = db.query(Transaction.id).filter(
-            Transaction.transaction_type.in_([TransactionType.INCOME, TransactionType.EXPENSE]),
             extract("year", Transaction.transaction_date) == previous_year_last_month.year,
             extract("month", Transaction.transaction_date) == previous_year_last_month.month,
         ).first()

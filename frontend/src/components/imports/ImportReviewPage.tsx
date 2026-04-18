@@ -5,12 +5,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { importService } from '../../services/importService';
 import { ImportReviewPayload } from '../../types/import';
 import { formatDisplayDate } from '../../utils/date';
-
-const formatAmount = (amount: number, currency: string) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-  }).format(amount);
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
+import { DisplayMoney } from '../common/DisplayMoney';
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (axios.isAxiosError(error)) {
@@ -33,6 +29,7 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 };
 
 export const ImportReviewPage: React.FC = () => {
+  const { reportingCurrency } = useReportingCurrency();
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const parsedSessionId = Number(sessionId);
@@ -66,7 +63,7 @@ export const ImportReviewPage: React.FC = () => {
 
   useEffect(() => {
     void loadReview();
-  }, [loadReview]);
+  }, [loadReview, reportingCurrency]);
 
   const evidenceBlocks = useMemo(() => review?.evidence?.text_blocks ?? [], [review?.evidence]);
   const awaitingReview = review?.session.status === 'awaiting_review';
@@ -307,7 +304,15 @@ export const ImportReviewPage: React.FC = () => {
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-gray-900 dark:text-gray-200">
-                      {formatAmount(transaction.signed_amount, transaction.currency)}
+                      <DisplayMoney
+                        rawAmount={transaction.signed_amount}
+                        rawCurrency={transaction.currency}
+                        displayAmount={transaction.display_amount}
+                        displayCurrency={transaction.display_currency}
+                        primaryClassName="text-gray-900 dark:text-gray-200"
+                        unavailableClassName="font-medium text-amber-700 dark:text-amber-300"
+                        secondaryClassName="text-xs text-gray-500 dark:text-gray-400"
+                      />
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-300">
                       {transaction.source_locator}

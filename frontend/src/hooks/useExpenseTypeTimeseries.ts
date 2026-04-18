@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { statisticService } from '../services/statisticService';
 import { TimePeriod } from '../types/transaction';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 export interface ExpenseTypeTimeseriesItem {
   date: string;
@@ -16,6 +17,7 @@ export const useExpenseTypeTimeseries = (
   end_date?: string,
   time_period?: TimePeriod
 ) => {
+  const { reportingCurrency } = useReportingCurrency();
   const [timeseriesData, setTimeseriesData] = useState<ExpenseTypeTimeseriesItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +83,7 @@ export const useExpenseTypeTimeseries = (
   useEffect(() => {
     fetchTimeseriesData();
     // eslint-disable-next-line
-  }, [expense_type, start_date, end_date, time_period]);
+  }, [expense_type, start_date, end_date, time_period, reportingCurrency]);
 
   return {
     timeseriesData,

@@ -1,7 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { statisticService, TransferSummaryResponse } from '../../services/statisticService';
 import { Loading } from '../common/Loading';
 import { formatDisplayDate } from '../../utils/date';
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
+import { formatMoney } from '../../utils/currency';
 import {
   buildSpecificMonthRange,
   buildTransferSummaryRange,
@@ -9,13 +11,8 @@ import {
   TransferSummaryPreset,
 } from './transferSummaryRange';
 
-const EUR_FORMATTER = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'EUR',
-  maximumFractionDigits: 0,
-});
-
 export const TransferSummary: React.FC = () => {
+  const { reportingCurrency } = useReportingCurrency();
   const [summary, setSummary] = useState<TransferSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -26,47 +23,56 @@ export const TransferSummary: React.FC = () => {
   const [specificMonth, setSpecificMonth] = useState('');
   const isMountedRef = useRef(true);
   const requestSequenceRef = useRef(0);
+  const lastReportingCurrencyRef = useRef<string | null>(reportingCurrency);
 
-  const startTransferSummaryRequest = () => {
+  const startTransferSummaryRequest = useCallback(() => {
     requestSequenceRef.current += 1;
     return requestSequenceRef.current;
-  };
+  }, []);
 
-  const isLatestTransferSummaryRequest = (requestId: number) =>
-    isMountedRef.current && requestSequenceRef.current === requestId;
+  const isLatestTransferSummaryRequest = useCallback(
+    (requestId: number) => isMountedRef.current && requestSequenceRef.current === requestId,
+    []
+  );
 
-  const executeFilteredRequest = async (range: { startDate: string; endDate: string }) => {
-    const requestId = startTransferSummaryRequest();
-    setRefreshing(true);
-    setError(null);
-
-    try {
-      await loadTransferSummary(requestId, range.startDate, range.endDate);
-    } catch (err) {
+  const loadTransferSummary = useCallback(
+    async (requestId: number, startDate?: string, endDate?: string) => {
+      const data = await statisticService.getTransferSummary(startDate, endDate);
       if (!isLatestTransferSummaryRequest(requestId)) {
         return;
       }
 
-      console.error('Error fetching transfer summary:', err);
-      setError('Failed to load transfer summary');
-    } finally {
-      if (isLatestTransferSummaryRequest(requestId)) {
-        setRefreshing(false);
+      setSummary(data);
+      setAnchorDate((current) => current ?? data.end_date);
+      setError(null);
+      setHasLoadedOnce(true);
+    },
+    [isLatestTransferSummaryRequest]
+  );
+
+  const executeFilteredRequest = useCallback(
+    async (range: { startDate: string; endDate: string }) => {
+      const requestId = startTransferSummaryRequest();
+      setRefreshing(true);
+      setError(null);
+
+      try {
+        await loadTransferSummary(requestId, range.startDate, range.endDate);
+      } catch (err) {
+        if (!isLatestTransferSummaryRequest(requestId)) {
+          return;
+        }
+
+        console.error('Error fetching transfer summary:', err);
+        setError('Failed to load transfer summary');
+      } finally {
+        if (isLatestTransferSummaryRequest(requestId)) {
+          setRefreshing(false);
+        }
       }
-    }
-  };
-
-  const loadTransferSummary = async (requestId: number, startDate?: string, endDate?: string) => {
-    const data = await statisticService.getTransferSummary(startDate, endDate);
-    if (!isLatestTransferSummaryRequest(requestId)) {
-      return;
-    }
-
-    setSummary(data);
-    setAnchorDate((current) => current ?? data.end_date);
-    setError(null);
-    setHasLoadedOnce(true);
-  };
+    },
+    [isLatestTransferSummaryRequest, loadTransferSummary, startTransferSummaryRequest]
+  );
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -104,13 +110,33 @@ export const TransferSummary: React.FC = () => {
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [isLatestTransferSummaryRequest, startTransferSummaryRequest]);
 
-  const formatCurrency = (amount: number) => EUR_FORMATTER.format(amount);
-  const getOutgoingAmount = (item: { total_outgoing?: number; total_outgoing_eur?: number }) =>
-    item.total_outgoing ?? item.total_outgoing_eur ?? 0;
-  const getIncomingAmount = (item: { total_incoming?: number; total_incoming_eur?: number }) =>
-    item.total_incoming ?? item.total_incoming_eur ?? 0;
+  useEffect(() => {
+    if (!hasLoadedOnce) {
+      lastReportingCurrencyRef.current = reportingCurrency;
+      return;
+    }
+
+    if (lastReportingCurrencyRef.current === reportingCurrency) {
+      return;
+    }
+
+    lastReportingCurrencyRef.current = reportingCurrency;
+
+    const range =
+      preset === 'specific_month'
+        ? buildSpecificMonthRange(specificMonth)
+        : anchorDate
+          ? buildTransferSummaryRange(preset, anchorDate)
+          : null;
+
+    if (preset === 'specific_month' && !range) {
+      return;
+    }
+
+    void executeFilteredRequest(range ?? { startDate: '', endDate: '' });
+  }, [anchorDate, executeFilteredRequest, hasLoadedOnce, preset, reportingCurrency, specificMonth]);
 
   const handlePresetChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const nextPreset = event.target.value as TransferSummaryPreset;
@@ -167,6 +193,11 @@ export const TransferSummary: React.FC = () => {
   }
 
   const items = summary.items ?? [];
+  const formatCurrency = (amount: number) =>
+    formatMoney(amount, summary.reporting_currency, {
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    });
   const body = error ? (
     <div className="flex items-center justify-center rounded-lg border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-4 py-8 text-sm text-gray-500 dark:text-gray-400">
       {error}
@@ -193,10 +224,10 @@ export const TransferSummary: React.FC = () => {
                 {item.subtype}
               </td>
               <td className="py-3 px-4 text-right text-gray-600 dark:text-gray-300">
-                {formatCurrency(getOutgoingAmount(item))}
+                {formatCurrency(item.total_outgoing)}
               </td>
               <td className="py-3 px-4 text-right text-gray-600 dark:text-gray-300">
-                {formatCurrency(getIncomingAmount(item))}
+                {formatCurrency(item.total_incoming)}
               </td>
               <td className="py-3 pl-4 text-right text-gray-600 dark:text-gray-300">
                 {item.transaction_count}

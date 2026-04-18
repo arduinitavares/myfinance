@@ -11,6 +11,7 @@ import {
   TransactionType,
 } from '../../types/transaction';
 import { formatDisplayDate } from '../../utils/date';
+import { DisplayMoney } from '../common/DisplayMoney';
 
 interface ClassificationAssistantModalProps {
   open: boolean;
@@ -35,12 +36,6 @@ const RECURRENCE_FREQUENCIES = [DEFAULT_RECURRENCE_FREQUENCY, 'weekly', 'quarter
 const formatTransactionDate = (transactionDate?: string) => {
   return transactionDate ? formatDisplayDate(transactionDate) : null;
 };
-
-const formatTransactionAmount = (amount: number, currency: string) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-  }).format(amount);
 
 const exchangeFeeContext = (description?: string) => {
   if (!description) {
@@ -96,9 +91,6 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const resolvedCategory = selectedCategory || proposal?.category || '';
   const formattedTransactionDate = formatTransactionDate(transaction?.transaction_date);
-  const formattedTransactionAmount = transaction
-    ? formatTransactionAmount(transaction.amount, transaction.currency)
-    : null;
   const feeContext = exchangeFeeContext(transaction?.description);
 
   useEffect(() => {
@@ -263,7 +255,18 @@ export const ClassificationAssistantModal: React.FC<ClassificationAssistantModal
               )}
               <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
                 {formattedTransactionDate && <span>{formattedTransactionDate}</span>}
-                {formattedTransactionAmount && <span>{formattedTransactionAmount}</span>}
+                {transaction ? (
+                  <DisplayMoney
+                    rawAmount={transaction.amount}
+                    rawCurrency={transaction.currency}
+                    displayAmount={transaction.display_amount}
+                    displayCurrency={transaction.display_currency}
+                    showRawWhenConverted
+                    primaryClassName="text-gray-600 dark:text-gray-300"
+                    unavailableClassName="font-medium text-amber-700 dark:text-amber-300"
+                    secondaryClassName="text-xs text-gray-500 dark:text-gray-400"
+                  />
+                ) : null}
                 <span>
                   Current saved classification · {transaction.transaction_type} / {currentTransactionCategory(transaction)}
                 </span>

@@ -14,6 +14,8 @@ import {
 import { format, parseISO } from 'date-fns';
 import * as Tabs from '@radix-ui/react-tabs';
 import { TimePeriod } from '../../types/transaction';
+import { useReportingCurrency } from '../../contexts/ReportingCurrencyContext';
+import { formatMoney } from '../../utils/currency';
 
 interface TimeseriesData {
     date: string;
@@ -34,6 +36,7 @@ interface TimeseriesChartProps {
 }
 
 export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, setPeriod, PERIODS }) => {
+    const { reportingCurrency } = useReportingCurrency();
     const [activeMetric, setActiveMetric] = useState('income_expenses');
     const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({});
 
@@ -107,13 +110,11 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
     const formatValue = (value: number, metric: string) => {
         if (!value && value !== 0) return '0';
         if (metric === 'savings_rate') {
-            return `${Number(value).toFixed(1)}%`;
+        return `${Number(value).toFixed(1)}%`;
         }
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'EUR',
+        return formatMoney(value, reportingCurrency, {
             notation: 'compact'
-        }).format(value);
+        });
     };
 
     if (!data || data.length === 0) {
@@ -178,11 +179,9 @@ export const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ data, period, 
                                     if (activeMetric === 'savings_rate') {
                                         return `${value}%`;
                                     }
-                                    return new Intl.NumberFormat('en-US', {
-                                        notation: 'compact',
-                                        style: 'currency',
-                                        currency: 'EUR'
-                                    }).format(value);
+                                    return formatMoney(value, reportingCurrency, {
+                                        notation: 'compact'
+                                    });
                                 }}
                             />
                             <Tooltip

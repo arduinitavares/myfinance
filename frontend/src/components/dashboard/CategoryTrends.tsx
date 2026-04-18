@@ -8,6 +8,7 @@ import { useStatistics } from '../../hooks/useStatistics';
 import { useExpenseTypeStatistics } from '../../hooks/useExpenseTypeStatistics';
 import { Loading } from '../common/Loading';
 import { ChevronDownIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { formatMoney } from '../../utils/currency';
 
 export const CategoryTrends: React.FC = () => {
   const [activeTab, setActiveTab] = useState('expense-types');
@@ -63,17 +64,16 @@ export const CategoryTrends: React.FC = () => {
     </div>
   );
   if (!statistics || !timeseriesData || timeseriesData.length === 0) return null;
+  const reportingCurrency = statistics.current_month.reporting_currency;
 
   // We no longer need these since we removed the Top Categories tab
   // and now use the expense type data instead
 
   // Format currency
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'EUR',
-      notation: 'compact'
-    }).format(value);
+    return formatMoney(value, reportingCurrency, {
+      notation: 'compact',
+    });
   };
 
   // Render active shape for pie chart

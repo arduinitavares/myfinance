@@ -1,36 +1,41 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { statisticService } from '../services/statisticService';
 import { CategoryStatistics, TransactionType } from '../types/transaction';
+import { useReportingCurrency } from '../contexts/ReportingCurrencyContext';
 
 type StatisticsPeriod = 'monthly' | 'yearly' | 'all_time';
 
 export const useCategoryStatistics = (initialPeriod: StatisticsPeriod = 'monthly', initialDate?: string) => {
+  const { reportingCurrency } = useReportingCurrency();
   const [categoryStats, setCategoryStats] = useState<CategoryStatistics[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<StatisticsPeriod>(initialPeriod);
   const [date, setDate] = useState<string | undefined>(initialDate);
 
-  const fetchCategoryStatistics = async (
-    fetchPeriod: StatisticsPeriod = period,
-    fetchDate?: string
-  ) => {
-    setLoading(true);
-    try {
-      const data = await statisticService.getCategoryStatistics(fetchPeriod, fetchDate);
-      setCategoryStats(data);
-      setError(null);
-    } catch (err) {
-      setError('Failed to fetch category statistics');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchCategoryStatistics = useCallback(
+    async (
+      fetchPeriod: StatisticsPeriod = period,
+      fetchDate?: string
+    ) => {
+      setLoading(true);
+      try {
+        const data = await statisticService.getCategoryStatistics(fetchPeriod, fetchDate);
+        setCategoryStats(data);
+        setError(null);
+      } catch (err) {
+        setError('Failed to fetch category statistics');
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [period]
+  );
 
   useEffect(() => {
-    fetchCategoryStatistics(period, date);
-  }, [period, date]);
+    void fetchCategoryStatistics(period, date);
+  }, [date, fetchCategoryStatistics, period, reportingCurrency]);
 
   // Helper functions to extract and process the data
   const getExpenseCategories = () => {

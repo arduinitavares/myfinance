@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../config';
+import { apiFetch } from './apiClient';
 
 export interface AnomalyType {
   STATISTICAL_OUTLIER: string;
@@ -110,10 +110,10 @@ export interface AnomalyRule {
 }
 
 class AnomalyService {
-  private baseUrl = `${API_BASE_URL}/anomalies`;
+  private baseUrl = '/anomalies';
 
   async detectAnomalies(request: AnomalyDetectionRequest): Promise<AnomalyDetectionResult> {
-    const response = await fetch(`${this.baseUrl}/detect`, {
+    const response = await apiFetch(`${this.baseUrl}/detect`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -147,7 +147,7 @@ class AnomalyService {
       ),
     });
 
-    const response = await fetch(`${this.baseUrl}/?${params}`);
+    const response = await apiFetch(`${this.baseUrl}/?${params}`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch anomalies: ${response.statusText}`);
@@ -157,7 +157,7 @@ class AnomalyService {
   }
 
   async getAnomalyStatistics(): Promise<AnomalyStatistics> {
-    const response = await fetch(`${this.baseUrl}/statistics`);
+    const response = await apiFetch(`${this.baseUrl}/statistics`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch anomaly statistics: ${response.statusText}`);
@@ -167,7 +167,7 @@ class AnomalyService {
   }
 
   async getAnomalyDetail(anomalyId: number): Promise<Anomaly> {
-    const response = await fetch(`${this.baseUrl}/${anomalyId}`);
+    const response = await apiFetch(`${this.baseUrl}/${anomalyId}`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch anomaly detail: ${response.statusText}`);
@@ -181,7 +181,7 @@ class AnomalyService {
     status: string,
     reviewNotes?: string
   ): Promise<Anomaly> {
-    const response = await fetch(`${this.baseUrl}/${anomalyId}/status`, {
+    const response = await apiFetch(`${this.baseUrl}/${anomalyId}/status`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -200,7 +200,7 @@ class AnomalyService {
   }
 
   async deleteAnomaly(anomalyId: number): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/${anomalyId}`, {
+    const response = await apiFetch(`${this.baseUrl}/${anomalyId}`, {
       method: 'DELETE',
     });
 
@@ -210,7 +210,7 @@ class AnomalyService {
   }
 
   async getAnomalyRules(): Promise<AnomalyRule[]> {
-    const response = await fetch(`${this.baseUrl}/rules/`);
+    const response = await apiFetch(`${this.baseUrl}/rules/`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch anomaly rules: ${response.statusText}`);
@@ -220,7 +220,7 @@ class AnomalyService {
   }
 
   async createAnomalyRule(rule: Partial<AnomalyRule>): Promise<AnomalyRule> {
-    const response = await fetch(`${this.baseUrl}/rules/`, {
+    const response = await apiFetch(`${this.baseUrl}/rules/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -236,7 +236,7 @@ class AnomalyService {
   }
 
   async updateAnomalyRule(ruleId: number, updates: Partial<AnomalyRule>): Promise<AnomalyRule> {
-    const response = await fetch(`${this.baseUrl}/rules/${ruleId}`, {
+    const response = await apiFetch(`${this.baseUrl}/rules/${ruleId}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -252,7 +252,7 @@ class AnomalyService {
   }
 
   async deleteAnomalyRule(ruleId: number): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/rules/${ruleId}`, {
+    const response = await apiFetch(`${this.baseUrl}/rules/${ruleId}`, {
       method: 'DELETE',
     });
 

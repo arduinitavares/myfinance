@@ -21,6 +21,7 @@ import { useTransactions } from './hooks/useTransactions';
 import { statisticService } from './services/statisticService';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
+import { ReportingCurrencyProvider } from './contexts/ReportingCurrencyContext';
 import { AuthWrapper } from './components/auth/AuthWrapper';
 import { CategoryAverages } from './components/dashboard/CategoryAverages';
 import { ImportReviewPage } from './components/imports/ImportReviewPage';
@@ -163,10 +164,11 @@ function App() {
 
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AuthWrapper>
-          <BrowserRouter>
-            <Routes>
+      <ReportingCurrencyProvider>
+        <AuthProvider>
+          <AuthWrapper>
+            <BrowserRouter>
+              <Routes>
             <Route 
               path="/" 
               element={
@@ -237,11 +239,12 @@ function App() {
                 </MainLayout>
               } 
             />
-            <Route path="*" element={<Navigate to="/analytics" replace />} />
-            </Routes>
-          </BrowserRouter>
-        </AuthWrapper>
-      </AuthProvider>
+                <Route path="*" element={<Navigate to="/analytics" replace />} />
+              </Routes>
+            </BrowserRouter>
+          </AuthWrapper>
+        </AuthProvider>
+      </ReportingCurrencyProvider>
     </ThemeProvider>
   );
 }

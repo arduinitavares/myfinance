@@ -16,6 +16,19 @@ jest.mock('../../services/classificationService', () => ({
 
 const mockedService = classificationService as jest.Mocked<typeof classificationService>;
 
+const buildTransaction = (overrides: Record<string, unknown> = {}) =>
+  ({
+    id: 1,
+    transaction_date: '2026-04-11',
+    description: 'SEPA PROXIMUS',
+    amount: -45.99,
+    currency: 'EUR',
+    display_amount: -45.99,
+    display_currency: 'EUR',
+    transaction_type: 'Expense',
+    ...overrides,
+  }) as any;
+
 describe('ClassificationAssistantModal', () => {
   beforeEach(() => {
     jest.resetAllMocks();
@@ -68,15 +81,9 @@ describe('ClassificationAssistantModal', () => {
     render(
       <ClassificationAssistantModal
         open
-        transaction={{
-          id: 1,
-          transaction_date: '2026-04-11',
-          description: 'SEPA PROXIMUS',
-          amount: -45.99,
-          currency: 'EUR',
-          transaction_type: 'Expense',
+        transaction={buildTransaction({
           expense_category: 'Health',
-        } as any}
+        })}
         onOpenChange={() => {}}
         onSaved={async () => {}}
         getNextTransaction={() => null}
@@ -110,15 +117,15 @@ describe('ClassificationAssistantModal', () => {
     render(
       <ClassificationAssistantModal
         open
-        transaction={{
+        transaction={buildTransaction({
           id: 44,
           transaction_date: '2026-01-08',
           description: 'WISSELKOSTEN - EBN*ADOBE CURITIBA BR',
           amount: -1.44,
-          currency: 'EUR',
-          transaction_type: 'Expense',
           expense_category: 'Uncategorized',
-        } as any}
+          display_amount: -1.44,
+          display_currency: 'EUR',
+        })}
         onOpenChange={() => {}}
         onSaved={async () => {}}
         getNextTransaction={() => null}
