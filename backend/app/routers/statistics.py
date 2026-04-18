@@ -11,15 +11,16 @@ from enum import Enum
 
 from ..database import get_db
 from ..models.transaction import Transaction, TransactionType, ExpenseType
-from ..models.statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
+from ..models.statistics import CategoryStatistics, StatisticsPeriod
+from ..services.reporting_currency_analytics import ReportingCurrencyAnalyticsService
 from ..services.statistics_service import StatisticsService
 from ..services.reporting_currency import get_reporting_currency
 from ..schemas.statistics import (
-    FinancialStatisticsResponse,
     CategoryStatisticsResponse,
     CategoryAveragesResponse,
     ExpenseTypeTimeseriesResponse,
     ExpenseTypeTimeseriesItem,
+    FinancialStatisticsTimeseriesResponse,
     StatisticsOverviewResponse,
     TransferSummaryResponse,
 )
@@ -296,141 +297,14 @@ def get_category_statistics(
         logger.error(f"Error in get_category_statistics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-def _build_overview_item(
-    *,
-    period: StatisticsPeriod,
-    anchor_date: date | None,
-    reporting_currency: str,
-    stats: dict,
-):
-    return {
-        "period": period.value,
-        "date": anchor_date.isoformat() if anchor_date else None,
-        "reporting_currency": reporting_currency,
-        **stats,
-    }
-
-
-def _calculate_overview_stats(
-    db: Session,
-    *,
-    period: StatisticsPeriod,
-    target_date: date | None,
-    reporting_currency: str,
-):
-    return StatisticsService.calculate_statistics_for_reporting_currency(
-        db,
-        period,
-        target_date,
-        reporting_currency=reporting_currency,
-    )
-
-
 @router.get("/overview", response_model=StatisticsOverviewResponse)
 def get_statistics_overview(
     db: Session = Depends(get_db),
     reporting_currency: str = Depends(get_reporting_currency),
 ):
     try:
-        # Get latest transaction date
-        latest_transaction = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
-        
-        if not latest_transaction:
-            # Return empty/zero statistics if no transactions exist
-            today = date.today()
-            current_month = today.replace(day=calendar.monthrange(today.year, today.month)[1])
-            last_month = current_month - timedelta(days=calendar.monthrange(current_month.year, current_month.month)[1])
-            empty_stats = StatisticsService._zero_financial_stats()
-            return {
-                "current_month": _build_overview_item(
-                    period=StatisticsPeriod.MONTHLY,
-                    anchor_date=current_month,
-                    reporting_currency=reporting_currency,
-                    stats=empty_stats,
-                ),
-                "last_month": _build_overview_item(
-                    period=StatisticsPeriod.MONTHLY,
-                    anchor_date=last_month,
-                    reporting_currency=reporting_currency,
-                    stats=empty_stats,
-                ),
-                "previous_year_last_month": None,
-                "all_time": _build_overview_item(
-                    period=StatisticsPeriod.ALL_TIME,
-                    anchor_date=None,
-                    reporting_currency=reporting_currency,
-                    stats=empty_stats,
-                ),
-            }
-        
-        # Set current month to last day of the month
-        current_month = latest_transaction.transaction_date.replace(
-            day=calendar.monthrange(latest_transaction.transaction_date.year, latest_transaction.transaction_date.month)[1]
-        )
-
-        current_month_stats = _calculate_overview_stats(
-            db,
-            period=StatisticsPeriod.MONTHLY,
-            target_date=current_month,
-            reporting_currency=reporting_currency,
-        )
-        
-        last_month = current_month - timedelta(days=calendar.monthrange(current_month.year, current_month.month)[1])
-        last_month_stats = _calculate_overview_stats(
-            db,
-            period=StatisticsPeriod.MONTHLY,
-            target_date=last_month,
-            reporting_currency=reporting_currency,
-        )
-
-        previous_year_last_month = date(current_month.year - 1, 12, 31)
-        previous_year_last_month_has_activity = db.query(Transaction.id).filter(
-            extract("year", Transaction.transaction_date) == previous_year_last_month.year,
-            extract("month", Transaction.transaction_date) == previous_year_last_month.month,
-        ).first()
-
-        previous_year_last_month_stats = None
-        if previous_year_last_month_has_activity:
-            previous_year_last_month_stats = _build_overview_item(
-                period=StatisticsPeriod.MONTHLY,
-                anchor_date=previous_year_last_month,
-                reporting_currency=reporting_currency,
-                stats=_calculate_overview_stats(
-                    db,
-                    period=StatisticsPeriod.MONTHLY,
-                    target_date=previous_year_last_month,
-                    reporting_currency=reporting_currency,
-                ),
-            )
-
-        all_time_stats = _calculate_overview_stats(
-            db,
-            period=StatisticsPeriod.ALL_TIME,
-            target_date=None,
-            reporting_currency=reporting_currency,
-        )
-        
-        return {
-            "current_month": _build_overview_item(
-                period=StatisticsPeriod.MONTHLY,
-                anchor_date=current_month,
-                reporting_currency=reporting_currency,
-                stats=current_month_stats,
-            ),
-            "last_month": _build_overview_item(
-                period=StatisticsPeriod.MONTHLY,
-                anchor_date=last_month,
-                reporting_currency=reporting_currency,
-                stats=last_month_stats,
-            ),
-            "previous_year_last_month": previous_year_last_month_stats,
-            "all_time": _build_overview_item(
-                period=StatisticsPeriod.ALL_TIME,
-                anchor_date=None,
-                reporting_currency=reporting_currency,
-                stats=all_time_stats,
-            ),
-        }
+        service = ReportingCurrencyAnalyticsService(db)
+        return service.build_overview(reporting_currency=reporting_currency)
     except HTTPException:
         raise
     except Exception as e:
@@ -459,17 +333,12 @@ def get_transfer_summary(
         if start > end:
             raise HTTPException(status_code=400, detail="Start date must be before end date")
 
-        return {
-            "start_date": start.isoformat(),
-            "end_date": end.isoformat(),
-            "reporting_currency": reporting_currency,
-            "items": StatisticsService.calculate_transfer_summary(
-                db,
-                start,
-                end,
-                reporting_currency=reporting_currency,
-            ),
-        }
+        service = ReportingCurrencyAnalyticsService(db)
+        return service.build_transfer_summary(
+            start=start,
+            end=end,
+            reporting_currency=reporting_currency,
+        )
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     except HTTPException:
@@ -603,70 +472,29 @@ def get_weekday_distribution(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/timeseries", response_model=List[FinancialStatisticsResponse])
+@router.get("/timeseries", response_model=FinancialStatisticsTimeseriesResponse)
 def get_statistics_timeseries(
     db: Session = Depends(get_db),
     start_date: str = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: str = Query(None, description="End date (YYYY-MM-DD)"),
-    time_period: TimePeriod = Query(None, description="Relative time period (3M, 6M, YTD, 1Y, 2Y, ALL_TIME)")
+    time_period: TimePeriod = Query(None, description="Relative time period (3M, 6M, YTD, 1Y, 2Y, ALL_TIME)"),
+    reporting_currency: str = Depends(get_reporting_currency),
 ):
     try:
-        # Get the latest transaction date to use as reference for relative time periods
-        latest_transaction = db.query(func.max(Transaction.transaction_date)).scalar()
-        reference_date = latest_transaction if latest_transaction else date.today()
-
-        # Push the reference date the the last day of the month
-        reference_date = reference_date.replace(day=calendar.monthrange(reference_date.year, reference_date.month)[1])
-        
-        end = reference_date
-        # Handle relative time period if provided
-        if time_period and not (start_date or end_date):
-            if time_period == TimePeriod.THREE_MONTHS:
-                start = reference_date - relativedelta(months=3)
-                start = start.replace(day=calendar.monthrange(start.year, start.month)[1]) + timedelta(days=1)
-            elif time_period == TimePeriod.SIX_MONTHS:
-                start = reference_date - relativedelta(months=6)
-                start = start.replace(day=calendar.monthrange(start.year, start.month)[1]) + timedelta(days=1)
-            elif time_period == TimePeriod.YEAR_TO_DATE:
-                start = date(reference_date.year, 1, 1)
-            elif time_period == TimePeriod.ONE_YEAR:
-                start = reference_date - relativedelta(years=1)
-                start = start.replace(day=calendar.monthrange(start.year, start.month)[1]) + timedelta(days=1)
-            elif time_period == TimePeriod.TWO_YEARS:
-                start = reference_date - relativedelta(years=2)
-                start = start.replace(day=calendar.monthrange(start.year, start.month)[1]) + timedelta(days=1)
-            else:
-                start = db.query(Transaction).order_by(Transaction.transaction_date.asc()).first().transaction_date
-        else:
-            # Parse dates
-            try:
-                if start_date:
-                    start = datetime.strptime(start_date, "%Y-%m-%d").date()
-                else: # default to the date of the first transaction
-                    start = db.query(Transaction).order_by(Transaction.transaction_date.asc()).first().transaction_date
-                if end_date:
-                    end = datetime.strptime(end_date, "%Y-%m-%d").date()
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-
-        if start > end:
-            raise HTTPException(status_code=400, detail="Start date must be before end date")
-        
-        # Query FinancialStatistics in the date range
-        query = db.query(FinancialStatistics).filter(
-            FinancialStatistics.period == StatisticsPeriod.MONTHLY,
-            FinancialStatistics.date >= start,
-            FinancialStatistics.date <= end
+        start, end = ReportingCurrencyAnalyticsService.resolve_reporting_window(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            time_period=time_period,
         )
-                    
-        monthly_stats = query.order_by(FinancialStatistics.date).all()
-        
-        # Convert date objects to ISO format strings for serialization
-        for stat in monthly_stats:
-            if stat.date:
-                stat.date = stat.date.isoformat()
-                
-        return monthly_stats
+        service = ReportingCurrencyAnalyticsService(db)
+        return service.build_financial_timeseries(
+            start=start,
+            end=end,
+            reporting_currency=reporting_currency,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

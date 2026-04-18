@@ -98,10 +98,17 @@ class CategoryAveragesResponse(BaseModel):
     categories: List[CategoryAverageItem] = Field(..., description="List of category averages")
 
 
+class ConversionSummaryResponse(BaseModel):
+    converted_transaction_count: int
+    unavailable_transaction_count: int
+    unavailable_currencies: List[str]
+
+
 class StatisticsOverviewItemResponse(BaseModel):
     period: str = Field(..., description="Statistics period identifier")
     date: Optional[str] = Field(None, description="Anchor date in ISO format (YYYY-MM-DD)")
     reporting_currency: str = Field(..., description="Reporting currency used for monetary fields")
+    conversion_summary: ConversionSummaryResponse = Field(..., description="Conversion coverage for the item window")
     period_income: float = Field(..., description="Income total for the selected period")
     period_expenses: float = Field(..., description="Expense total for the selected period")
     period_net_savings: float = Field(..., description="Net savings for the selected period")
@@ -135,4 +142,29 @@ class TransferSummaryResponse(BaseModel):
     start_date: str = Field(..., description="Start date of the summary window")
     end_date: str = Field(..., description="End date of the summary window")
     reporting_currency: str = Field(..., description="Reporting currency used for transfer totals")
+    conversion_summary: ConversionSummaryResponse = Field(..., description="Conversion coverage for the summary window")
     items: List[TransferSummaryItem] = Field(..., description="Transfer totals grouped by subtype")
+
+
+class FinancialStatisticsTimeseriesItemResponse(BaseModel):
+    period: str
+    date: str | None = None
+    period_income: float
+    period_expenses: float
+    period_net_savings: float
+    savings_rate: float
+    total_income: float
+    total_expenses: float
+    total_net_savings: float
+    income_count: int
+    expense_count: int
+    average_income: float
+    average_expense: float
+    yearly_income: float
+    yearly_expenses: float
+
+
+class FinancialStatisticsTimeseriesResponse(BaseModel):
+    reporting_currency: str
+    conversion_summary: ConversionSummaryResponse
+    items: List[FinancialStatisticsTimeseriesItemResponse]
