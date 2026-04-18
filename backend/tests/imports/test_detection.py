@@ -1,6 +1,7 @@
 from app.imports.contracts import ImportStrategyKey
 from app.imports.detection import ImportDetector
 from app.config import settings
+from tests.imports.fixtures.nexo_csv import NEXO_CSV_HEADER, build_nexo_csv_bytes, nexo_row
 
 
 def test_detector_does_not_route_mislabeled_non_pdf_payload_as_pdf_statement():
@@ -48,6 +49,49 @@ def test_detector_keeps_utf8_charset_for_utf8_unknown_csv():
     sample = "Datum;Debet\n01/01/2026;-10.00\n".encode("utf-8")
     result = ImportDetector().detect(
         filename="statement.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+    assert result.strategy_key == ImportStrategyKey.UNKNOWN
+    assert result.charset_hint == "utf-8"
+
+
+def test_detector_flags_exact_nexo_csv_header_shape():
+    sample = build_nexo_csv_bytes(
+        nexo_row(
+            "NXT_PURCHASE_1",
+            "Nexo Card Purchase",
+            "xUSD",
+            "-6.24",
+            "approved / Albert Heijn 3143 | Gent | BEL",
+            "2026-03-25 17:19:21",
+        )
+    )
+    result = ImportDetector().detect(
+        filename="nexo_transactions.csv",
+        content_type="text/csv",
+        sample=sample,
+    )
+    assert result.strategy_key == ImportStrategyKey.NEXO_CSV
+    assert result.provider_hint == "nexo"
+    assert result.charset_hint == "utf-8"
+
+
+def test_detector_does_not_match_nearly_identical_nexo_header():
+    malformed_header = list(NEXO_CSV_HEADER)
+    malformed_header[10] = "Date / Time"
+    sample = build_nexo_csv_bytes(
+        nexo_row(
+            "NXT_PURCHASE_1",
+            "Nexo Card Purchase",
+            "xUSD",
+            "-6.24",
+            "approved / Albert Heijn 3143 | Gent | BEL",
+            "2026-03-25 17:19:21",
+        )
+    ).decode("utf-8").replace(",".join(NEXO_CSV_HEADER), ",".join(malformed_header), 1).encode("utf-8")
+    result = ImportDetector().detect(
+        filename="nexo_transactions.csv",
         content_type="text/csv",
         sample=sample,
     )
