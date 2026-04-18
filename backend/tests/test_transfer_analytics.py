@@ -561,6 +561,11 @@ def test_transfer_summary_empty_state_honors_requested_dates():
         "start_date": "2025-01-01",
         "end_date": "2025-01-31",
         "reporting_currency": "EUR",
+        "conversion_summary": {
+            "converted_transaction_count": 0,
+            "unavailable_transaction_count": 0,
+            "unavailable_currencies": [],
+        },
         "items": [],
     }
 
