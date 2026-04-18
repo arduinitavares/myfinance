@@ -9,9 +9,10 @@ from app.main import app
 from app.models.fx import FXDailyReferenceRate
 from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft
 from app.models.statistics import FinancialStatistics, StatisticsPeriod
-from app.models.transaction import Transaction, TransactionType
+from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
 from app.imports.state_machine import ImportSessionStatus
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
+from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
 
 
 client = TestClient(app)
@@ -43,6 +44,46 @@ def _upload_pdf(monkeypatch, page_texts, *, file_bytes=b"%PDF-1.7\nstub", expect
     response = client.post(
         "/imports/upload",
         files={"file": ("statement.pdf", file_bytes, "application/pdf")},
+    )
+    assert response.status_code == expected_status
+    return response.json()
+
+
+def _upload_nexo_csv(*, expected_status=200):
+    response = client.post(
+        "/imports/upload",
+        files={
+            "file": (
+                "nexo.csv",
+                build_nexo_csv_bytes(
+                    nexo_row(
+                        "NXT1001",
+                        "Nexo Card Purchase",
+                        "xUSD",
+                        "-12.34",
+                        "approved / Coffee Shop",
+                        "2026-04-10 09:15:30",
+                    ),
+                    nexo_row(
+                        "NXT1002",
+                        "Nexo Card Transaction Fee",
+                        "xUSD",
+                        "-0.16",
+                        "approved / Card fee",
+                        "2026-04-10 09:15:31",
+                    ),
+                    nexo_row(
+                        "NXT1003",
+                        "Transfer Out",
+                        "EUR",
+                        "-250.00",
+                        "approved / Bank transfer to BE6800000000000000",
+                        "2026-04-11 11:22:33",
+                    ),
+                ),
+                "text/csv",
+            )
+        },
     )
     assert response.status_code == expected_status
     return response.json()
@@ -120,6 +161,18 @@ def test_upload_endpoint_replaces_non_retryable_existing_pdf_session(db_session,
     assert new_session.file_hash == expected_file_hash
 
 
+def test_upload_endpoint_returns_reviewable_nexo_csv_session_shape(db_session):
+    payload = _upload_nexo_csv()
+
+    assert payload["status"] == "awaiting_review"
+    assert payload["strategy_key"] == "nexo_csv"
+    assert payload["provider_hint"] == "nexo"
+    assert payload["extractor_id"] == "nexo_csv_v1"
+    assert payload["attempt_count"] == 1
+    assert payload["error_stage"] is None
+    assert payload["error_message"] is None
+
+
 def test_get_review_payload_returns_statement_transactions_issues_and_evidence(db_session, monkeypatch):
     session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
 
@@ -185,6 +238,28 @@ def test_get_review_payload_keeps_unavailable_display_shape_when_rate_missing(db
     assert first_transaction["display_rate_date"] is None
     assert first_transaction["display_is_available"] is False
     assert first_transaction["display_unavailable_reason"] == "missing_rate"
+
+
+def test_get_review_payload_exposes_nexo_proposal_fields(db_session):
+    session = _upload_nexo_csv()
+
+    response = client.get(f"/imports/{session['id']}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session"]["status"] == "awaiting_review"
+    assert payload["statement"]["account_number_hint"] == "NEXO"
+    assert payload["statement"]["review_status"] == "awaiting_review"
+    assert len(payload["transactions"]) == 3
+    assert payload["transactions"][0]["source_locator"] == "csv:r2:NXT1001"
+    assert payload["transactions"][0]["proposed_transaction_type"] == "Expense"
+    assert payload["transactions"][0]["proposed_expense_category"] is None
+    assert payload["transactions"][0]["proposed_transfer_category"] is None
+    assert payload["transactions"][1]["proposed_expense_category"] == "Financial Fees"
+    assert payload["transactions"][2]["proposed_transaction_type"] == "Transfer"
+    assert payload["transactions"][2]["proposed_transfer_category"] == "Internal Transfer"
+    assert payload["issues"] == []
+    assert payload["evidence"]["text_blocks"][0]["page_number"] == 1
 
 
 def test_get_review_payload_for_failed_session_returns_issues_and_evidence_without_statement(db_session, monkeypatch):
@@ -258,6 +333,35 @@ def test_approve_commits_transactions_with_traceability_and_updates_statistics(d
     statement_draft = db_session.query(ImportStatementDraft).filter_by(import_session_id=session["id"]).one()
     assert persisted_session.status == "committed"
     assert statement_draft.review_status == "approved"
+
+
+def test_approve_nexo_import_commits_expense_fee_and_transfer_rows(db_session):
+    session = _upload_nexo_csv()
+
+    response = client.post(f"/imports/{session['id']}/approve")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "committed"
+
+    db_session.expire_all()
+    committed_transactions = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
+    assert len(committed_transactions) == 3
+
+    purchase, fee, transfer = committed_transactions
+    assert purchase.import_session_id == session["id"]
+    assert purchase.transaction_type == TransactionType.EXPENSE
+    assert purchase.expense_category is None
+    assert purchase.transfer_category is None
+    assert purchase.source_bank == "Nexo"
+
+    assert fee.transaction_type == TransactionType.EXPENSE
+    assert fee.expense_category == ExpenseCategory.FINANCIAL_FEES
+    assert fee.source_bank == "Nexo"
+
+    assert transfer.transaction_type == TransactionType.TRANSFER
+    assert transfer.transfer_category == TransferCategory.INTERNAL_TRANSFER
+    assert transfer.source_bank == "Nexo"
 
 
 def test_approve_returns_conflict_when_any_committed_transaction_would_duplicate(db_session, monkeypatch):
