@@ -572,6 +572,10 @@ class ClassificationSessionService:
             seed_transaction.description.lower(),
             [transaction.description.lower() for transaction in surviving],
         )
+        if len(scores) != len(surviving):
+            raise RuntimeError(
+                f"similarity_scores returned {len(scores)} scores for {len(surviving)} candidates"
+            )
 
         candidates = [
             (transaction, score)

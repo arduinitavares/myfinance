@@ -640,6 +640,34 @@ def test_preview_similar_excludes_transfer_like_candidates_for_bill_seed(monkeyp
     assert transfer_like["id"] not in match_ids
 
 
+def test_preview_similar_raises_when_batched_score_count_mismatches_candidates(monkeypatch):
+    _reset_database()
+    seed = _restore_transaction(description="PROXIMUS telecom invoice")
+    _restore_transaction(description="PROXIMUS telecom invoice April", amount=-86.99)
+
+    session = client.post("/classification/sessions", json={"transaction_id": seed["id"]}).json()
+    accept_response = client.post(
+        f"/classification/sessions/{session['id']}/accept",
+        json={
+            "transaction_type": "Expense",
+            "category": "Utilities",
+            "classification_source": "assistant",
+            "confirm_type_change": False,
+            "recurrence": {"is_recurrent": False},
+        },
+    )
+    assert accept_response.status_code == 200
+
+    monkeypatch.setattr(
+        classification_session_service.category_suggestion_service,
+        "similarity_scores",
+        lambda source_text, candidate_texts: [],
+    )
+
+    with pytest.raises(RuntimeError, match="similarity_scores returned 0 scores for 1 candidates"):
+        client.post(f"/classification/sessions/{session['id']}/similar-preview")
+
+
 def test_preview_similar_skips_already_transfer_classified_candidates(monkeypatch):
     _reset_database()
     seed = _restore_transaction(description="Transfer to savings account", amount=-200.0)
