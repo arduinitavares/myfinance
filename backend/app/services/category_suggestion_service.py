@@ -157,18 +157,25 @@ class CategorySuggestionService:
             return [0.0] * len(candidate_descriptions)
 
         candidate_texts = [self._preprocess_description(description) for description in candidate_descriptions]
+        non_empty_candidates = [
+            (index, candidate_text)
+            for index, candidate_text in enumerate(candidate_texts)
+            if candidate_text
+        ]
+        if not non_empty_candidates:
+            return [0.0] * len(candidate_descriptions)
+
+        candidate_indices = [index for index, _ in non_empty_candidates]
+        candidate_texts_to_encode = [candidate_text for _, candidate_text in non_empty_candidates]
         embeddings = self.model.encode(
-            [source_text] + candidate_texts,
+            [source_text] + candidate_texts_to_encode,
             show_progress_bar=False,
         )
 
         source_embedding = embeddings[0]
-        scores: list[float] = []
-        for candidate_text, candidate_embedding in zip(candidate_texts, embeddings[1:]):
-            if not candidate_text:
-                scores.append(0.0)
-                continue
-            scores.append(self._cosine_similarity(source_embedding, candidate_embedding))
+        scores: list[float] = [0.0] * len(candidate_descriptions)
+        for index, candidate_embedding in zip(candidate_indices, embeddings[1:]):
+            scores[index] = self._cosine_similarity(source_embedding, candidate_embedding)
         return scores
 
     def _get_collection_name(self, transaction_type: TransactionType) -> str:

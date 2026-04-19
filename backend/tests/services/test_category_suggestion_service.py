@@ -37,3 +37,28 @@ def test_similarity_scores_batches_candidates_in_input_order():
         (["seed merchant", "same merchant", "other merchant"], False)
     ]
     assert scores == [1.0, 0.0]
+
+
+def test_similarity_scores_skips_empty_preprocessed_candidates():
+    service = CategorySuggestionService.__new__(CategorySuggestionService)
+    service._preprocess_description = lambda text: "" if text == "drop me" else text
+
+    encode_calls: list[tuple[list[str], bool]] = []
+    vectors = {
+        "seed merchant": np.array([1.0, 0.0]),
+        "same merchant": np.array([1.0, 0.0]),
+    }
+
+    def fake_encode(texts, show_progress_bar=False):
+        encode_calls.append((list(texts), show_progress_bar))
+        return np.array([vectors[text] for text in texts])
+
+    service.model = SimpleNamespace(encode=fake_encode)
+
+    scores = service.similarity_scores(
+        "seed merchant",
+        ["same merchant", "drop me"],
+    )
+
+    assert encode_calls == [(["seed merchant", "same merchant"], False)]
+    assert scores == [1.0, 0.0]
