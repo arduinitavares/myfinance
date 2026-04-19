@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from app.services.category_suggestion_service import CategorySuggestionService
 
@@ -62,3 +63,29 @@ def test_similarity_scores_skips_empty_preprocessed_candidates():
 
     assert encode_calls == [(["seed merchant", "same merchant"], False)]
     assert scores == [1.0, 0.0]
+
+
+def test_similarity_scores_raises_when_encode_returns_too_few_embeddings():
+    service = CategorySuggestionService.__new__(CategorySuggestionService)
+    service._preprocess_description = lambda text: text
+
+    def fake_encode(texts, show_progress_bar=False):
+        assert texts == ["seed merchant", "same merchant", "other merchant"]
+        assert show_progress_bar is False
+        return np.array(
+            [
+                np.array([1.0, 0.0]),
+                np.array([1.0, 0.0]),
+            ]
+        )
+
+    service.model = SimpleNamespace(encode=fake_encode)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"similarity_scores expected 3 embeddings from model\.encode, got 2",
+    ):
+        service.similarity_scores(
+            "seed merchant",
+            ["same merchant", "other merchant"],
+        )

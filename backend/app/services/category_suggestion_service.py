@@ -171,6 +171,12 @@ class CategorySuggestionService:
             [source_text] + candidate_texts_to_encode,
             show_progress_bar=False,
         )
+        expected_embedding_count = 1 + len(non_empty_candidates)
+        if len(embeddings) != expected_embedding_count:
+            raise RuntimeError(
+                "similarity_scores expected "
+                f"{expected_embedding_count} embeddings from model.encode, got {len(embeddings)}"
+            )
 
         source_embedding = embeddings[0]
         scores: list[float] = [0.0] * len(candidate_descriptions)
