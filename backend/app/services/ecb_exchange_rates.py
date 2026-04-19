@@ -33,10 +33,12 @@ class ECBExchangeRateService:
         db: Session,
         *,
         http_client: httpx.Client | None = None,
+        timeout: float = 30.0,
         now_provider=None,
     ) -> None:
         self.db = db
         self._http_client = http_client
+        self._timeout = timeout
         self._now_provider = now_provider or datetime.utcnow
 
     def has_seed_data(self) -> bool:
@@ -46,6 +48,20 @@ class ECBExchangeRateService:
             .limit(1)
         ).scalar_one_or_none()
         return existing_id is not None
+
+    def earliest_covered_date(self) -> date | None:
+        return self.db.execute(
+            select(func.min(FXDailyReferenceRate.rate_date)).where(
+                FXDailyReferenceRate.source_name == self.SOURCE_NAME,
+                FXDailyReferenceRate.base_currency == self.BASE_CURRENCY,
+                FXDailyReferenceRate.quoted_currency.in_(self.SUPPORTED_QUOTES),
+            )
+        ).scalar_one_or_none()
+
+    def latest_publication_day_on_or_before(self, day: date) -> date:
+        while not self._is_ecb_publication_day(day):
+            day -= timedelta(days=1)
+        return day
 
     def has_historical_seed_coverage(self, *, today: date | None = None) -> bool:
         end_date = today or self._today()
@@ -126,10 +142,10 @@ class ECBExchangeRateService:
 
     def _get_xml_response(self, url: str) -> httpx.Response:
         if self._http_client is None:
-            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                response = client.get(url)
+            with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
+                response = client.get(url, timeout=self._timeout, follow_redirects=True)
         else:
-            response = self._http_client.get(url, timeout=30.0, follow_redirects=True)
+            response = self._http_client.get(url, timeout=self._timeout, follow_redirects=True)
 
         response.raise_for_status()
         return response

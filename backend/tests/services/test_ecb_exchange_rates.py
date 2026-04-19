@@ -7,6 +7,8 @@ from contextlib import contextmanager
 import sys
 import types
 
+import pytest
+
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction, TransactionType
 from app.services.ecb_exchange_rates import ECBExchangeRateService
@@ -89,6 +91,98 @@ def _stored_rates(db_session):
         .order_by(FXDailyReferenceRate.rate_date, FXDailyReferenceRate.quoted_currency)
         .all()
     )
+
+
+def test_earliest_covered_date_returns_none_for_empty_table(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    assert service.earliest_covered_date() is None
+
+
+def test_earliest_covered_date_returns_minimum_rate_date(db_session):
+    db_session.add_all(
+        [
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 17),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.1100"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 17, 8, 30, 0),
+                updated_at=datetime(2026, 4, 17, 8, 30, 0),
+            ),
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 15),
+                base_currency="EUR",
+                quoted_currency="BRL",
+                units_per_base=Decimal("6.0100"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 15, 8, 30, 0),
+                updated_at=datetime(2026, 4, 15, 8, 30, 0),
+            ),
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 14),
+                base_currency="USD",
+                quoted_currency="EUR",
+                units_per_base=Decimal("0.9000"),
+                source_name="OTHER",
+                fetched_at=datetime(2026, 4, 14, 8, 30, 0),
+                updated_at=datetime(2026, 4, 14, 8, 30, 0),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    service = ECBExchangeRateService(db_session)
+
+    assert service.earliest_covered_date() == date(2026, 4, 15)
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        (date(2026, 4, 15), date(2026, 4, 15)),
+        (date(2026, 4, 18), date(2026, 4, 17)),
+        (date(2026, 4, 19), date(2026, 4, 17)),
+        (date(2026, 4, 6), date(2026, 4, 2)),
+        (date(2026, 1, 1), date(2025, 12, 31)),
+    ],
+)
+def test_latest_publication_day_on_or_before_handles_weekends_and_closing_days(db_session, day, expected):
+    service = ECBExchangeRateService(db_session)
+
+    assert service.latest_publication_day_on_or_before(day) == expected
+
+
+def test_get_xml_response_uses_configured_timeout_for_injected_http_client(db_session):
+    class FakeResponse:
+        def __init__(self):
+            self.raise_for_status_called = False
+
+        def raise_for_status(self):
+            self.raise_for_status_called = True
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return FakeResponse()
+
+    http_client = FakeHttpClient()
+    service = ECBExchangeRateService(db_session, http_client=http_client, timeout=12.5)
+
+    response = service._get_xml_response("https://example.com/rates.xml")
+
+    assert isinstance(response, FakeResponse)
+    assert http_client.calls == [
+        (
+            "https://example.com/rates.xml",
+            {"timeout": 12.5, "follow_redirects": True},
+        )
+    ]
+    assert response.raise_for_status_called is True
 
 
 def test_has_historical_seed_coverage_requires_boundary_coverage_for_both_supported_quotes(db_session):
