@@ -626,6 +626,15 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
                 ],
             )
 
+    original_rollback = db_session.rollback
+    rollback_calls = []
+
+    def tracked_rollback():
+        rollback_calls.append("rollback")
+        return original_rollback()
+
+    monkeypatch.setattr(db_session, "rollback", tracked_rollback)
+
     class FakeECBExchangeRateService:
         def __init__(self, db, *, timeout):
             assert db is db_session
@@ -639,6 +648,17 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
             return date(2026, 3, 6)
 
         def refresh_range(self, start_date, end_date):
+            db_session.add(
+                ImportIssue(
+                    import_session_id=session.id,
+                    attempt_number=1,
+                    severity="warning",
+                    blocking=False,
+                    issue_code="fx_refresh_side_effect",
+                    issue_message="pending issue should be rolled back",
+                    transaction_ref="csv:r2:NXT_FEE_1",
+                )
+            )
             raise RuntimeError("fx refresh failed")
 
     monkeypatch.setattr(
@@ -666,6 +686,8 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
     assert persisted_session.status == ImportSessionStatus.COMMITTED.value
     assert committed_transaction.import_session_id == session.id
     assert committed_transaction.import_source_description == "2.0% Weekday FX Fee"
+    assert rollback_calls == ["rollback"]
+    assert db_session.query(ImportIssue).count() == 0
 
 
 def test_extract_detected_session_accepts_belfius_account_pdf_and_commits_with_belfius_hints(

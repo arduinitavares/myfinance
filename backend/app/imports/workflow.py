@@ -610,6 +610,7 @@ class ImportWorkflowService:
         try:
             fx_service.refresh_range(start_date, end_date)
         except Exception:
+            self.db.rollback()
             logger.warning("Failed to backfill FX for import dates", exc_info=True)
 
     @staticmethod
