@@ -125,24 +125,51 @@ class CategorySuggestionService:
         logger.info(f"Creating transaction text: {transaction_text}")
         return transaction_text
 
-    def similarity_score(self, source_description: str, candidate_description: str) -> float:
-        source_text = self._preprocess_description(source_description)
-        candidate_text = self._preprocess_description(candidate_description)
-        if not source_text or not candidate_text:
-            return 0.0
-
-        source_embedding = self.model.encode(source_text)
-        candidate_embedding = self.model.encode(candidate_text)
-
+    def _cosine_similarity(self, source_embedding: np.ndarray, candidate_embedding: np.ndarray) -> float:
         source_norm = float(np.linalg.norm(source_embedding))
         candidate_norm = float(np.linalg.norm(candidate_embedding))
         if source_norm == 0.0 or candidate_norm == 0.0:
             return 0.0
 
         score = float(np.dot(source_embedding, candidate_embedding) / (source_norm * candidate_norm))
-        if np.isnan(score):
+        return 0.0 if np.isnan(score) else score
+
+    def similarity_score(self, source_description: str, candidate_description: str) -> float:
+        source_text = self._preprocess_description(source_description)
+        candidate_text = self._preprocess_description(candidate_description)
+        if not source_text or not candidate_text:
             return 0.0
-        return score
+
+        source_embedding = self.model.encode(source_text, show_progress_bar=False)
+        candidate_embedding = self.model.encode(candidate_text, show_progress_bar=False)
+        return self._cosine_similarity(source_embedding, candidate_embedding)
+
+    def similarity_scores(
+        self,
+        source_description: str,
+        candidate_descriptions: list[str],
+    ) -> list[float]:
+        if not candidate_descriptions:
+            return []
+
+        source_text = self._preprocess_description(source_description)
+        if not source_text:
+            return [0.0] * len(candidate_descriptions)
+
+        candidate_texts = [self._preprocess_description(description) for description in candidate_descriptions]
+        embeddings = self.model.encode(
+            [source_text] + candidate_texts,
+            show_progress_bar=False,
+        )
+
+        source_embedding = embeddings[0]
+        scores: list[float] = []
+        for candidate_text, candidate_embedding in zip(candidate_texts, embeddings[1:]):
+            if not candidate_text:
+                scores.append(0.0)
+                continue
+            scores.append(self._cosine_similarity(source_embedding, candidate_embedding))
+        return scores
 
     def _get_collection_name(self, transaction_type: TransactionType) -> str:
         if transaction_type == TransactionType.EXPENSE:
@@ -166,7 +193,7 @@ class CategorySuggestionService:
                 continue
                 
             text = self._create_transaction_text(transaction)
-            embedding = self.model.encode(text)
+            embedding = self.model.encode(text, show_progress_bar=False)
             
             collection_name = self._get_collection_name(transaction.transaction_type)
             category = transaction.expense_category if transaction.transaction_type == TransactionType.EXPENSE else transaction.income_category
@@ -196,7 +223,7 @@ class CategorySuggestionService:
             return []
         text = f"{self._preprocess_description(description)} {abs(amount)}"
         logger.info(f"Suggesting category for text: {text}")
-        embedding = self.model.encode(text)
+        embedding = self.model.encode(text, show_progress_bar=False)
         
         collection_name = self._get_collection_name(transaction_type)
         
@@ -234,7 +261,7 @@ class CategorySuggestionService:
             return
             
         text = self._create_transaction_text(transaction)
-        embedding = self.model.encode(text)
+        embedding = self.model.encode(text, show_progress_bar=False)
         
         collection_name = self._get_collection_name(transaction.transaction_type)
         category = transaction.expense_category if transaction.transaction_type == TransactionType.EXPENSE else transaction.income_category
