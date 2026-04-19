@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from app.schemas.imports import build_import_transaction_draft_response_payload
 from app.schemas.transaction import TransactionCreate
 from app.services.anomaly_detection_service import AnomalyDetectionService
 from app.services.currency_conversion import CurrencyConversionService, DisplayMoney
+from app.services.ecb_exchange_rates import ECBExchangeRateService
 from app.services.statistics_service import StatisticsService
 from app.routers.suggestions import category_suggestion_service
 
@@ -32,6 +33,7 @@ from .pdf_statement import PdfStatementExtractor
 from .state_machine import ImportSessionStatus, assert_transition_allowed
 
 logger = logging.getLogger(__name__)
+FX_BACKFILL_TIMEOUT_SECONDS = 10.0
 
 
 class ImportWorkflowError(Exception):
@@ -591,6 +593,23 @@ class ImportWorkflowService:
     def _refresh_statistics_in_transaction(self, affected_dates: set[date]) -> None:
         for transaction_date in sorted(affected_dates):
             self._refresh_statistics_for_date(transaction_date)
+
+    def _try_backfill_fx_for_dates(self, affected_dates: set[date]) -> None:
+        if not affected_dates:
+            return
+
+        fx_service = ECBExchangeRateService(self.db, timeout=FX_BACKFILL_TIMEOUT_SECONDS)
+        coverage_floor = fx_service.earliest_covered_date()
+        min_affected_date = min(affected_dates)
+        if coverage_floor is not None and min_affected_date >= coverage_floor:
+            return
+
+        start_date = fx_service.latest_publication_day_on_or_before(min_affected_date)
+        end_date = fx_service._today() if coverage_floor is None else coverage_floor - timedelta(days=1)
+        try:
+            fx_service.refresh_range(start_date, end_date)
+        except Exception:
+            logger.warning("Failed to backfill FX for import dates", exc_info=True)
 
     @staticmethod
     def _sync_category_suggestion_index(committed_transactions: list[Transaction]) -> None:

@@ -5,6 +5,7 @@ import pytest
 from app.config import settings
 from app.imports.artifacts import ArtifactStore
 from app.imports.contracts import ExtractionResult, ExtractedTransaction, RawEvidence
+from app.imports import workflow as import_workflow_module
 from app.imports.pipeline import ImportPipelineService
 from app.imports.state_machine import ImportSessionStatus
 from app.imports.workflow import ImportApprovalConflictError, ImportSessionStateError, ImportWorkflowService
@@ -756,6 +757,26 @@ def test_extract_detected_session_still_marks_failed_when_manifest_sync_blows_up
     assert failed_session.error_message == "pdf extraction crashed"
     assert failed_session.extractor_id is None
     assert failed_session.raw_artifact_ref is None
+
+
+def test_try_backfill_fx_for_dates_returns_early_for_empty_date_set(db_session, monkeypatch):
+    constructed = []
+
+    class FakeECBExchangeRateService:
+        def __init__(self, *args, **kwargs):
+            constructed.append((args, kwargs))
+
+    monkeypatch.setattr(
+        import_workflow_module,
+        "ECBExchangeRateService",
+        FakeECBExchangeRateService,
+        raising=False,
+    )
+
+    service = ImportWorkflowService(db_session)
+    service._try_backfill_fx_for_dates(set())
+
+    assert constructed == []
 
 
 def test_retry_failed_session_without_attempt_artifacts_uses_next_attempt_number(db_session):
