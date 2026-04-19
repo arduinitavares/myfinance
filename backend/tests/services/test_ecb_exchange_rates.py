@@ -114,6 +114,15 @@ def test_earliest_covered_date_returns_minimum_rate_date(db_session):
             FXDailyReferenceRate(
                 rate_date=date(2026, 4, 15),
                 base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.1000"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 15, 8, 30, 0),
+                updated_at=datetime(2026, 4, 15, 8, 30, 0),
+            ),
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 15),
+                base_currency="EUR",
                 quoted_currency="BRL",
                 units_per_base=Decimal("6.0100"),
                 source_name="ECB_EXR",
@@ -128,6 +137,45 @@ def test_earliest_covered_date_returns_minimum_rate_date(db_session):
                 source_name="OTHER",
                 fetched_at=datetime(2026, 4, 14, 8, 30, 0),
                 updated_at=datetime(2026, 4, 14, 8, 30, 0),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    service = ECBExchangeRateService(db_session)
+
+    assert service.earliest_covered_date() == date(2026, 4, 15)
+
+
+def test_earliest_covered_date_ignores_partial_coverage_until_both_quotes_exist(db_session):
+    db_session.add_all(
+        [
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 14),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.0900"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 14, 8, 30, 0),
+                updated_at=datetime(2026, 4, 14, 8, 30, 0),
+            ),
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 15),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.1000"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 15, 8, 30, 0),
+                updated_at=datetime(2026, 4, 15, 8, 30, 0),
+            ),
+            FXDailyReferenceRate(
+                rate_date=date(2026, 4, 15),
+                base_currency="EUR",
+                quoted_currency="BRL",
+                units_per_base=Decimal("6.0100"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 4, 15, 8, 30, 0),
+                updated_at=datetime(2026, 4, 15, 8, 30, 0),
             ),
         ]
     )
@@ -183,6 +231,43 @@ def test_get_xml_response_uses_configured_timeout_for_injected_http_client(db_se
         )
     ]
     assert response.raise_for_status_called is True
+
+
+def test_get_xml_response_uses_configured_timeout_for_default_http_client(db_session, monkeypatch):
+    init_kwargs = {}
+    get_kwargs = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url, **kwargs):
+            get_kwargs["url"] = url
+            get_kwargs.update(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.ecb_exchange_rates.httpx.Client", FakeClient)
+
+    service = ECBExchangeRateService(db_session, timeout=7.25)
+    response = service._get_xml_response("https://example.com/rates.xml")
+
+    assert isinstance(response, FakeResponse)
+    assert init_kwargs == {"timeout": 7.25, "follow_redirects": True}
+    assert get_kwargs == {
+        "url": "https://example.com/rates.xml",
+        "timeout": 7.25,
+        "follow_redirects": True,
+    }
 
 
 def test_has_historical_seed_coverage_requires_boundary_coverage_for_both_supported_quotes(db_session):

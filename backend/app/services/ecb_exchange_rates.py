@@ -50,12 +50,19 @@ class ECBExchangeRateService:
         return existing_id is not None
 
     def earliest_covered_date(self) -> date | None:
-        return self.db.execute(
-            select(func.min(FXDailyReferenceRate.rate_date)).where(
+        covered_dates = (
+            select(FXDailyReferenceRate.rate_date.label("rate_date"))
+            .where(
                 FXDailyReferenceRate.source_name == self.SOURCE_NAME,
                 FXDailyReferenceRate.base_currency == self.BASE_CURRENCY,
                 FXDailyReferenceRate.quoted_currency.in_(self.SUPPORTED_QUOTES),
             )
+            .group_by(FXDailyReferenceRate.rate_date)
+            .having(func.count(func.distinct(FXDailyReferenceRate.quoted_currency)) == len(self.SUPPORTED_QUOTES))
+            .subquery()
+        )
+        return self.db.execute(
+            select(func.min(covered_dates.c.rate_date))
         ).scalar_one_or_none()
 
     def latest_publication_day_on_or_before(self, day: date) -> date:
