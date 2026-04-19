@@ -124,7 +124,7 @@ The architectural boundaries stay clean:
 
 The new flow becomes:
 
-`approve import -> commit session state -> backfill missing historical FX window if needed -> sync suggestion index -> run anomaly detection -> return response`
+`approve import -> commit session state -> sync suggestion index -> run anomaly detection -> backfill missing historical FX window if needed -> return response`
 
 The hook is intentionally post-commit. It should not run inside the transaction that persists approved transactions.
 
@@ -139,8 +139,12 @@ In `ImportWorkflowService.approve_session()`:
 3. refresh statistics in-transaction
 4. set status to committed
 5. commit through `_commit_session_state(...)`
-6. run the new FX backfill hook
-7. continue with the existing post-commit hooks
+6. sync suggestion index
+7. run anomaly detection
+8. run the new FX backfill hook
+9. return response
+
+The FX hook should run last among the post-commit hooks because it is the only one that performs external network I/O. The in-process post-commit hooks should complete before the best-effort ECB fetch begins.
 
 ### Hook contract
 
@@ -185,7 +189,13 @@ This method ensures that:
 
 Add a constructor parameter that defaults to the current behavior of `30.0` seconds.
 
-The service should store that timeout and use it in both `_get_xml_response(...)` branches so approval-time callers can shorten the network wait without affecting startup callers. The approval-time hook should instantiate the service with a `10.0` second timeout.
+The service should store that timeout and use it in both `_get_xml_response(...)` branches so approval-time callers can shorten the network wait without affecting startup callers.
+
+The approval-time hook should use a named constant:
+
+- `FX_BACKFILL_TIMEOUT_SECONDS = 10.0`
+
+and instantiate the service with that timeout.
 
 ## Backfill Window Rules
 
@@ -201,7 +211,9 @@ The backfill window is:
 
 - `start = latest_publication_day_on_or_before(min_affected_date)`
 - `end = coverage_floor - 1 day` when FX rows already exist
-- `end = today` when no FX rows exist yet
+- `end = the ECB service's effective today` when no FX rows exist yet
+
+The `today` value in this rule should come from the ECB service's own clock, derived from its `now_provider`, so tests remain deterministic.
 
 This start-date adjustment is required because `refresh_range(start_date, end_date)` only persists rows whose `rate_date` falls inside the requested window. Starting on a weekend or ECB closing day would exclude the previous publication day that conversion depends on.
 
@@ -225,10 +237,10 @@ This keeps the user-visible failure mode limited to current fallback behavior ra
 Add focused tests in `backend/tests/imports/test_import_workflow.py` for:
 
 1. `approve_session()` triggers post-commit backfill when approved dates extend earlier than current FX coverage
-2. `approve_session()` skips backfill when `affected_dates` is empty
-3. `approve_session()` skips backfill when `min(affected_dates) >= coverage_floor`
-4. `approve_session()` uses `today` as the backfill end when the FX table is empty
-5. `approve_session()` still succeeds when the backfill call raises
+2. `approve_session()` skips backfill when `min(affected_dates) >= coverage_floor`
+3. `approve_session()` uses the ECB service's effective `today` as the backfill end when the FX table is empty
+4. `approve_session()` still succeeds when the backfill call raises
+5. `_try_backfill_fx_for_dates()` returns immediately without calling ECB when passed an empty date set
 
 These tests should assert behavior through the workflow seam rather than through unrelated API endpoints.
 
