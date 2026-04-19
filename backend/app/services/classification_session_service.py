@@ -555,7 +555,7 @@ class ClassificationSessionService:
         else:
             query = query.filter(Transaction.amount > 0)
 
-        candidates: list[tuple[Transaction, float]] = []
+        surviving: list[Transaction] = []
         for transaction in query.all():
             if not _compatible_candidate_family(seed_transaction, transaction):
                 continue
@@ -563,13 +563,21 @@ class ClassificationSessionService:
                 continue
             if has_conflicting_family(seed_transaction, transaction):
                 continue
-            score = category_suggestion_service.similarity_score(
-                seed_transaction.description.lower(),
-                transaction.description.lower(),
-            )
-            if score >= SIMILARITY_THRESHOLD:
-                candidates.append((transaction, score))
+            surviving.append(transaction)
 
+        if not surviving:
+            return []
+
+        scores = category_suggestion_service.similarity_scores(
+            seed_transaction.description.lower(),
+            [transaction.description.lower() for transaction in surviving],
+        )
+
+        candidates = [
+            (transaction, score)
+            for transaction, score in zip(surviving, scores)
+            if score >= SIMILARITY_THRESHOLD
+        ]
         candidates.sort(key=lambda item: (-item[1], item[0].id))
         return candidates[:SIMILARITY_PREVIEW_LIMIT]
 

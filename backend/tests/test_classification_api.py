@@ -613,13 +613,22 @@ def test_preview_similar_excludes_transfer_like_candidates_for_bill_seed(monkeyp
         transfer_like["description"].lower(): 0.89,
     }
 
-    def fake_similarity_score(left: str, right: str) -> float:
-        return scores.get(right, 0.0)
+    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+        assert source_text == seed["description"].lower()
+        return [scores.get(candidate_text, 0.0) for candidate_text in candidate_texts]
+
+    def fail_similarity_score(*_args, **_kwargs):
+        raise AssertionError("single-pair similarity_score should not be used")
 
     monkeypatch.setattr(
         classification_session_service.category_suggestion_service,
+        "similarity_scores",
+        fake_similarity_scores,
+    )
+    monkeypatch.setattr(
+        classification_session_service.category_suggestion_service,
         "similarity_score",
-        fake_similarity_score,
+        fail_similarity_score,
     )
 
     response = client.post(f"/classification/sessions/{session['id']}/similar-preview")
@@ -664,10 +673,13 @@ def test_preview_similar_skips_already_transfer_classified_candidates(monkeypatc
         already_classified["description"].lower(): 0.92,
     }
 
+    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+        return [scores.get(candidate_text, 0.0) for candidate_text in candidate_texts]
+
     monkeypatch.setattr(
         classification_session_service.category_suggestion_service,
-        "similarity_score",
-        lambda left, right: scores.get(right, 0.0),
+        "similarity_scores",
+        fake_similarity_scores,
     )
 
     response = client.post(f"/classification/sessions/{session['id']}/similar-preview")
@@ -711,10 +723,13 @@ def test_apply_batch_skips_already_transfer_classified_candidates(monkeypatch):
         already_classified["description"].lower(): 0.92,
     }
 
+    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+        return [scores.get(candidate_text, 0.0) for candidate_text in candidate_texts]
+
     monkeypatch.setattr(
         classification_session_service.category_suggestion_service,
-        "similarity_score",
-        lambda left, right: scores.get(right, 0.0),
+        "similarity_scores",
+        fake_similarity_scores,
     )
 
     response = client.post(

@@ -247,12 +247,13 @@ def test_similar_preview_only_returns_uncategorized_rows(monkeypatch):
 
     accepted = _accept_utilities_session(seed["id"])
 
-    def fake_similarity(source_text: str, candidate_text: str) -> float:
-        if "proximus" in source_text and "proximus" in candidate_text:
-            return 0.91
-        return 0.12
+    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+        return [
+            0.91 if "proximus" in source_text and "proximus" in candidate_text else 0.12
+            for candidate_text in candidate_texts
+        ]
 
-    monkeypatch.setattr(category_suggestion_service, "similarity_score", fake_similarity)
+    monkeypatch.setattr(category_suggestion_service, "similarity_scores", fake_similarity_scores)
 
     preview = client.post(
         f"/classification/sessions/{accepted['session']['id']}/similar-preview"
@@ -316,12 +317,13 @@ def test_apply_batch_skips_uncategorized_rows_that_are_not_preview_matches(monke
 
     accepted = _accept_utilities_session(seed["id"])
 
-    def fake_similarity(source_text: str, candidate_text: str) -> float:
-        if "proximus" in source_text and "proximus" in candidate_text:
-            return 0.91
-        return 0.12
+    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+        return [
+            0.91 if "proximus" in source_text and "proximus" in candidate_text else 0.12
+            for candidate_text in candidate_texts
+        ]
 
-    monkeypatch.setattr(category_suggestion_service, "similarity_score", fake_similarity)
+    monkeypatch.setattr(category_suggestion_service, "similarity_scores", fake_similarity_scores)
 
     response = client.post(
         f"/classification/sessions/{accepted['session']['id']}/apply-batch",
