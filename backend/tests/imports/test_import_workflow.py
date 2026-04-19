@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 import pytest
 
@@ -11,6 +12,7 @@ from app.imports.state_machine import ImportSessionStatus
 from app.imports.workflow import ImportApprovalConflictError, ImportSessionStateError, ImportWorkflowService
 from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
 from app.models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType, TransferCategory
+from app.services.ecb_exchange_rates import FXRefreshResult
 from tests.imports.fixtures.belfius_account_pages import SANITIZED_BELFIUS_PAGE_TEXTS
 from tests.imports.fixtures.belfius_card_pages import SANITIZED_BELFIUS_CARD_PAGE_TEXTS
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
@@ -382,6 +384,288 @@ def test_approve_session_runs_post_commit_hooks_for_classified_expense_rows(db_s
     committed_transaction = db_session.query(Transaction).one()
     assert add_transaction_calls == [committed_transaction.id]
     assert anomaly_calls == [[committed_transaction.id]]
+
+
+def test_approve_session_backfills_fx_after_other_post_commit_hooks_when_history_gap_exists(db_session, monkeypatch):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-08",
+                        source_description="2.0% Weekday FX Fee",
+                        signed_amount=-0.16,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category="Financial Fees",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_FEE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    hook_calls = []
+
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout):
+            assert db is db_session
+            assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
+
+        def earliest_covered_date(self):
+            return date(2026, 3, 10)
+
+        def latest_publication_day_on_or_before(self, day):
+            assert day == date(2026, 3, 8)
+            return date(2026, 3, 6)
+
+        def refresh_range(self, start_date, end_date):
+            hook_calls.append(("fx_backfill", start_date, end_date))
+            return FXRefreshResult(
+                start_date=start_date,
+                end_date=end_date,
+                inserted_or_updated_rows=2,
+                missing_publication_days=[],
+                missing_working_days=[],
+            )
+
+    monkeypatch.setattr(
+        "app.imports.workflow.category_suggestion_service.add_transaction",
+        lambda transaction: hook_calls.append(("suggestion_index", transaction.id)),
+    )
+    monkeypatch.setattr(
+        "app.imports.workflow.AnomalyDetectionService.detect_anomalies",
+        lambda db, transaction_ids, force_redetection=False: hook_calls.append(
+            ("anomaly_detection", list(transaction_ids))
+        ),
+    )
+    monkeypatch.setattr(
+        import_workflow_module,
+        "ECBExchangeRateService",
+        FakeECBExchangeRateService,
+        raising=False,
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+
+    committed_transaction = db_session.query(Transaction).one()
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+    assert hook_calls == [
+        ("suggestion_index", committed_transaction.id),
+        ("anomaly_detection", [committed_transaction.id]),
+        ("fx_backfill", date(2026, 3, 6), date(2026, 3, 9)),
+    ]
+
+
+def test_approve_session_skips_fx_backfill_when_dates_are_already_covered(db_session, monkeypatch):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-08",
+                        source_description="2.0% Weekday FX Fee",
+                        signed_amount=-0.16,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category="Financial Fees",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_FEE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    refresh_calls = []
+
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout):
+            assert db is db_session
+            assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
+
+        def earliest_covered_date(self):
+            return date(2026, 3, 1)
+
+        def latest_publication_day_on_or_before(self, day):
+            raise AssertionError("covered dates should skip backfill window calculation")
+
+        def refresh_range(self, start_date, end_date):
+            refresh_calls.append((start_date, end_date))
+            raise AssertionError("refresh_range should not be called when FX dates are already covered")
+
+    monkeypatch.setattr(
+        import_workflow_module,
+        "ECBExchangeRateService",
+        FakeECBExchangeRateService,
+        raising=False,
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+    assert refresh_calls == []
+
+
+def test_approve_session_uses_ecb_service_today_for_empty_fx_table_backfill(db_session, monkeypatch):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-04-13",
+                        source_description="Coffee Shop",
+                        signed_amount=-12.34,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category="Groceries",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_PURCHASE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    refresh_calls = []
+
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout):
+            assert db is db_session
+            assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
+
+        def earliest_covered_date(self):
+            return None
+
+        def latest_publication_day_on_or_before(self, day):
+            assert day == date(2026, 4, 13)
+            return date(2026, 4, 13)
+
+        def _today(self):
+            return date(2026, 4, 17)
+
+        def refresh_range(self, start_date, end_date):
+            refresh_calls.append((start_date, end_date))
+            return FXRefreshResult(
+                start_date=start_date,
+                end_date=end_date,
+                inserted_or_updated_rows=10,
+                missing_publication_days=[],
+                missing_working_days=[],
+            )
+
+    monkeypatch.setattr(
+        import_workflow_module,
+        "ECBExchangeRateService",
+        FakeECBExchangeRateService,
+        raising=False,
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+    assert refresh_calls == [(date(2026, 4, 13), date(2026, 4, 17))]
+
+
+def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkeypatch):
+    class StubNexoExtractor:
+        def extract(self, *, file_path, session_id, attempt_number):
+            return _nexo_successful_result(
+                int(session_id),
+                attempt_number,
+                transactions=[
+                    ExtractedTransaction(
+                        transaction_date="2026-03-08",
+                        source_description="2.0% Weekday FX Fee",
+                        signed_amount=-0.16,
+                        currency="xUSD",
+                        debit_credit="debit",
+                        proposed_transaction_type="Expense",
+                        proposed_expense_category="Financial Fees",
+                        classification_source="deterministic_nexo_csv",
+                        source_locator="csv:r2:NXT_FEE_1",
+                        edit_source="deterministic_extracted",
+                    )
+                ],
+            )
+
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout):
+            assert db is db_session
+            assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
+
+        def earliest_covered_date(self):
+            return date(2026, 3, 10)
+
+        def latest_publication_day_on_or_before(self, day):
+            assert day == date(2026, 3, 8)
+            return date(2026, 3, 6)
+
+        def refresh_range(self, start_date, end_date):
+            raise RuntimeError("fx refresh failed")
+
+    monkeypatch.setattr(
+        import_workflow_module,
+        "ECBExchangeRateService",
+        FakeECBExchangeRateService,
+        raising=False,
+    )
+
+    session, _ = ImportPipelineService(db_session).start_upload(
+        filename="nexo.csv",
+        content_type="text/csv",
+        file_bytes=_minimal_nexo_header_bytes(),
+    )
+    ImportWorkflowService(
+        db_session,
+        nexo_csv_extractor=StubNexoExtractor(),
+    ).extract_detected_session(session.id)
+
+    approved_session = ImportWorkflowService(db_session).approve_session(session.id)
+
+    committed_transaction = db_session.query(Transaction).one()
+    persisted_session = db_session.get(ImportSession, session.id)
+    assert approved_session.status == ImportSessionStatus.COMMITTED.value
+    assert persisted_session.status == ImportSessionStatus.COMMITTED.value
+    assert committed_transaction.import_session_id == session.id
+    assert committed_transaction.import_source_description == "2.0% Weekday FX Fee"
 
 
 def test_extract_detected_session_accepts_belfius_account_pdf_and_commits_with_belfius_hints(

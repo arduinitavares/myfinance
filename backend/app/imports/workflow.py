@@ -234,6 +234,7 @@ class ImportWorkflowService:
             committed_session = self._commit_session_state(session, meta_state=session.status)
             self._sync_category_suggestion_index(committed_transactions)
             self._run_anomaly_detection(committed_transactions)
+            self._try_backfill_fx_for_dates(affected_dates)
             return committed_session
         except Exception:
             self.db.rollback()
