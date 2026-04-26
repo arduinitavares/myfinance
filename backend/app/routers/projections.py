@@ -32,11 +32,11 @@ PROJECTION_ROUTER_ERRORS: tuple[type[Exception], ...] = (
 
 # Create router
 router: Any = APIRouter(prefix="/projections", tags=["projections"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type ScenarioIdPath = Annotated[int, Path(description="ID of the scenario")]
-type TimeHorizonQuery = Annotated[
+DbSession: object = Annotated[Session, Depends(get_db)]
+ScenarioIdPath: object = Annotated[int, Path(description="ID of the scenario")]
+TimeHorizonQuery: object = Annotated[
     int,
-    Query(120, description="Number of months to project", ge=12, le=180),
+    Query(description="Number of months to project", ge=12, le=180),
 ]
 
 
@@ -274,8 +274,8 @@ def get_scenario_parameters(
 @router.post("/scenarios/{scenario_id}/calculate", response_model=dict[str, bool])
 def calculate_projection(
     scenario_id: ScenarioIdPath,
-    time_horizon: TimeHorizonQuery,
     db: DbSession,
+    time_horizon: TimeHorizonQuery = 120,
 ) -> dict[str, bool]:
     """Calculate projection for a scenario."""
     try:

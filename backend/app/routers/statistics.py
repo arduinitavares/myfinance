@@ -35,56 +35,8 @@ logger: Any = logging.getLogger(__name__)
 
 # Create router
 router: Any = APIRouter(prefix="/statistics", tags=["statistics"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type ReportingCurrency = Annotated[str, Depends(get_reporting_currency)]
-type StatisticsPeriodQuery = Annotated[
-    str,
-    Query("monthly", description="Statistics period (monthly, yearly, all_time)"),
-]
-type StatisticsTargetDateQuery = Annotated[
-    str | None,
-    Query(
-        None,
-        alias="date",
-        description=(
-            "Target date in ISO format (YYYY-MM-DD). Required for monthly/yearly "
-            "periods."
-        ),
-    ),
-]
-type StartDateQuery = Annotated[
-    str | None,
-    Query(None, description="Start date (YYYY-MM-DD)"),
-]
-type EndDateQuery = Annotated[
-    str | None,
-    Query(None, description="End date (YYYY-MM-DD)"),
-]
-type IsoStartDateQuery = Annotated[
-    str | None,
-    Query(None, description="Start date in ISO format (YYYY-MM-DD)"),
-]
-type IsoEndDateQuery = Annotated[
-    str | None,
-    Query(None, description="End date in ISO format (YYYY-MM-DD)"),
-]
-type TimePeriodQuery = Annotated[
-    TimePeriod | None,
-    Query(None, description="Relative time period (3M, 6M, YTD, 1Y, 2Y, ALL_TIME)"),
-]
-type TransactionTypeQuery = Annotated[
-    TransactionType | None,
-    Query(None, description="Filter by transaction type (expense, income, or both)"),
-]
-type ExpenseTypeQuery = Annotated[
-    ExpenseType | None,
-    Query(None, description="Filter by expense type (essential or discretionary)"),
-]
-type CategoryNameQuery = Annotated[
-    str | None,
-    Query(None, description="Filter by category name"),
-]
-
+DbSession: object = Annotated[Session, Depends(get_db)]
+ReportingCurrency: object = Annotated[str, Depends(get_reporting_currency)]
 STATISTICS_ROUTER_ERRORS: tuple[type[Exception], ...] = (
     RuntimeError,
     SQLAlchemyError,
@@ -105,56 +57,104 @@ WEEKDAY_NAMES: tuple[str, ...] = (
 class PeriodBreakdownParams:
     """Query parameters for period breakdown endpoints."""
 
-    period: StatisticsPeriodQuery = "monthly"
-    target_date: StatisticsTargetDateQuery = None
+    period: Annotated[
+        str,
+        Query(description="Statistics period (monthly, yearly, all_time)"),
+    ] = "monthly"
+    target_date: Annotated[
+        str | None,
+        Query(
+            alias="date",
+            description=(
+                "Target date in ISO format (YYYY-MM-DD). Required for monthly/yearly "
+                "periods."
+            ),
+        ),
+    ] = None
 
 
 @dataclass(frozen=True)
 class ReportingWindowParams:
     """Query parameters for reporting-window endpoints."""
 
-    start_date: StartDateQuery = None
-    end_date: EndDateQuery = None
-    time_period: TimePeriodQuery = None
+    start_date: Annotated[
+        str | None,
+        Query(description="Start date (YYYY-MM-DD)"),
+    ] = None
+    end_date: Annotated[
+        str | None,
+        Query(description="End date (YYYY-MM-DD)"),
+    ] = None
+    time_period: Annotated[
+        TimePeriod | None,
+        Query(description="Relative time period (3M, 6M, YTD, 1Y, 2Y, ALL_TIME)"),
+    ] = None
 
 
 @dataclass(frozen=True)
 class TransferSummaryParams:
     """Query parameters for transfer summary."""
 
-    start_date: IsoStartDateQuery = None
-    end_date: IsoEndDateQuery = None
+    start_date: Annotated[
+        str | None,
+        Query(description="Start date in ISO format (YYYY-MM-DD)"),
+    ] = None
+    end_date: Annotated[
+        str | None,
+        Query(description="End date in ISO format (YYYY-MM-DD)"),
+    ] = None
 
 
 @dataclass(frozen=True)
 class WeekdayDistributionParams:
     """Query parameters for weekday distribution."""
 
-    transaction_type: TransactionTypeQuery = None
-    start_date: StartDateQuery = None
-    end_date: EndDateQuery = None
+    transaction_type: Annotated[
+        TransactionType | None,
+        Query(description="Filter by transaction type (expense, income, or both)"),
+    ] = None
+    start_date: Annotated[
+        str | None,
+        Query(description="Start date (YYYY-MM-DD)"),
+    ] = None
+    end_date: Annotated[
+        str | None,
+        Query(description="End date (YYYY-MM-DD)"),
+    ] = None
 
 
 @dataclass(frozen=True)
 class CategoryAveragesParams(ReportingWindowParams):
     """Query parameters for category averages."""
 
-    transaction_type: TransactionTypeQuery = None
+    transaction_type: Annotated[
+        TransactionType | None,
+        Query(description="Filter by transaction type (expense, income, or both)"),
+    ] = None
 
 
 @dataclass(frozen=True)
 class CategoryTimeseriesParams(ReportingWindowParams):
     """Query parameters for category timeseries."""
 
-    transaction_type: TransactionTypeQuery = None
-    category_name: CategoryNameQuery = None
+    transaction_type: Annotated[
+        TransactionType | None,
+        Query(description="Filter by transaction type (expense, income, or both)"),
+    ] = None
+    category_name: Annotated[
+        str | None,
+        Query(description="Filter by category name"),
+    ] = None
 
 
 @dataclass(frozen=True)
 class ExpenseTypeTimeseriesParams(ReportingWindowParams):
     """Query parameters for expense type timeseries."""
 
-    expense_type: ExpenseTypeQuery = None
+    expense_type: Annotated[
+        ExpenseType | None,
+        Query(description="Filter by expense type (essential or discretionary)"),
+    ] = None
 
 
 @dataclass
@@ -195,13 +195,13 @@ class WeekdayDistributionRow(Protocol):
     transaction_type: TransactionType
 
 
-type PeriodBreakdownDependency = Annotated[PeriodBreakdownParams, Depends()]
-type ReportingWindowDependency = Annotated[ReportingWindowParams, Depends()]
-type TransferSummaryDependency = Annotated[TransferSummaryParams, Depends()]
-type WeekdayDistributionDependency = Annotated[WeekdayDistributionParams, Depends()]
-type CategoryAveragesDependency = Annotated[CategoryAveragesParams, Depends()]
-type CategoryTimeseriesDependency = Annotated[CategoryTimeseriesParams, Depends()]
-type ExpenseTypeTimeseriesDependency = Annotated[
+PeriodBreakdownDependency: object = Annotated[PeriodBreakdownParams, Depends()]
+ReportingWindowDependency: object = Annotated[ReportingWindowParams, Depends()]
+TransferSummaryDependency: object = Annotated[TransferSummaryParams, Depends()]
+WeekdayDistributionDependency: object = Annotated[WeekdayDistributionParams, Depends()]
+CategoryAveragesDependency: object = Annotated[CategoryAveragesParams, Depends()]
+CategoryTimeseriesDependency: object = Annotated[CategoryTimeseriesParams, Depends()]
+ExpenseTypeTimeseriesDependency: object = Annotated[
     ExpenseTypeTimeseriesParams, Depends()
 ]
 

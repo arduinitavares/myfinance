@@ -22,8 +22,8 @@ from ..services.classification_session_service import ClassificationSessionServi
 from ..services.reporting_currency import get_reporting_currency
 
 router: Any = APIRouter(prefix="/classification", tags=["classification"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type ReportingCurrency = Annotated[str, Depends(get_reporting_currency)]
+DbSession: object = Annotated[Session, Depends(get_db)]
+ReportingCurrency: object = Annotated[str, Depends(get_reporting_currency)]
 
 
 @router.post("/sessions", response_model=ClassificationSessionResponse)

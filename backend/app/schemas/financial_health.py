@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class FinancialHealthBase(BaseModel):
@@ -40,12 +40,9 @@ class FinancialHealthCreate(FinancialHealthBase):
 class FinancialHealth(FinancialHealthBase):
     """Represent financial health."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class FinancialHealthHistory(BaseModel):
@@ -81,15 +78,12 @@ class RecommendationCreate(RecommendationBase):
 class Recommendation(RecommendationBase):
     """Represent recommendation."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     date_created: date
     is_completed: bool
     date_completed: date | None = None
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class RecommendationUpdate(BaseModel):

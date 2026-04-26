@@ -42,9 +42,9 @@ logger: Any = logging.getLogger(__name__)
 
 
 router: Any = APIRouter(prefix="/imports", tags=["imports"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type ReportingCurrency = Annotated[str, Depends(get_reporting_currency)]
-type UploadedImportFile = Annotated[UploadFile, File(...)]
+DbSession: object = Annotated[Session, Depends(get_db)]
+ReportingCurrency: object = Annotated[str, Depends(get_reporting_currency)]
+UploadedImportFile: object = Annotated[UploadFile, File(...)]
 
 MAX_UPLOAD_BYTES: Any = 5 * 1024 * 1024
 MAX_ROWS_PER_UPLOAD: Any = 5000

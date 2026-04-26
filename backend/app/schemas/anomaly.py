@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..models.anomaly import AnomalySeverity, AnomalyStatus, AnomalyType
 
@@ -39,17 +39,14 @@ class AnomalyUpdate(BaseModel):
 class Anomaly(AnomalyBase):
     """Represent anomaly."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     status: AnomalyStatus
     detection_timestamp: datetime
     reviewed_at: datetime | None = None
     reviewed_by: str | None = None
     review_notes: str | None = None
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class AnomalyWithTransaction(Anomaly):
@@ -84,14 +81,11 @@ class AnomalyPatternCreate(AnomalyPatternBase):
 class AnomalyPattern(AnomalyPatternBase):
     """Represent anomaly pattern."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     last_updated: datetime
     created_at: datetime
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class AnomalyRuleBase(BaseModel):
@@ -128,14 +122,11 @@ class AnomalyRuleUpdate(BaseModel):
 class AnomalyRule(AnomalyRuleBase):
     """Represent anomaly rule."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     created_at: datetime
     updated_at: datetime
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class AnomalyDetectionRequest(BaseModel):
@@ -172,13 +163,10 @@ class AnomalyStatistics(BaseModel):
 class AnomalyPage(BaseModel):
     """Represent anomaly page."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     items: list[AnomalyWithTransaction]
     total: int
     page: int
     page_size: int
     total_pages: int
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True

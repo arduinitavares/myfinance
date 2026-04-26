@@ -3,7 +3,7 @@
 from datetime import date
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ParamType(StrEnum):
@@ -32,13 +32,10 @@ class ProjectionParameterCreate(ProjectionParameterBase):
 class ProjectionParameter(ProjectionParameterBase):
     """Represent projection parameter."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     scenario_id: int
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class ProjectionScenarioBase(BaseModel):
@@ -59,14 +56,11 @@ class ProjectionScenarioCreate(ProjectionScenarioBase):
 class ProjectionScenario(ProjectionScenarioBase):
     """Represent projection scenario."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     created_at: date
     user_id: int | None = None
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class ProjectionScenarioDetail(ProjectionScenario):
@@ -96,14 +90,11 @@ class ProjectionResultCreate(ProjectionResultBase):
 class ProjectionResult(ProjectionResultBase):
     """Represent projection result."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     scenario_id: int
     created_at: date
-
-    class Config:
-        """Represent config."""
-
-        orm_mode = True
 
 
 class ProjectionTimeseries(BaseModel):

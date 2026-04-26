@@ -36,10 +36,10 @@ logger: Any = logging.getLogger(__name__)
 
 # Create router
 router: Any = APIRouter(prefix="/transactions", tags=["transactions"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type ReportingCurrency = Annotated[str, Depends(get_reporting_currency)]
-type CategoryQuery = Annotated[str, Query(...)]
-type TransactionTypeQuery = Annotated[TransactionType, Query(...)]
+DbSession: object = Annotated[Session, Depends(get_db)]
+ReportingCurrency: object = Annotated[str, Depends(get_reporting_currency)]
+CategoryQuery: object = Annotated[str, Query(...)]
+TransactionTypeQuery: object = Annotated[TransactionType, Query(...)]
 
 # Define sort field mapping
 SORT_FIELD_MAPPING: dict[str, str] = {
@@ -60,36 +60,36 @@ TRANSACTION_ROUTER_ERRORS: tuple[type[Exception], ...] = (
 class TransactionListParams:
     """Query parameters for transaction listing."""
 
-    page: Annotated[int, Query(1, gt=0)] = 1
-    page_size: Annotated[int, Query(10, gt=0, le=100)] = 10
+    page: Annotated[int, Query(gt=0)] = 1
+    page_size: Annotated[int, Query(gt=0, le=100)] = 10
     sort_field: Annotated[
         str,
-        Query("date", pattern="^(date|description|amount|type)$"),
+        Query(pattern="^(date|description|amount|type)$"),
     ] = "date"
-    sort_direction: Annotated[str, Query("desc", pattern="^(asc|desc)$")] = "desc"
+    sort_direction: Annotated[str, Query(pattern="^(asc|desc)$")] = "desc"
     search: Annotated[
         str | None,
-        Query(None, description="Search term for description/counterparty"),
+        Query(description="Search term for description/counterparty"),
     ] = None
     category: Annotated[
         str | None,
-        Query(None, description="Category filter (expense or income)"),
+        Query(description="Category filter (expense or income)"),
     ] = None
     classification_status: Annotated[
         str,
-        Query("all", pattern="^(all|classified|unclassified)$"),
+        Query(pattern="^(all|classified|unclassified)$"),
     ] = "all"
     start_date: Annotated[
         str | None,
-        Query(None, description="Start date (YYYY-MM-DD)"),
+        Query(description="Start date (YYYY-MM-DD)"),
     ] = None
     end_date: Annotated[
         str | None,
-        Query(None, description="End date (YYYY-MM-DD)"),
+        Query(description="End date (YYYY-MM-DD)"),
     ] = None
 
 
-type TransactionListDependency = Annotated[TransactionListParams, Depends()]
+TransactionListDependency: object = Annotated[TransactionListParams, Depends()]
 
 
 def _raise_http_error(status_code: int, detail: str) -> NoReturn:

@@ -16,7 +16,7 @@ logger: Any = logging.getLogger(__name__)
 
 # Create router
 router: Any = APIRouter(prefix="/suggestions", tags=["suggestions"])
-type DbSession = Annotated[Session, Depends(get_db)]
+DbSession: object = Annotated[Session, Depends(get_db)]
 SUGGESTION_ROUTER_ERRORS: tuple[type[Exception], ...] = (
     RuntimeError,
     TypeError,

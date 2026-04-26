@@ -19,18 +19,18 @@ logger: Any = logging.getLogger(__name__)
 
 # Create router
 router: Any = APIRouter(prefix="/financial-health", tags=["financial-health"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type TargetDateQuery = Annotated[
+DbSession: object = Annotated[Session, Depends(get_db)]
+TargetDateQuery: object = Annotated[
     str | None,
-    Query(None, description="Target date (YYYY-MM-DD)"),
+    Query(description="Target date (YYYY-MM-DD)"),
 ]
-type HistoryMonthsQuery = Annotated[
+HistoryMonthsQuery: object = Annotated[
     int,
-    Query(12, gt=0, le=60, description="Number of months of history to retrieve"),
+    Query(gt=0, le=60, description="Number of months of history to retrieve"),
 ]
-type ActiveOnlyQuery = Annotated[
+ActiveOnlyQuery: object = Annotated[
     bool,
-    Query(True, description="Only return active (not completed) recommendations"),
+    Query(description="Only return active (not completed) recommendations"),
 ]
 
 
@@ -73,8 +73,8 @@ def _raise_not_found(detail: str) -> NoReturn:
 
 @router.get("/score", response_model=schemas.FinancialHealth)
 def get_health_score(
-    target_date: TargetDateQuery,
     db: DbSession,
+    target_date: TargetDateQuery = None,
 ) -> FinancialHealth:
     """Get the financial health score for a specific date.
 
@@ -93,8 +93,8 @@ def get_health_score(
 
 @router.get("/history", response_model=schemas.FinancialHealthHistory)
 def get_health_history(
-    months: HistoryMonthsQuery,
     db: DbSession,
+    months: HistoryMonthsQuery = 12,
 ) -> dict[str, Any]:
     """Get historical financial health scores for the specified number of months."""
     try:
@@ -107,8 +107,8 @@ def get_health_history(
 
 @router.get("/recommendations", response_model=list[schemas.Recommendation])
 def get_recommendations(
-    active_only: ActiveOnlyQuery,
     db: DbSession,
+    active_only: ActiveOnlyQuery = True,
 ) -> list[FinancialRecommendation]:
     """Get personalized financial recommendations."""
     try:
@@ -142,8 +142,8 @@ def update_recommendation(
 
 @router.post("/recalculate", response_model=schemas.FinancialHealth)
 def recalculate_health_score(
-    target_date: TargetDateQuery,
     db: DbSession,
+    target_date: TargetDateQuery = None,
 ) -> FinancialHealth:
     """Force recalculation of the financial health score for a specific date.
 

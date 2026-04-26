@@ -28,8 +28,7 @@ from ..services.anomaly_detection_service import AnomalyDetectionService
 logger: Any = logging.getLogger(__name__)
 
 router: Any = APIRouter(prefix="/anomalies", tags=["anomalies"])
-type DbSession = Annotated[Session, Depends(get_db)]
-type AnomalyQuery = Annotated["AnomalyQueryParams", Depends()]
+DbSession: object = Annotated[Session, Depends(get_db)]
 
 ANOMALY_ROUTER_ERRORS: tuple[type[Exception], ...] = (
     RuntimeError,
@@ -48,19 +47,19 @@ ANOMALY_SORT_COLUMNS: dict[str, Any] = {
 class AnomalyQueryParams:
     """Group anomaly listing query parameters."""
 
-    page: Annotated[int, Query(1, gt=0)] = 1
-    page_size: Annotated[int, Query(20, gt=0, le=100)] = 20
-    status: Annotated[str | None, Query(None)] = None
-    severity: Annotated[str | None, Query(None)] = None
-    anomaly_type: Annotated[str | None, Query(None)] = None
+    page: Annotated[int, Query(gt=0)] = 1
+    page_size: Annotated[int, Query(gt=0, le=100)] = 20
+    status: Annotated[str | None, Query()] = None
+    severity: Annotated[str | None, Query()] = None
+    anomaly_type: Annotated[str | None, Query()] = None
     sort_by: Annotated[
         str,
-        Query(
-            "detection_timestamp",
-            pattern="^(detection_timestamp|anomaly_score|severity)$",
-        ),
+        Query(pattern="^(detection_timestamp|anomaly_score|severity)$"),
     ] = "detection_timestamp"
-    sort_direction: Annotated[str, Query("desc", pattern="^(asc|desc)$")] = "desc"
+    sort_direction: Annotated[str, Query(pattern="^(asc|desc)$")] = "desc"
+
+
+AnomalyQuery: object = Annotated[AnomalyQueryParams, Depends()]
 
 
 def _today() -> date:
