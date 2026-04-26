@@ -124,13 +124,13 @@ def test_nexo_csv_extractor_preserves_raw_currency_and_deterministic_proposals(t
     assert result.statement_metadata["statement_period_start"] == "2026-03-08"
     assert result.statement_metadata["statement_period_end"] == "2026-03-26"
     assert [transaction.currency for transaction in result.transactions] == ["xUSD", "xUSD", "USDC"]
-    assert [transaction.proposed_transaction_type for transaction in result.transactions] == [
+    assert [transaction.proposed_transaction_type.value for transaction in result.transactions] == [
         "Expense",
         "Expense",
         "Transfer",
     ]
-    assert result.transactions[1].proposed_expense_category == "Financial Fees"
-    assert result.transactions[2].proposed_transfer_category == "Internal Transfer"
+    assert result.transactions[1].proposed_expense_category.value == "Financial Fees"
+    assert result.transactions[2].proposed_transfer_category.value == "Internal Transfer"
     assert result.transactions[0].source_description == "Albert Heijn 3143 | Gent | BEL"
     assert result.transactions[2].source_locator == "csv:r4:NXT_CASHOUT_1"
     assert evidence.snippets[2]["decision"] == "imported"
@@ -155,7 +155,7 @@ def test_nexo_csv_extractor_skips_rejected_and_internal_rows_and_warns_on_ambigu
     evidence, result = NexoCsvExtractor().extract(file_path=file_path, session_id="43", attempt_number=1)
 
     assert result.transactions == []
-    assert any(issue.code == "ambiguous_nexo_transfer_out" and not issue.blocking for issue in result.issues)
+    assert any(issue.code == "nexo_ambiguous_transfer_out" and not issue.blocking for issue in result.issues)
     assert any(issue.code == "no_importable_nexo_rows" and issue.blocking for issue in result.issues)
     decisions = {snippet["transaction_id"]: snippet["decision"] for snippet in evidence.snippets}
     assert decisions["NXT_REJECTED_1"] == "skipped"

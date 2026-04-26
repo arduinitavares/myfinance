@@ -3,6 +3,7 @@ import logging
 import re
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -387,10 +388,10 @@ class ImportWorkflowService:
                     source_locator=transaction.source_locator,
                     inferred_category=transaction.inferred_category,
                     category_source=transaction.category_source,
-                    proposed_transaction_type=transaction.proposed_transaction_type,
-                    proposed_expense_category=transaction.proposed_expense_category,
-                    proposed_income_category=transaction.proposed_income_category,
-                    proposed_transfer_category=transaction.proposed_transfer_category,
+                    proposed_transaction_type=self._proposal_value(transaction.proposed_transaction_type),
+                    proposed_expense_category=self._proposal_value(transaction.proposed_expense_category),
+                    proposed_income_category=self._proposal_value(transaction.proposed_income_category),
+                    proposed_transfer_category=self._proposal_value(transaction.proposed_transfer_category),
                     classification_source=transaction.classification_source,
                     recurrence_pattern_id=transaction.recurrence_pattern_id,
                     confidence=self._transaction_confidence(transaction, result),
@@ -969,6 +970,14 @@ class ImportWorkflowService:
         if transaction.confidence:
             return sum(transaction.confidence.values()) / len(transaction.confidence)
         return result.overall_confidence
+
+    @staticmethod
+    def _proposal_value(value: object | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, Enum):
+            return str(value.value)
+        return str(value)
 
     @staticmethod
     def _parse_iso_date(value: str | None) -> date | None:

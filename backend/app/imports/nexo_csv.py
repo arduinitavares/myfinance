@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+from ..models.transaction import ExpenseCategory, TransactionType, TransferCategory
 from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
 from .csv_support import (
     NEXO_HEADER,
@@ -69,7 +70,7 @@ class NexoCsvExtractor:
             return evidence, ExtractionResult(
                 extractor_id=self.extractor_id,
                 raw_artifact_ref=raw_artifact_ref,
-                source_metadata={"provider_hint": "nexo", "file_type": "csv", "encoding": encoding},
+                source_metadata={"provider_hint": "nexo", "file_type": "csv", "charset": encoding},
                 statement_metadata={},
                 transactions=[],
                 issues=[
@@ -126,20 +127,20 @@ class NexoCsvExtractor:
             proposed_transfer_category = None
 
             if row_type == "Nexo Card Purchase" and amount < 0:
-                proposed_transaction_type = "Expense"
+                proposed_transaction_type = TransactionType.EXPENSE
                 snippet["reason"] = "card_purchase"
             elif row_type == "Nexo Card Transaction Fee" and amount < 0:
-                proposed_transaction_type = "Expense"
-                proposed_expense_category = "Financial Fees"
+                proposed_transaction_type = TransactionType.EXPENSE
+                proposed_expense_category = ExpenseCategory.FINANCIAL_FEES
                 snippet["reason"] = "card_fee"
             elif row_type == "Transfer Out" and amount < 0 and _looks_like_external_cashout(description):
-                proposed_transaction_type = "Transfer"
-                proposed_transfer_category = "Internal Transfer"
+                proposed_transaction_type = TransactionType.TRANSFER
+                proposed_transfer_category = TransferCategory.INTERNAL_TRANSFER
                 snippet["reason"] = "external_cash_out"
             elif row_type == "Transfer Out":
                 issues.append(
                     ImportIssue(
-                        code="ambiguous_nexo_transfer_out",
+                        code="nexo_ambiguous_transfer_out",
                         message=f"Nexo Transfer Out row {transaction_id or row_number} could not be classified deterministically.",
                         blocking=False,
                         transaction_ref=f"csv:r{row_number}:{transaction_id}" if transaction_id else f"csv:r{row_number}",
@@ -171,6 +172,7 @@ class NexoCsvExtractor:
                     proposed_transaction_type=proposed_transaction_type,
                     proposed_expense_category=proposed_expense_category,
                     proposed_transfer_category=proposed_transfer_category,
+                    proposal_source="deterministic_extracted",
                     classification_source="deterministic_nexo_csv",
                     source_locator=f"csv:r{row_number}:{transaction_id}" if transaction_id else f"csv:r{row_number}",
                     edit_source="deterministic_extracted",
@@ -192,10 +194,12 @@ class NexoCsvExtractor:
         return evidence, ExtractionResult(
             extractor_id=self.extractor_id,
             raw_artifact_ref=raw_artifact_ref,
-            source_metadata={"provider_hint": "nexo", "file_type": "csv", "encoding": encoding},
+            source_metadata={"provider_hint": "nexo", "file_type": "csv", "charset": encoding},
             statement_metadata={
                 **statement_period_from_transactions(transactions),
                 "account_number_hint": "NEXO",
+                "card_number_hint": None,
+                "currency": None,
             },
             transactions=transactions,
             issues=issues,

@@ -49,6 +49,10 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             f"""
             CREATE TABLE {TRANSACTIONS_MIGRATION_TABLE} (
                 id INTEGER NOT NULL PRIMARY KEY,
+                import_session_id INTEGER,
+                import_source_locator VARCHAR(255),
+                import_source_description VARCHAR(500),
+                canonical_description_en VARCHAR(500),
                 account_number VARCHAR(50),
                 transaction_date DATE,
                 amount FLOAT,
@@ -84,10 +88,32 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             if "recurrence_pattern_id" in transaction_columns
             else "NULL"
         )
+        import_session_id_sql = (
+            "import_session_id" if "import_session_id" in transaction_columns else "NULL"
+        )
+        import_source_locator_sql = (
+            "import_source_locator"
+            if "import_source_locator" in transaction_columns
+            else "NULL"
+        )
+        import_source_description_sql = (
+            "import_source_description"
+            if "import_source_description" in transaction_columns
+            else "NULL"
+        )
+        canonical_description_en_sql = (
+            "canonical_description_en"
+            if "canonical_description_en" in transaction_columns
+            else "NULL"
+        )
         cursor.execute(
             f"""
             INSERT INTO {TRANSACTIONS_MIGRATION_TABLE} (
                 id,
+                import_session_id,
+                import_source_locator,
+                import_source_description,
+                canonical_description_en,
                 account_number,
                 transaction_date,
                 amount,
@@ -105,6 +131,10 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             )
             SELECT
                 id,
+                {import_session_id_sql},
+                {import_source_locator_sql},
+                {import_source_description_sql},
+                {canonical_description_en_sql},
                 account_number,
                 transaction_date,
                 amount,

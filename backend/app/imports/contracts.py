@@ -5,6 +5,13 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from ..models.transaction import (
+    ExpenseCategory,
+    IncomeCategory,
+    TransactionType,
+    TransferCategory,
+)
+
 
 class ImportStrategyKey(str, Enum):
     BELFIUS_CSV = "belfius_csv"
@@ -47,10 +54,11 @@ class ExtractedTransaction(BaseModel):
     debit_credit: str
     inferred_category: Optional[str] = None
     category_source: Optional[str] = None
-    proposed_transaction_type: Optional[str] = None
-    proposed_expense_category: Optional[str] = None
-    proposed_income_category: Optional[str] = None
-    proposed_transfer_category: Optional[str] = None
+    proposed_transaction_type: Optional[TransactionType | str] = None
+    proposed_expense_category: Optional[ExpenseCategory | str] = None
+    proposed_income_category: Optional[IncomeCategory | str] = None
+    proposed_transfer_category: Optional[TransferCategory | str] = None
+    proposal_source: Optional[Literal["deterministic_extracted", "ai_extracted"]] = None
     classification_source: Optional[str] = None
     recurrence_pattern_id: Optional[int] = None
     confidence: dict[str, float] = Field(default_factory=dict)
