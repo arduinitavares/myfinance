@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from datetime import date
+from decimal import Decimal
 from enum import Enum, StrEnum
 
 from pydantic import (
@@ -39,6 +40,12 @@ def _amount_as_float(value: object) -> float:
         return float(value)
     msg = f"Unsupported transaction amount value: {value!r}"
     raise TypeError(msg)
+
+
+def _decimal_as_float(value: Decimal | None) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 class TransactionBase(BaseModel):
@@ -175,9 +182,9 @@ class TimePeriod(StrEnum):
 def serialize_display_money(display_money: DisplayMoney) -> dict[str, object]:
     """Handle serialize display money."""
     return {
-        "display_amount": display_money.display_amount,
+        "display_amount": _decimal_as_float(display_money.display_amount),
         "display_currency": display_money.display_currency,
-        "display_fx_rate": display_money.display_fx_rate,
+        "display_fx_rate": _decimal_as_float(display_money.display_fx_rate),
         "display_rate_date": display_money.display_rate_date,
         "display_is_available": display_money.is_available,
         "display_unavailable_reason": display_money.unavailable_reason,

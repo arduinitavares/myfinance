@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models.transaction import TransactionType
 from ..services.category_suggestion_service import CategorySuggestionService
 
@@ -26,10 +26,6 @@ SUGGESTION_ROUTER_ERRORS: tuple[type[Exception], ...] = (
 # Initialize the service
 category_suggestion_service: Any = CategorySuggestionService()
 
-# Initialize category suggestions
-with next(get_db()) as db:
-    category_suggestion_service.train_on_existing_transactions(db)
-
 
 # Schema for the request body
 class CategorySuggestionRequest(BaseModel):
@@ -43,6 +39,12 @@ class CategorySuggestionRequest(BaseModel):
 def _raise_server_error(message: str, exc: Exception) -> NoReturn:
     logger.exception(message)
     raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def initialize_category_suggestion_model() -> None:
+    """Train category suggestions after the application database is initialized."""
+    with SessionLocal() as db:
+        category_suggestion_service.train_on_existing_transactions(db)
 
 
 @router.post("/category")

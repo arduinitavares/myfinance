@@ -26,9 +26,9 @@ class FcntlModule(Protocol):
 try:
     import fcntl as _fcntl
 except ImportError:  # pragma: no cover
-    _fcntl_module: FcntlModule | None = None
+    fcntl: FcntlModule | None = None
 else:
-    _fcntl_module = cast("FcntlModule", _fcntl)
+    fcntl = cast("FcntlModule", _fcntl)
 
 MIN_POLL_SECONDS: float = 0.01
 
@@ -52,7 +52,7 @@ def acquire_fx_refresh_lock(
     acquired = False
 
     try:
-        if _fcntl_module is None:
+        if fcntl is None:
             acquired = True
             yield True
         else:
@@ -63,9 +63,9 @@ def acquire_fx_refresh_lock(
             deadline = time.monotonic() + effective_timeout_seconds
             while not acquired:
                 try:
-                    _fcntl_module.flock(
+                    fcntl.flock(
                         lock_file.fileno(),
-                        _fcntl_module.LOCK_EX | _fcntl_module.LOCK_NB,
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,
                     )
                     acquired = True
                 except BlockingIOError:
@@ -76,6 +76,6 @@ def acquire_fx_refresh_lock(
                     time.sleep(min(effective_poll_seconds, deadline - now))
             yield True
     finally:
-        if acquired and _fcntl_module is not None:
-            _fcntl_module.flock(lock_file.fileno(), _fcntl_module.LOCK_UN)
+        if acquired and fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         lock_file.close()

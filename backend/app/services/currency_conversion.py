@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
@@ -15,8 +16,6 @@ from app.services.fx_pairs import required_fx_quotes
 from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from sqlalchemy.orm import Session
 
 DISPLAY_PRECISION: Any = Decimal("0.01")
@@ -31,7 +30,7 @@ class DisplayMoney:
     display_amount: Decimal | None
     display_currency: str
     display_fx_rate: Decimal | None
-    display_rate_date: date | None
+    display_rate_date: dt.date | None
     is_available: bool
     unavailable_reason: str | None = None
 
@@ -65,9 +64,13 @@ class CurrencyConversionService:
         raw_amount: RawAmount,
         raw_currency: str,
         reporting_currency: str,
-        transaction_date: date,
+        transaction_date: dt.date,
     ) -> DisplayMoney:
         """Handle convert."""
+        if not isinstance(transaction_date, dt.date):
+            message = "transaction_date must be a date"
+            raise TypeError(message)
+
         normalized_raw_currency = normalize_currency_code(raw_currency)
         normalized_reporting_currency = normalize_currency_code(reporting_currency)
         decimal_amount = Decimal(str(raw_amount))
@@ -143,9 +146,9 @@ class CurrencyConversionService:
     def _latest_rate_date(
         self,
         *,
-        transaction_date: date,
+        transaction_date: dt.date,
         required_quotes: tuple[str, ...],
-    ) -> date | None:
+    ) -> dt.date | None:
         return self.db.execute(
             select(FXDailyReferenceRate.rate_date)
             .where(
@@ -166,7 +169,7 @@ class CurrencyConversionService:
     def _load_eur_native_rates(
         self,
         *,
-        rate_date: date,
+        rate_date: dt.date,
         required_quotes: tuple[str, ...],
     ) -> dict[str, Decimal]:
         rows = self.db.execute(

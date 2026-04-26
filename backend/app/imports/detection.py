@@ -22,13 +22,8 @@ class ImportDetector:
         sample: bytes,
     ) -> DetectionResult:
         """Handle detect."""
-        normalized_filename = filename.lower()
-        normalized_content_type = content_type.lower()
-        if (
-            sample.startswith(b"%PDF-")
-            or normalized_content_type == "application/pdf"
-            or normalized_filename.endswith(".pdf")
-        ):
+        _ = filename, content_type
+        if sample.startswith(b"%PDF-"):
             return DetectionResult(
                 strategy_key=ImportStrategyKey.PDF_STATEMENT,
                 provider_hint=None,

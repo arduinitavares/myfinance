@@ -336,7 +336,12 @@ class ECBExchangeRateService:
 
             try:
                 self.refresh_range(start_date, end_date)
-            except (ElementTree.ParseError, httpx.HTTPError, ValueError) as exc:
+            except (
+                ElementTree.ParseError,
+                httpx.HTTPError,
+                RuntimeError,
+                ValueError,
+            ) as exc:
                 self.db.rollback()
                 return FXConversionCoverageResult(
                     status=FXConversionCoverageStatus.FETCH_FAILED,

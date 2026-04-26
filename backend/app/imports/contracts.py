@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from ..models import transaction as transaction_models
+
 if TYPE_CHECKING:
     from ..models.transaction import (
         ExpenseCategory,
@@ -102,3 +104,19 @@ class ProviderDescription(BaseModel):
     model_name: str
     schema_version: str
     prompt_fingerprint: str
+
+
+def _rebuild_import_contract_models() -> None:
+    types_namespace: dict[str, object] = {
+        "ExpenseCategory": transaction_models.ExpenseCategory,
+        "IncomeCategory": transaction_models.IncomeCategory,
+        "TransactionType": transaction_models.TransactionType,
+        "TransferCategory": transaction_models.TransferCategory,
+    }
+    ExtractedTransaction.model_rebuild(
+        force=True, _types_namespace=types_namespace
+    )
+    ExtractionResult.model_rebuild(force=True, _types_namespace=types_namespace)
+
+
+_rebuild_import_contract_models()

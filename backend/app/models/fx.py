@@ -12,8 +12,40 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from ..database import Base
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Store datetimes as naive UTC and return aware UTC values."""
+
+    impl = DateTime
+    cache_ok: bool = True
+
+    def process_bind_param(
+        self, value: datetime | None, dialect: object
+    ) -> datetime | None:
+        """Normalize bound datetimes to naive UTC for SQLite storage."""
+        _ = dialect
+        if value is None:
+            return None
+        return _as_utc(value).replace(tzinfo=None)
+
+    def process_result_value(
+        self, value: datetime | None, dialect: object
+    ) -> datetime | None:
+        """Return stored datetimes as UTC-aware values."""
+        _ = dialect
+        if value is None:
+            return None
+        return _as_utc(value)
 
 
 def utc_now() -> datetime:
@@ -42,8 +74,8 @@ class FXDailyReferenceRate(Base):
     units_per_base: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     source_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     fetched_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utc_now
+        UTCDateTime(), nullable=False, default=utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utc_now, onupdate=utc_now
+        UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now
     )

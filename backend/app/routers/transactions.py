@@ -413,9 +413,7 @@ def restore_transaction(
 
         # Run anomaly detection on restored transaction
         try:
-            AnomalyDetectionService.detect_anomalies(
-                db=db, transaction_ids=[new_transaction.id], force_redetection=False
-            )
+            AnomalyDetectionService.detect_anomalies(db, [new_transaction.id])
         except TRANSACTION_ROUTER_ERRORS:
             logger.warning(
                 "Anomaly detection failed for restored transaction",

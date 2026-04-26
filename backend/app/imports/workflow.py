@@ -1005,11 +1005,7 @@ class ImportWorkflowService:
         if not transaction_ids:
             return
         try:
-            AnomalyDetectionService.detect_anomalies(
-                db=self.db,
-                transaction_ids=transaction_ids,
-                force_redetection=False,
-            )
+            AnomalyDetectionService.detect_anomalies(self.db, transaction_ids)
         except WORKFLOW_OPERATIONAL_EXCEPTIONS:
             logger.warning(
                 "Anomaly detection failed for committed import transactions",

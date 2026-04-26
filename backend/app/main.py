@@ -139,8 +139,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         fx_scheduler_state.scheduler = None
 
 
-# Initialize the database BEFORE importing routers to ensure tables exist
+# Initialize the database before startup-only data loading.
 init_database()
+suggestions.initialize_category_suggestion_model()
 
 app: FastAPI = FastAPI(title="MyFinance API", lifespan=lifespan)
 

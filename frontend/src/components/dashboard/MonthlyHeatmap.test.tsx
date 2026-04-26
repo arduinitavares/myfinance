@@ -11,7 +11,7 @@ jest.mock('../../services/apiClient', () => {
   const STORAGE_KEY = 'reporting_currency';
 
   const readStoredReportingCurrency = () => {
-    const storedValue = localStorage.getItem(STORAGE_KEY);
+    const storedValue = globalThis.localStorage.getItem(STORAGE_KEY);
     return REPORTING_CURRENCIES.includes(storedValue as (typeof REPORTING_CURRENCIES)[number])
       ? storedValue
       : DEFAULT_REPORTING_CURRENCY;
@@ -22,7 +22,7 @@ jest.mock('../../services/apiClient', () => {
     DEFAULT_REPORTING_CURRENCY,
     readStoredReportingCurrency,
     setReportingCurrency: (currency: string) => {
-      localStorage.setItem(STORAGE_KEY, currency);
+      globalThis.localStorage.setItem(STORAGE_KEY, currency);
       return currency;
     },
     syncReportingCurrencyFromStorage: readStoredReportingCurrency,
