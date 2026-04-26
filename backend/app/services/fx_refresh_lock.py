@@ -9,6 +9,8 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
+MIN_POLL_SECONDS = 0.01
+
 
 def fx_refresh_lock_path(database_path: str) -> Path:
     return Path(f"{database_path}.fx-refresh.lock")
@@ -32,7 +34,9 @@ def acquire_fx_refresh_lock(
             yield True
             return
 
-        deadline = time.monotonic() + max(timeout_seconds, 0.0)
+        effective_timeout_seconds = max(timeout_seconds, 0.0)
+        effective_poll_seconds = poll_seconds if poll_seconds > 0.0 else MIN_POLL_SECONDS
+        deadline = time.monotonic() + effective_timeout_seconds
         while True:
             try:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -40,10 +44,11 @@ def acquire_fx_refresh_lock(
                 yield True
                 return
             except BlockingIOError:
-                if timeout_seconds <= 0.0 or time.monotonic() >= deadline:
+                now = time.monotonic()
+                if effective_timeout_seconds <= 0.0 or now >= deadline:
                     yield False
                     return
-                time.sleep(max(poll_seconds, 0.0))
+                time.sleep(min(effective_poll_seconds, deadline - now))
     finally:
         if acquired and fcntl is not None:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

@@ -15,6 +15,7 @@ from app.services.ecb_exchange_rates import ECBExchangeRateService
 from app.services.ecb_exchange_rates import FXConversionCoverageRequest
 from app.services.ecb_exchange_rates import FXConversionCoverageStatus
 from app.services.ecb_exchange_rates import FXRefreshResult
+from app.services import fx_refresh_lock
 from app.services.fx_refresh_scheduler import build_fx_refresh_scheduler
 
 
@@ -976,3 +977,72 @@ def test_ensure_conversion_coverage_returns_fetch_failure_without_raising(db_ses
     assert result.status == FXConversionCoverageStatus.FETCH_FAILED
     assert result.error == "ECB unavailable"
     assert result.missing_dates == (date(2026, 1, 1),)
+
+
+def test_fx_refresh_lock_bounds_sleep_to_remaining_timeout(tmp_path, monkeypatch):
+    current_time = 0.0
+    sleep_calls = []
+
+    class FakeFcntl:
+        LOCK_EX = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def flock(self, file_number, operation):
+            raise BlockingIOError
+
+    def fake_monotonic():
+        return current_time
+
+    def fake_sleep(seconds):
+        nonlocal current_time
+        sleep_calls.append(seconds)
+        current_time += seconds
+
+    monkeypatch.setattr(fx_refresh_lock, "fcntl", FakeFcntl())
+    monkeypatch.setattr(fx_refresh_lock.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(fx_refresh_lock.time, "sleep", fake_sleep)
+
+    with fx_refresh_lock.acquire_fx_refresh_lock(
+        str(tmp_path / "test.db"),
+        timeout_seconds=0.25,
+        poll_seconds=0.2,
+    ) as acquired:
+        assert acquired is False
+
+    assert sleep_calls == pytest.approx([0.2, 0.05])
+
+
+def test_fx_refresh_lock_uses_positive_sleep_for_non_positive_poll(tmp_path, monkeypatch):
+    current_time = 0.0
+    sleep_calls = []
+
+    class FakeFcntl:
+        LOCK_EX = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def flock(self, file_number, operation):
+            raise BlockingIOError
+
+    def fake_monotonic():
+        return current_time
+
+    def fake_sleep(seconds):
+        nonlocal current_time
+        assert seconds > 0
+        sleep_calls.append(seconds)
+        current_time += seconds
+
+    monkeypatch.setattr(fx_refresh_lock, "fcntl", FakeFcntl())
+    monkeypatch.setattr(fx_refresh_lock.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(fx_refresh_lock.time, "sleep", fake_sleep)
+
+    with fx_refresh_lock.acquire_fx_refresh_lock(
+        str(tmp_path / "test.db"),
+        timeout_seconds=0.005,
+        poll_seconds=0.0,
+    ) as acquired:
+        assert acquired is False
+
+    assert sleep_calls == pytest.approx([0.005])
