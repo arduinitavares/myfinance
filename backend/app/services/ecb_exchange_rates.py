@@ -15,7 +15,10 @@ from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction
 from app.services.currency_aliases import normalize_currency_code
 from app.services.fx_pairs import required_fx_quotes
+from app.services.fx_refresh_lock import acquire_fx_refresh_lock
 from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
+
+FX_COVERAGE_LOOKBACK_DAYS = 10
 
 
 @dataclass(frozen=True)
@@ -228,6 +231,69 @@ class ECBExchangeRateService:
         effective_window = window_days or settings.fx_startup_catchup_days
         start_date = end_date - timedelta(days=max(effective_window - 1, 0))
         return self.refresh_range(start_date, end_date)
+
+    def ensure_conversion_coverage(
+        self,
+        requests: list[FXConversionCoverageRequest],
+        *,
+        lock_timeout_seconds: float = 0.0,
+        lock_poll_seconds: float = 0.1,
+    ) -> FXConversionCoverageResult:
+        coverage = self.check_conversion_coverage(requests)
+        if coverage.status != FXConversionCoverageStatus.MISSING:
+            return coverage
+
+        start_date = min(coverage.missing_dates) - timedelta(days=FX_COVERAGE_LOOKBACK_DAYS)
+        end_date = max(coverage.missing_dates)
+
+        with acquire_fx_refresh_lock(
+            settings.database_path,
+            timeout_seconds=lock_timeout_seconds,
+            poll_seconds=lock_poll_seconds,
+        ) as acquired:
+            if not acquired:
+                return FXConversionCoverageResult(
+                    status=FXConversionCoverageStatus.LOCK_TIMEOUT,
+                    required_quotes=coverage.required_quotes,
+                    missing_dates=coverage.missing_dates,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+            coverage_after_lock = self.check_conversion_coverage(requests)
+            if coverage_after_lock.status != FXConversionCoverageStatus.MISSING:
+                return coverage_after_lock
+
+            try:
+                self.refresh_range(start_date, end_date)
+            except Exception as exc:
+                self.db.rollback()
+                return FXConversionCoverageResult(
+                    status=FXConversionCoverageStatus.FETCH_FAILED,
+                    required_quotes=coverage_after_lock.required_quotes,
+                    missing_dates=coverage_after_lock.missing_dates,
+                    start_date=start_date,
+                    end_date=end_date,
+                    error=str(exc),
+                )
+
+            coverage_after_refresh = self.check_conversion_coverage(requests)
+            if coverage_after_refresh.status == FXConversionCoverageStatus.MISSING:
+                return FXConversionCoverageResult(
+                    status=FXConversionCoverageStatus.MISSING,
+                    required_quotes=coverage_after_refresh.required_quotes,
+                    missing_dates=coverage_after_refresh.missing_dates,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.FETCHED_AND_COVERED,
+                required_quotes=coverage_after_refresh.required_quotes,
+                missing_dates=coverage_after_refresh.missing_dates,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
     def refresh_range(self, start_date: date, end_date: date) -> FXRefreshResult:
         if start_date > end_date:

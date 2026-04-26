@@ -1,9 +1,4 @@
 from contextlib import asynccontextmanager, contextmanager
-from pathlib import Path
-try:
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +15,7 @@ from .config import settings
 from .database import SessionLocal
 from .database_manager import init_database, reset_database
 from .services.ecb_exchange_rates import ECBExchangeRateService
+from .services.fx_refresh_lock import acquire_fx_refresh_lock
 from .services.fx_refresh_scheduler import build_fx_refresh_scheduler
 
 
@@ -28,27 +24,8 @@ fx_scheduler = None
 
 @contextmanager
 def _fx_refresh_lock():
-    lock_path = Path(f"{settings.database_path}.fx-refresh.lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = lock_path.open("a+", encoding="utf-8")
-    acquired = False
-
-    try:
-        if fcntl is None:
-            acquired = True
-        else:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-            except BlockingIOError:
-                yield False
-                return
-
-        yield True
-    finally:
-        if acquired and fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        lock_file.close()
+    with acquire_fx_refresh_lock(settings.database_path, timeout_seconds=0.0) as acquired:
+        yield acquired
 
 
 def _run_fx_refresh(*, reason: str, allow_historical_seed: bool) -> None:

@@ -842,3 +842,137 @@ def test_check_conversion_coverage_reports_missing_date_for_supported_pair(db_se
     assert result.status == FXConversionCoverageStatus.MISSING
     assert result.required_quotes == ("USD",)
     assert result.missing_dates == (date(2026, 1, 1),)
+
+
+def test_ensure_conversion_coverage_fetches_missing_range_with_lookback(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+    refresh_calls = []
+
+    def fake_refresh_range(start_date, end_date):
+        refresh_calls.append((start_date, end_date))
+        db_session.add(
+            FXDailyReferenceRate(
+                rate_date=date(2025, 12, 31),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.2500"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 1, 2, 8, 30, 0),
+                updated_at=datetime(2026, 1, 2, 8, 30, 0),
+            )
+        )
+        db_session.commit()
+        return FXRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            inserted_or_updated_rows=1,
+            missing_publication_days=[],
+            missing_working_days=[],
+        )
+
+    monkeypatch.setattr(service, "refresh_range", fake_refresh_range)
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.FETCHED_AND_COVERED
+    assert result.start_date == date(2025, 12, 22)
+    assert result.end_date == date(2026, 1, 1)
+    assert refresh_calls == [(date(2025, 12, 22), date(2026, 1, 1))]
+
+
+def test_ensure_conversion_coverage_rechecks_after_lock_before_fetching(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+    refresh_calls = []
+
+    @contextmanager
+    def fake_lock(*args, **kwargs):
+        db_session.add(
+            FXDailyReferenceRate(
+                rate_date=date(2025, 12, 31),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.2500"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 1, 2, 8, 30, 0),
+                updated_at=datetime(2026, 1, 2, 8, 30, 0),
+            )
+        )
+        db_session.commit()
+        yield True
+
+    monkeypatch.setattr("app.services.ecb_exchange_rates.acquire_fx_refresh_lock", fake_lock)
+    monkeypatch.setattr(service, "refresh_range", lambda start_date, end_date: refresh_calls.append((start_date, end_date)))
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.ALREADY_COVERED
+    assert refresh_calls == []
+
+
+def test_ensure_conversion_coverage_returns_lock_timeout_without_fetch(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+    refresh_calls = []
+
+    @contextmanager
+    def fake_lock(*args, **kwargs):
+        yield False
+
+    monkeypatch.setattr("app.services.ecb_exchange_rates.acquire_fx_refresh_lock", fake_lock)
+    monkeypatch.setattr(service, "refresh_range", lambda start_date, end_date: refresh_calls.append((start_date, end_date)))
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.LOCK_TIMEOUT
+    assert result.missing_dates == (date(2026, 1, 1),)
+    assert refresh_calls == []
+
+
+def test_ensure_conversion_coverage_returns_fetch_failure_without_raising(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+
+    def fake_refresh_range(start_date, end_date):
+        raise RuntimeError("ECB unavailable")
+
+    monkeypatch.setattr(service, "refresh_range", fake_refresh_range)
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.FETCH_FAILED
+    assert result.error == "ECB unavailable"
+    assert result.missing_dates == (date(2026, 1, 1),)
