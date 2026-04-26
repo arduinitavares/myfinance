@@ -10,9 +10,13 @@ import types
 import pytest
 
 from app.models.fx import FXDailyReferenceRate
+from app.models.imports import ImportSession, ImportStatementDraft, ImportTransactionDraft
 from app.models.transaction import Transaction, TransactionType
 from app.services.ecb_exchange_rates import ECBExchangeRateService
+from app.services.ecb_exchange_rates import FXConversionCoverageRequest
+from app.services.ecb_exchange_rates import FXConversionCoverageStatus
 from app.services.ecb_exchange_rates import FXRefreshResult
+from app.services import fx_refresh_lock
 from app.services.fx_refresh_scheduler import build_fx_refresh_scheduler
 
 
@@ -470,6 +474,67 @@ def test_seed_historical_rates_uses_earliest_transaction_date_when_present(db_se
     }
 
 
+def _store_import_draft_for_fx_seed(db_session, *, transaction_date: date):
+    session = ImportSession(
+        file_name="nexo.csv",
+        file_hash=f"hash-{transaction_date.isoformat()}",
+        mime_type="text/csv",
+        status="awaiting_review",
+        strategy_key="nexo_csv",
+    )
+    db_session.add(session)
+    db_session.flush()
+
+    statement = ImportStatementDraft(
+        import_session_id=session.id,
+        attempt_number=1,
+        overall_confidence=1.0,
+        review_status="awaiting_review",
+    )
+    db_session.add(statement)
+    db_session.flush()
+
+    draft = ImportTransactionDraft(
+        import_statement_draft_id=statement.id,
+        transaction_date=transaction_date,
+        source_description="Nexo card purchase",
+        signed_amount=-12.34,
+        currency="xUSD",
+        source_locator="csv:r2:NXT1001",
+        edit_source="deterministic_extracted",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+
+def test_historical_seed_start_date_uses_import_draft_when_no_committed_transactions(db_session):
+    _store_import_draft_for_fx_seed(db_session, transaction_date=date(2026, 1, 1))
+
+    service = ECBExchangeRateService(db_session)
+
+    assert service._historical_seed_start_date(date(2026, 4, 26)) == date(2026, 1, 1)
+
+
+def test_historical_seed_start_date_uses_earliest_of_committed_and_draft_dates(db_session):
+    db_session.add(
+        Transaction(
+            account_number="BE00",
+            transaction_date=date(2026, 2, 1),
+            amount=-10.0,
+            currency="EUR",
+            description="Committed transaction",
+            transaction_type=TransactionType.EXPENSE,
+            source_bank="Manual",
+        )
+    )
+    db_session.commit()
+    _store_import_draft_for_fx_seed(db_session, transaction_date=date(2026, 1, 1))
+
+    service = ECBExchangeRateService(db_session)
+
+    assert service._historical_seed_start_date(date(2026, 4, 26)) == date(2026, 1, 1)
+
+
 def test_refresh_range_upserts_existing_rows_without_duplicates(db_session, monkeypatch):
     first_run_at = datetime(2026, 4, 17, 8, 30, 0)
     second_run_at = datetime(2026, 4, 17, 9, 45, 0)
@@ -755,3 +820,314 @@ def test_lifespan_starts_startup_refresh_in_background(monkeypatch):
     assert calls[0][1] is fake_startup_refresh
     assert calls[0][2] == "fx-startup-refresh"
     assert calls[0][3] is True
+
+
+def test_check_conversion_coverage_uses_supported_alias_and_prior_rate(db_session):
+    db_session.add(
+        FXDailyReferenceRate(
+            rate_date=date(2025, 12, 31),
+            base_currency="EUR",
+            quoted_currency="USD",
+            units_per_base=Decimal("1.2500"),
+            source_name="ECB_EXR",
+            fetched_at=datetime(2026, 1, 2, 8, 30, 0),
+            updated_at=datetime(2026, 1, 2, 8, 30, 0),
+        )
+    )
+    db_session.commit()
+
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.ALREADY_COVERED
+    assert result.required_quotes == ("USD",)
+    assert result.missing_dates == ()
+
+
+def test_check_conversion_coverage_treats_identity_as_covered_without_rows(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="USD",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.ALREADY_COVERED
+    assert result.required_quotes == ()
+    assert result.missing_dates == ()
+
+
+def test_check_conversion_coverage_short_circuits_unsupported_currency(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="NEXO",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.UNSUPPORTED
+    assert result.required_quotes == ()
+    assert result.missing_dates == ()
+
+
+def test_check_conversion_coverage_ignores_unsupported_when_supported_pair_needs_fetch(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="NEXO",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 2),
+            ),
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            ),
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.MISSING
+    assert result.required_quotes == ("USD",)
+    assert result.missing_dates == (date(2026, 1, 1),)
+
+
+def test_check_conversion_coverage_reports_missing_date_for_supported_pair(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.MISSING
+    assert result.required_quotes == ("USD",)
+    assert result.missing_dates == (date(2026, 1, 1),)
+
+
+def test_ensure_conversion_coverage_fetches_missing_range_with_lookback(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+    refresh_calls = []
+
+    def fake_refresh_range(start_date, end_date):
+        refresh_calls.append((start_date, end_date))
+        db_session.add(
+            FXDailyReferenceRate(
+                rate_date=date(2025, 12, 31),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.2500"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 1, 2, 8, 30, 0),
+                updated_at=datetime(2026, 1, 2, 8, 30, 0),
+            )
+        )
+        db_session.commit()
+        return FXRefreshResult(
+            start_date=start_date,
+            end_date=end_date,
+            inserted_or_updated_rows=1,
+            missing_publication_days=[],
+            missing_working_days=[],
+        )
+
+    monkeypatch.setattr(service, "refresh_range", fake_refresh_range)
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.FETCHED_AND_COVERED
+    assert result.start_date == date(2025, 12, 22)
+    assert result.end_date == date(2026, 1, 1)
+    assert refresh_calls == [(date(2025, 12, 22), date(2026, 1, 1))]
+
+
+def test_ensure_conversion_coverage_rechecks_after_lock_before_fetching(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+    refresh_calls = []
+
+    @contextmanager
+    def fake_lock(*args, **kwargs):
+        db_session.add(
+            FXDailyReferenceRate(
+                rate_date=date(2025, 12, 31),
+                base_currency="EUR",
+                quoted_currency="USD",
+                units_per_base=Decimal("1.2500"),
+                source_name="ECB_EXR",
+                fetched_at=datetime(2026, 1, 2, 8, 30, 0),
+                updated_at=datetime(2026, 1, 2, 8, 30, 0),
+            )
+        )
+        db_session.commit()
+        yield True
+
+    monkeypatch.setattr("app.services.ecb_exchange_rates.acquire_fx_refresh_lock", fake_lock)
+    monkeypatch.setattr(service, "refresh_range", lambda start_date, end_date: refresh_calls.append((start_date, end_date)))
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.ALREADY_COVERED
+    assert refresh_calls == []
+
+
+def test_ensure_conversion_coverage_returns_lock_timeout_without_fetch(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+    refresh_calls = []
+
+    @contextmanager
+    def fake_lock(*args, **kwargs):
+        yield False
+
+    monkeypatch.setattr("app.services.ecb_exchange_rates.acquire_fx_refresh_lock", fake_lock)
+    monkeypatch.setattr(service, "refresh_range", lambda start_date, end_date: refresh_calls.append((start_date, end_date)))
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.LOCK_TIMEOUT
+    assert result.missing_dates == (date(2026, 1, 1),)
+    assert refresh_calls == []
+
+
+def test_ensure_conversion_coverage_returns_fetch_failure_without_raising(db_session, monkeypatch):
+    service = ECBExchangeRateService(db_session)
+
+    def fake_refresh_range(start_date, end_date):
+        raise RuntimeError("ECB unavailable")
+
+    monkeypatch.setattr(service, "refresh_range", fake_refresh_range)
+
+    result = service.ensure_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ],
+        lock_timeout_seconds=0.0,
+    )
+
+    assert result.status == FXConversionCoverageStatus.FETCH_FAILED
+    assert result.error == "ECB unavailable"
+    assert result.missing_dates == (date(2026, 1, 1),)
+
+
+def test_fx_refresh_lock_bounds_sleep_to_remaining_timeout(tmp_path, monkeypatch):
+    current_time = 0.0
+    sleep_calls = []
+
+    class FakeFcntl:
+        LOCK_EX = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def flock(self, file_number, operation):
+            raise BlockingIOError
+
+    def fake_monotonic():
+        return current_time
+
+    def fake_sleep(seconds):
+        nonlocal current_time
+        sleep_calls.append(seconds)
+        current_time += seconds
+
+    monkeypatch.setattr(fx_refresh_lock, "fcntl", FakeFcntl())
+    monkeypatch.setattr(fx_refresh_lock.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(fx_refresh_lock.time, "sleep", fake_sleep)
+
+    with fx_refresh_lock.acquire_fx_refresh_lock(
+        str(tmp_path / "test.db"),
+        timeout_seconds=0.25,
+        poll_seconds=0.2,
+    ) as acquired:
+        assert acquired is False
+
+    assert sleep_calls == pytest.approx([0.2, 0.05])
+
+
+def test_fx_refresh_lock_uses_positive_sleep_for_non_positive_poll(tmp_path, monkeypatch):
+    current_time = 0.0
+    sleep_calls = []
+
+    class FakeFcntl:
+        LOCK_EX = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def flock(self, file_number, operation):
+            raise BlockingIOError
+
+    def fake_monotonic():
+        return current_time
+
+    def fake_sleep(seconds):
+        nonlocal current_time
+        assert seconds > 0
+        sleep_calls.append(seconds)
+        current_time += seconds
+
+    monkeypatch.setattr(fx_refresh_lock, "fcntl", FakeFcntl())
+    monkeypatch.setattr(fx_refresh_lock.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(fx_refresh_lock.time, "sleep", fake_sleep)
+
+    with fx_refresh_lock.acquire_fx_refresh_lock(
+        str(tmp_path / "test.db"),
+        timeout_seconds=0.005,
+        poll_seconds=0.0,
+    ) as acquired:
+        assert acquired is False
+
+    assert sleep_calls == pytest.approx([0.005])

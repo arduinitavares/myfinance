@@ -28,6 +28,18 @@ def _store_rate(
     db_session.commit()
 
 
+def test_required_fx_quotes_matches_eur_base_conversion_pairs():
+    from app.services.fx_pairs import required_fx_quotes
+
+    assert required_fx_quotes(raw_currency="EUR", reporting_currency="USD", base_currency="EUR") == ("USD",)
+    assert required_fx_quotes(raw_currency="USD", reporting_currency="EUR", base_currency="EUR") == ("USD",)
+    assert required_fx_quotes(raw_currency="USD", reporting_currency="BRL", base_currency="EUR") == (
+        "BRL",
+        "USD",
+    )
+    assert required_fx_quotes(raw_currency="USD", reporting_currency="USD", base_currency="EUR") == ()
+
+
 def test_convert_identity_path_quantizes_and_marks_rate_as_same_day(db_session):
     service = CurrencyConversionService(db_session)
 

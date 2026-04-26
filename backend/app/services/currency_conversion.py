@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.fx import FXDailyReferenceRate
 from app.services.currency_aliases import normalize_currency_code
 from app.services.ecb_exchange_rates import ECBExchangeRateService
+from app.services.fx_pairs import required_fx_quotes
 from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
 
 
@@ -116,11 +117,11 @@ class CurrencyConversionService:
         )
 
     def _required_quotes(self, *, raw_currency: str, reporting_currency: str) -> tuple[str, ...]:
-        if raw_currency == self.BASE_CURRENCY:
-            return (reporting_currency,)
-        if reporting_currency == self.BASE_CURRENCY:
-            return (raw_currency,)
-        return tuple(sorted({raw_currency, reporting_currency}))
+        return required_fx_quotes(
+            raw_currency=raw_currency,
+            reporting_currency=reporting_currency,
+            base_currency=self.BASE_CURRENCY,
+        )
 
     def _latest_rate_date(
         self,

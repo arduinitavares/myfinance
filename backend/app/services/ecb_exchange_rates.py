@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from enum import Enum
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -11,7 +12,53 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.fx import FXDailyReferenceRate
+from app.models.imports import ImportTransactionDraft
 from app.models.transaction import Transaction
+from app.services.currency_aliases import normalize_currency_code
+from app.services.fx_pairs import required_fx_quotes
+from app.services.fx_refresh_lock import acquire_fx_refresh_lock
+from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
+
+FX_COVERAGE_LOOKBACK_DAYS = 10
+
+
+@dataclass(frozen=True)
+class FXConversionCoverageRequest:
+    raw_currency: str
+    reporting_currency: str
+    transaction_date: date
+
+
+class FXConversionCoverageStatus(str, Enum):
+    ALREADY_COVERED = "already_covered"
+    FETCHED_AND_COVERED = "fetched_and_covered"
+    UNSUPPORTED = "unsupported"
+    MISSING = "missing"
+    FETCH_FAILED = "fetch_failed"
+    LOCK_TIMEOUT = "lock_timeout"
+
+
+@dataclass(frozen=True)
+class FXConversionCoverageResult:
+    status: FXConversionCoverageStatus
+    required_quotes: tuple[str, ...] = ()
+    missing_dates: tuple[date, ...] = ()
+    start_date: date | None = None
+    end_date: date | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class _FXConversionCoverageInput:
+    transaction_date: date
+    required_quotes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _FXConversionCoverageBatch:
+    inputs: tuple[_FXConversionCoverageInput, ...]
+    has_unsupported: bool
+
 
 @dataclass(frozen=True)
 class FXRefreshResult:
@@ -26,6 +73,7 @@ class ECBExchangeRateService:
     SOURCE_NAME = "ECB_EXR"
     BASE_CURRENCY = "EUR"
     SUPPORTED_QUOTES = ("USD", "BRL")
+    SUPPORTED_CURRENCIES = frozenset(ALLOWED_REPORTING_CURRENCIES)
     ECB_XML_NAMESPACE = {"ecb": "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"}
 
     def __init__(
@@ -49,6 +97,49 @@ class ECBExchangeRateService:
         ).scalar_one_or_none()
         return existing_id is not None
 
+    def check_conversion_coverage(
+        self,
+        requests: list[FXConversionCoverageRequest],
+    ) -> FXConversionCoverageResult:
+        coverage_batch = self._coverage_inputs(requests)
+        coverage_inputs = coverage_batch.inputs
+        has_supported_non_identity_request = any(
+            coverage_input.required_quotes
+            for coverage_input in coverage_inputs
+        )
+        if coverage_batch.has_unsupported and not has_supported_non_identity_request:
+            return FXConversionCoverageResult(status=FXConversionCoverageStatus.UNSUPPORTED)
+
+        required_quotes = tuple(
+            sorted({quote for coverage_input in coverage_inputs for quote in coverage_input.required_quotes})
+        )
+        missing_dates = tuple(
+            sorted(
+                {
+                    coverage_input.transaction_date
+                    for coverage_input in coverage_inputs
+                    if coverage_input.required_quotes
+                    and self._latest_covered_rate_date(
+                        transaction_date=coverage_input.transaction_date,
+                        required_quotes=coverage_input.required_quotes,
+                    )
+                    is None
+                }
+            )
+        )
+
+        if missing_dates:
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.MISSING,
+                required_quotes=required_quotes,
+                missing_dates=missing_dates,
+            )
+
+        return FXConversionCoverageResult(
+            status=FXConversionCoverageStatus.ALREADY_COVERED,
+            required_quotes=required_quotes,
+        )
+
     def earliest_covered_date(self) -> date | None:
         covered_dates = (
             select(FXDailyReferenceRate.rate_date.label("rate_date"))
@@ -63,6 +154,62 @@ class ECBExchangeRateService:
         )
         return self.db.execute(
             select(func.min(covered_dates.c.rate_date))
+        ).scalar_one_or_none()
+
+    def _coverage_inputs(
+        self,
+        requests: list[FXConversionCoverageRequest],
+    ) -> _FXConversionCoverageBatch:
+        coverage_inputs: list[_FXConversionCoverageInput] = []
+        has_unsupported = False
+        for request in requests:
+            normalized_raw_currency = normalize_currency_code(request.raw_currency)
+            normalized_reporting_currency = normalize_currency_code(request.reporting_currency)
+
+            if (
+                normalized_raw_currency not in self.SUPPORTED_CURRENCIES
+                or normalized_reporting_currency not in self.SUPPORTED_CURRENCIES
+            ):
+                has_unsupported = True
+                continue
+
+            coverage_inputs.append(
+                _FXConversionCoverageInput(
+                    transaction_date=request.transaction_date,
+                    required_quotes=required_fx_quotes(
+                        raw_currency=normalized_raw_currency,
+                        reporting_currency=normalized_reporting_currency,
+                        base_currency=self.BASE_CURRENCY,
+                    ),
+                )
+            )
+
+        return _FXConversionCoverageBatch(
+            inputs=tuple(coverage_inputs),
+            has_unsupported=has_unsupported,
+        )
+
+    def _latest_covered_rate_date(
+        self,
+        *,
+        transaction_date: date,
+        required_quotes: tuple[str, ...],
+    ) -> date | None:
+        if not required_quotes:
+            return transaction_date
+
+        return self.db.execute(
+            select(FXDailyReferenceRate.rate_date)
+            .where(
+                FXDailyReferenceRate.source_name == self.SOURCE_NAME,
+                FXDailyReferenceRate.base_currency == self.BASE_CURRENCY,
+                FXDailyReferenceRate.rate_date <= transaction_date,
+                FXDailyReferenceRate.quoted_currency.in_(required_quotes),
+            )
+            .group_by(FXDailyReferenceRate.rate_date)
+            .having(func.count(func.distinct(FXDailyReferenceRate.quoted_currency)) == len(required_quotes))
+            .order_by(FXDailyReferenceRate.rate_date.desc())
+            .limit(1)
         ).scalar_one_or_none()
 
     def latest_publication_day_on_or_before(self, day: date) -> date:
@@ -102,6 +249,69 @@ class ECBExchangeRateService:
         start_date = end_date - timedelta(days=max(effective_window - 1, 0))
         return self.refresh_range(start_date, end_date)
 
+    def ensure_conversion_coverage(
+        self,
+        requests: list[FXConversionCoverageRequest],
+        *,
+        lock_timeout_seconds: float = 0.0,
+        lock_poll_seconds: float = 0.1,
+    ) -> FXConversionCoverageResult:
+        coverage = self.check_conversion_coverage(requests)
+        if coverage.status != FXConversionCoverageStatus.MISSING:
+            return coverage
+
+        start_date = min(coverage.missing_dates) - timedelta(days=FX_COVERAGE_LOOKBACK_DAYS)
+        end_date = max(coverage.missing_dates)
+
+        with acquire_fx_refresh_lock(
+            settings.database_path,
+            timeout_seconds=lock_timeout_seconds,
+            poll_seconds=lock_poll_seconds,
+        ) as acquired:
+            if not acquired:
+                return FXConversionCoverageResult(
+                    status=FXConversionCoverageStatus.LOCK_TIMEOUT,
+                    required_quotes=coverage.required_quotes,
+                    missing_dates=coverage.missing_dates,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+            coverage_after_lock = self.check_conversion_coverage(requests)
+            if coverage_after_lock.status != FXConversionCoverageStatus.MISSING:
+                return coverage_after_lock
+
+            try:
+                self.refresh_range(start_date, end_date)
+            except Exception as exc:
+                self.db.rollback()
+                return FXConversionCoverageResult(
+                    status=FXConversionCoverageStatus.FETCH_FAILED,
+                    required_quotes=coverage_after_lock.required_quotes,
+                    missing_dates=coverage_after_lock.missing_dates,
+                    start_date=start_date,
+                    end_date=end_date,
+                    error=str(exc),
+                )
+
+            coverage_after_refresh = self.check_conversion_coverage(requests)
+            if coverage_after_refresh.status == FXConversionCoverageStatus.MISSING:
+                return FXConversionCoverageResult(
+                    status=FXConversionCoverageStatus.MISSING,
+                    required_quotes=coverage_after_refresh.required_quotes,
+                    missing_dates=coverage_after_refresh.missing_dates,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.FETCHED_AND_COVERED,
+                required_quotes=coverage_after_refresh.required_quotes,
+                missing_dates=coverage_after_refresh.missing_dates,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
     def refresh_range(self, start_date: date, end_date: date) -> FXRefreshResult:
         if start_date > end_date:
             raise ValueError("start_date must be on or before end_date")
@@ -129,8 +339,16 @@ class ECBExchangeRateService:
         earliest_transaction_date = self.db.execute(
             select(func.min(Transaction.transaction_date))
         ).scalar_one_or_none()
-        if earliest_transaction_date is not None:
-            return earliest_transaction_date
+        earliest_import_draft_date = self.db.execute(
+            select(func.min(ImportTransactionDraft.transaction_date))
+        ).scalar_one_or_none()
+        candidate_dates = [
+            candidate_date
+            for candidate_date in (earliest_transaction_date, earliest_import_draft_date)
+            if candidate_date is not None
+        ]
+        if candidate_dates:
+            return min(candidate_dates)
 
         try:
             return end_date.replace(year=end_date.year - settings.fx_seed_years)

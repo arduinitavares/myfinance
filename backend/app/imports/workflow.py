@@ -21,7 +21,11 @@ from app.schemas.imports import build_import_transaction_draft_response_payload
 from app.schemas.transaction import TransactionCreate
 from app.services.anomaly_detection_service import AnomalyDetectionService
 from app.services.currency_conversion import CurrencyConversionService, DisplayMoney
-from app.services.ecb_exchange_rates import ECBExchangeRateService
+from app.services.ecb_exchange_rates import (
+    ECBExchangeRateService,
+    FXConversionCoverageRequest,
+    FXConversionCoverageStatus,
+)
 from app.services.statistics_service import StatisticsService
 from app.routers.suggestions import category_suggestion_service
 
@@ -34,6 +38,14 @@ from .state_machine import ImportSessionStatus, assert_transition_allowed
 
 logger = logging.getLogger(__name__)
 FX_BACKFILL_TIMEOUT_SECONDS = 10.0
+FX_REVIEW_COVERAGE_TIMEOUT_SECONDS = 10.0
+FX_REVIEW_LOCK_TIMEOUT_SECONDS = 15.0
+FX_REVIEW_LOCK_POLL_SECONDS = 0.1
+FX_REVIEW_WARNING_STATUSES = {
+    FXConversionCoverageStatus.FETCH_FAILED,
+    FXConversionCoverageStatus.LOCK_TIMEOUT,
+    FXConversionCoverageStatus.MISSING,
+}
 
 
 class ImportWorkflowError(Exception):
@@ -166,6 +178,11 @@ class ImportWorkflowService:
         statement = self._latest_statement_draft(session.id, attempt_number) if attempt_number else None
         transactions = self._statement_transactions(statement.id) if statement is not None else []
         issues = self._issues_for_attempt(session.id, attempt_number) if attempt_number else []
+        self._ensure_fx_coverage_for_review(
+            session_id=session.id,
+            transactions=transactions,
+            reporting_currency=reporting_currency,
+        )
         conversion_service = CurrencyConversionService(self.db)
 
         return {
@@ -403,6 +420,55 @@ class ImportWorkflowService:
             .order_by(ImportTransactionDraft.id.asc())
             .all()
         )
+
+    def _ensure_fx_coverage_for_review(
+        self,
+        *,
+        session_id: int,
+        transactions: list[ImportTransactionDraft],
+        reporting_currency: str,
+    ) -> None:
+        requests = [
+            FXConversionCoverageRequest(
+                raw_currency=transaction.currency,
+                reporting_currency=reporting_currency,
+                transaction_date=transaction.transaction_date,
+            )
+            for transaction in transactions
+            if transaction.transaction_date is not None
+        ]
+        if not requests:
+            return
+
+        try:
+            fx_service = ECBExchangeRateService(self.db, timeout=FX_REVIEW_COVERAGE_TIMEOUT_SECONDS)
+            result = fx_service.ensure_conversion_coverage(
+                requests,
+                lock_timeout_seconds=FX_REVIEW_LOCK_TIMEOUT_SECONDS,
+                lock_poll_seconds=FX_REVIEW_LOCK_POLL_SECONDS,
+            )
+        except Exception as exc:
+            self.db.rollback()
+            logger.warning(
+                "Import review FX coverage failed for session %s: error=%s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            return
+
+        if result.status in FX_REVIEW_WARNING_STATUSES:
+            logger.warning(
+                "Import review FX coverage unavailable for session %s: status=%s range=%s..%s "
+                "quotes=%s missing_dates=%s error=%s",
+                session_id,
+                result.status.value,
+                result.start_date,
+                result.end_date,
+                result.required_quotes,
+                result.missing_dates,
+                result.error,
+            )
 
     def _issues_for_attempt(self, session_id: int, attempt_number: int) -> list[ImportIssueModel]:
         return (
