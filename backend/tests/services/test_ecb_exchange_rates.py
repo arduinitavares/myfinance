@@ -12,6 +12,8 @@ import pytest
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction, TransactionType
 from app.services.ecb_exchange_rates import ECBExchangeRateService
+from app.services.ecb_exchange_rates import FXConversionCoverageRequest
+from app.services.ecb_exchange_rates import FXConversionCoverageStatus
 from app.services.ecb_exchange_rates import FXRefreshResult
 from app.services.fx_refresh_scheduler import build_fx_refresh_scheduler
 
@@ -755,3 +757,88 @@ def test_lifespan_starts_startup_refresh_in_background(monkeypatch):
     assert calls[0][1] is fake_startup_refresh
     assert calls[0][2] == "fx-startup-refresh"
     assert calls[0][3] is True
+
+
+def test_check_conversion_coverage_uses_supported_alias_and_prior_rate(db_session):
+    db_session.add(
+        FXDailyReferenceRate(
+            rate_date=date(2025, 12, 31),
+            base_currency="EUR",
+            quoted_currency="USD",
+            units_per_base=Decimal("1.2500"),
+            source_name="ECB_EXR",
+            fetched_at=datetime(2026, 1, 2, 8, 30, 0),
+            updated_at=datetime(2026, 1, 2, 8, 30, 0),
+        )
+    )
+    db_session.commit()
+
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.ALREADY_COVERED
+    assert result.required_quotes == ("USD",)
+    assert result.missing_dates == ()
+
+
+def test_check_conversion_coverage_treats_identity_as_covered_without_rows(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="USD",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.ALREADY_COVERED
+    assert result.required_quotes == ()
+    assert result.missing_dates == ()
+
+
+def test_check_conversion_coverage_short_circuits_unsupported_currency(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="NEXO",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.UNSUPPORTED
+    assert result.required_quotes == ()
+    assert result.missing_dates == ()
+
+
+def test_check_conversion_coverage_reports_missing_date_for_supported_pair(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            )
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.MISSING
+    assert result.required_quotes == ("USD",)
+    assert result.missing_dates == (date(2026, 1, 1),)

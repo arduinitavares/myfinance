@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from enum import Enum
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -12,6 +13,42 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import Transaction
+from app.services.currency_aliases import normalize_currency_code
+from app.services.fx_pairs import required_fx_quotes
+from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
+
+
+@dataclass(frozen=True)
+class FXConversionCoverageRequest:
+    raw_currency: str
+    reporting_currency: str
+    transaction_date: date
+
+
+class FXConversionCoverageStatus(str, Enum):
+    ALREADY_COVERED = "already_covered"
+    FETCHED_AND_COVERED = "fetched_and_covered"
+    UNSUPPORTED = "unsupported"
+    MISSING = "missing"
+    FETCH_FAILED = "fetch_failed"
+    LOCK_TIMEOUT = "lock_timeout"
+
+
+@dataclass(frozen=True)
+class FXConversionCoverageResult:
+    status: FXConversionCoverageStatus
+    required_quotes: tuple[str, ...] = ()
+    missing_dates: tuple[date, ...] = ()
+    start_date: date | None = None
+    end_date: date | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class _FXConversionCoverageInput:
+    transaction_date: date
+    required_quotes: tuple[str, ...]
+
 
 @dataclass(frozen=True)
 class FXRefreshResult:
@@ -26,6 +63,7 @@ class ECBExchangeRateService:
     SOURCE_NAME = "ECB_EXR"
     BASE_CURRENCY = "EUR"
     SUPPORTED_QUOTES = ("USD", "BRL")
+    SUPPORTED_CURRENCIES = frozenset(ALLOWED_REPORTING_CURRENCIES)
     ECB_XML_NAMESPACE = {"ecb": "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"}
 
     def __init__(
@@ -49,6 +87,44 @@ class ECBExchangeRateService:
         ).scalar_one_or_none()
         return existing_id is not None
 
+    def check_conversion_coverage(
+        self,
+        requests: list[FXConversionCoverageRequest],
+    ) -> FXConversionCoverageResult:
+        coverage_inputs = self._coverage_inputs(requests)
+        if coverage_inputs is None:
+            return FXConversionCoverageResult(status=FXConversionCoverageStatus.UNSUPPORTED)
+
+        required_quotes = tuple(
+            sorted({quote for coverage_input in coverage_inputs for quote in coverage_input.required_quotes})
+        )
+        missing_dates = tuple(
+            sorted(
+                {
+                    coverage_input.transaction_date
+                    for coverage_input in coverage_inputs
+                    if coverage_input.required_quotes
+                    and self._latest_covered_rate_date(
+                        transaction_date=coverage_input.transaction_date,
+                        required_quotes=coverage_input.required_quotes,
+                    )
+                    is None
+                }
+            )
+        )
+
+        if missing_dates:
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.MISSING,
+                required_quotes=required_quotes,
+                missing_dates=missing_dates,
+            )
+
+        return FXConversionCoverageResult(
+            status=FXConversionCoverageStatus.ALREADY_COVERED,
+            required_quotes=required_quotes,
+        )
+
     def earliest_covered_date(self) -> date | None:
         covered_dates = (
             select(FXDailyReferenceRate.rate_date.label("rate_date"))
@@ -63,6 +139,57 @@ class ECBExchangeRateService:
         )
         return self.db.execute(
             select(func.min(covered_dates.c.rate_date))
+        ).scalar_one_or_none()
+
+    def _coverage_inputs(
+        self,
+        requests: list[FXConversionCoverageRequest],
+    ) -> tuple[_FXConversionCoverageInput, ...] | None:
+        coverage_inputs: list[_FXConversionCoverageInput] = []
+        for request in requests:
+            normalized_raw_currency = normalize_currency_code(request.raw_currency)
+            normalized_reporting_currency = normalize_currency_code(request.reporting_currency)
+
+            if (
+                normalized_raw_currency not in self.SUPPORTED_CURRENCIES
+                or normalized_reporting_currency not in self.SUPPORTED_CURRENCIES
+            ):
+                return None
+
+            coverage_inputs.append(
+                _FXConversionCoverageInput(
+                    transaction_date=request.transaction_date,
+                    required_quotes=required_fx_quotes(
+                        raw_currency=normalized_raw_currency,
+                        reporting_currency=normalized_reporting_currency,
+                        base_currency=self.BASE_CURRENCY,
+                    ),
+                )
+            )
+
+        return tuple(coverage_inputs)
+
+    def _latest_covered_rate_date(
+        self,
+        *,
+        transaction_date: date,
+        required_quotes: tuple[str, ...],
+    ) -> date | None:
+        if not required_quotes:
+            return transaction_date
+
+        return self.db.execute(
+            select(FXDailyReferenceRate.rate_date)
+            .where(
+                FXDailyReferenceRate.source_name == self.SOURCE_NAME,
+                FXDailyReferenceRate.base_currency == self.BASE_CURRENCY,
+                FXDailyReferenceRate.rate_date <= transaction_date,
+                FXDailyReferenceRate.quoted_currency.in_(required_quotes),
+            )
+            .group_by(FXDailyReferenceRate.rate_date)
+            .having(func.count(func.distinct(FXDailyReferenceRate.quoted_currency)) == len(required_quotes))
+            .order_by(FXDailyReferenceRate.rate_date.desc())
+            .limit(1)
         ).scalar_one_or_none()
 
     def latest_publication_day_on_or_before(self, day: date) -> date:
