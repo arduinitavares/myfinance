@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { AlertTriangle, Eye, Check, X, Clock, TrendingUp, Shield, Filter } from 'lucide-react';
+import React, { useCallback, useState, useEffect } from 'react';
+import { AlertTriangle, Eye, Check, X, Clock, TrendingUp, Shield } from 'lucide-react';
 import { anomalyService, Anomaly, AnomalyPage } from '../../../services/anomalyService';
 import { Pagination } from '../../common/Pagination';
 import { formatDisplayDate } from '../../../utils/date';
@@ -21,11 +21,7 @@ export const AnomalyList: React.FC<AnomalyListProps> = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [reviewNotes, setReviewNotes] = useState('');
 
-  useEffect(() => {
-    loadAnomalies();
-  }, [currentPage, filters]);
-
-  const loadAnomalies = async () => {
+  const loadAnomalies = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await anomalyService.getAnomalies(currentPage, 20, filters);
@@ -37,7 +33,11 @@ export const AnomalyList: React.FC<AnomalyListProps> = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentPage, filters]);
+
+  useEffect(() => {
+    loadAnomalies();
+  }, [loadAnomalies]);
 
   const handleStatusUpdate = async (anomalyId: number, status: string) => {
     try {

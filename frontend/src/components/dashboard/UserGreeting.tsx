@@ -63,7 +63,7 @@ export const UserGreeting: React.FC = () => {
   const location = useLocation();
   const currentView = location.pathname.split('/')[1];
   
-  const { greeting, timeOfDay } = useMemo(() => {
+  const greeting = useMemo(() => {
     const now = new Date();
     const hour = now.getHours();
     
@@ -81,9 +81,7 @@ export const UserGreeting: React.FC = () => {
     // Get a random greeting from the appropriate time of day
     const variations = greetingVariations[timeOfDay];
     const randomIndex = Math.floor(Math.random() * variations.length);
-    const greeting = variations[randomIndex];
-    
-    return { greeting, timeOfDay };
+    return variations[randomIndex];
   }, []);
   
 

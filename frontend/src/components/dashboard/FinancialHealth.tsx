@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { financialHealthService } from '../../services/financialHealthService';
 import { FinancialHealthScore, FinancialHealthHistory, Recommendation } from '../../types/transaction';
 import HealthScoreGauge from './health/HealthScoreGauge';
@@ -19,7 +19,7 @@ const FinancialHealth: React.FC<FinancialHealthProps> = ({ className }) => {
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<string>('6m');
 
-  const fetchHealthData = async (signal?: AbortSignal) => {
+  const fetchHealthData = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(true);
       const data = await financialHealthService.getFinancialHealthScore(undefined, signal);
@@ -34,9 +34,9 @@ const FinancialHealth: React.FC<FinancialHealthProps> = ({ className }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchHistoryData = async (signal?: AbortSignal) => {
+  const fetchHistoryData = useCallback(async (signal?: AbortSignal) => {
     try {
       const months = period === '3m' ? 3 : 
                     period === '6m' ? 6 : 
@@ -54,9 +54,9 @@ const FinancialHealth: React.FC<FinancialHealthProps> = ({ className }) => {
       console.error('Error fetching health history:', err);
       setError('Failed to load financial health history');
     }
-  };
+  }, [period]);
 
-  const fetchRecommendations = async (signal?: AbortSignal) => {
+  const fetchRecommendations = useCallback(async (signal?: AbortSignal) => {
     try {
       const data = await financialHealthService.getRecommendations(true, signal);
       setRecommendations(data);
@@ -68,9 +68,9 @@ const FinancialHealth: React.FC<FinancialHealthProps> = ({ className }) => {
       console.error('Error fetching recommendations:', err);
       setError('Failed to load recommendations');
     }
-  };
+  }, []);
 
-  const handleRecommendationUpdate = async (id: number, isCompleted: boolean) => {
+  const handleRecommendationUpdate = useCallback(async (id: number, isCompleted: boolean) => {
     try {
       await financialHealthService.updateRecommendation(id, isCompleted);
       
@@ -80,7 +80,7 @@ const FinancialHealth: React.FC<FinancialHealthProps> = ({ className }) => {
       console.error('Error updating recommendation:', err);
       setError('Failed to update recommendation');
     }
-  };
+  }, [fetchRecommendations]);
 
   const handlePeriodChange = (newPeriod: string) => {
     setPeriod(newPeriod);
@@ -91,13 +91,13 @@ const FinancialHealth: React.FC<FinancialHealthProps> = ({ className }) => {
     fetchHealthData(controller.signal);
     fetchRecommendations(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [fetchHealthData, fetchRecommendations]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchHistoryData(controller.signal);
     return () => controller.abort();
-  }, [period]);
+  }, [fetchHistoryData]);
 
   if (loading && !healthData) {
     return (

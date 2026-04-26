@@ -165,7 +165,7 @@ const ScenarioManager: React.FC<ScenarioManagerProps> = ({ scenarios, onScenario
   const handleRecomputeBaseScenario = async () => {
     try {
       setIsRecomputing(true);
-      const result = await recomputeBaseScenario();
+      await recomputeBaseScenario();
       onScenariosChange();
       showNotification('success', 'Parameters Updated', `Base scenario parameters have been updated with the latest financial data.`);
     } catch (error) {

@@ -26,18 +26,10 @@ const ResultsVisualization: React.FC<ResultsVisualizationProps> = ({
     projectionData,
     isCalculating,
     isLoading: isLoadingResults,
-    error,
     calculateResults: handleCalculateProjection,
     formatCurrency,
     getSummaryData
   } = useProjectionResults(selectedScenarioId);
-
-  // Simple toast notification function for displaying errors
-  const showToast = (message: string) => {
-    if (error) {
-      alert(message);
-    }
-  };
 
   // Handle scenario selection
   const handleScenarioChange = (value: string) => {
