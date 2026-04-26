@@ -10,6 +10,7 @@ import types
 import pytest
 
 from app.models.fx import FXDailyReferenceRate
+from app.models.imports import ImportSession, ImportStatementDraft, ImportTransactionDraft
 from app.models.transaction import Transaction, TransactionType
 from app.services.ecb_exchange_rates import ECBExchangeRateService
 from app.services.ecb_exchange_rates import FXConversionCoverageRequest
@@ -471,6 +472,67 @@ def test_seed_historical_rates_uses_earliest_transaction_date_when_present(db_se
         (date(2026, 4, 17), "BRL"),
         (date(2026, 4, 17), "USD"),
     }
+
+
+def _store_import_draft_for_fx_seed(db_session, *, transaction_date: date):
+    session = ImportSession(
+        file_name="nexo.csv",
+        file_hash=f"hash-{transaction_date.isoformat()}",
+        mime_type="text/csv",
+        status="awaiting_review",
+        strategy_key="nexo_csv",
+    )
+    db_session.add(session)
+    db_session.flush()
+
+    statement = ImportStatementDraft(
+        import_session_id=session.id,
+        attempt_number=1,
+        overall_confidence=1.0,
+        review_status="awaiting_review",
+    )
+    db_session.add(statement)
+    db_session.flush()
+
+    draft = ImportTransactionDraft(
+        import_statement_draft_id=statement.id,
+        transaction_date=transaction_date,
+        source_description="Nexo card purchase",
+        signed_amount=-12.34,
+        currency="xUSD",
+        source_locator="csv:r2:NXT1001",
+        edit_source="deterministic_extracted",
+    )
+    db_session.add(draft)
+    db_session.commit()
+
+
+def test_historical_seed_start_date_uses_import_draft_when_no_committed_transactions(db_session):
+    _store_import_draft_for_fx_seed(db_session, transaction_date=date(2026, 1, 1))
+
+    service = ECBExchangeRateService(db_session)
+
+    assert service._historical_seed_start_date(date(2026, 4, 26)) == date(2026, 1, 1)
+
+
+def test_historical_seed_start_date_uses_earliest_of_committed_and_draft_dates(db_session):
+    db_session.add(
+        Transaction(
+            account_number="BE00",
+            transaction_date=date(2026, 2, 1),
+            amount=-10.0,
+            currency="EUR",
+            description="Committed transaction",
+            transaction_type=TransactionType.EXPENSE,
+            source_bank="Manual",
+        )
+    )
+    db_session.commit()
+    _store_import_draft_for_fx_seed(db_session, transaction_date=date(2026, 1, 1))
+
+    service = ECBExchangeRateService(db_session)
+
+    assert service._historical_seed_start_date(date(2026, 4, 26)) == date(2026, 1, 1)
 
 
 def test_refresh_range_upserts_existing_rows_without_duplicates(db_session, monkeypatch):

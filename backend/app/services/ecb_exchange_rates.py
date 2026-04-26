@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.fx import FXDailyReferenceRate
+from app.models.imports import ImportTransactionDraft
 from app.models.transaction import Transaction
 from app.services.currency_aliases import normalize_currency_code
 from app.services.fx_pairs import required_fx_quotes
@@ -322,8 +323,16 @@ class ECBExchangeRateService:
         earliest_transaction_date = self.db.execute(
             select(func.min(Transaction.transaction_date))
         ).scalar_one_or_none()
-        if earliest_transaction_date is not None:
-            return earliest_transaction_date
+        earliest_import_draft_date = self.db.execute(
+            select(func.min(ImportTransactionDraft.transaction_date))
+        ).scalar_one_or_none()
+        candidate_dates = [
+            candidate_date
+            for candidate_date in (earliest_transaction_date, earliest_import_draft_date)
+            if candidate_date is not None
+        ]
+        if candidate_dates:
+            return min(candidate_dates)
 
         try:
             return end_date.replace(year=end_date.year - settings.fx_seed_years)
