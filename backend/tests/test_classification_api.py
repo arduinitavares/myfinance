@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from qdrant_client.http import models
 
 from app.config import settings as app_settings
 from app.database import SessionLocal
@@ -12,11 +13,23 @@ from app.models.classification import ClassificationSession, ClassificationSessi
 from app.models.fx import FXDailyReferenceRate
 from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
 from app.main import app
+from app.routers.suggestions import category_suggestion_service
 from app.services.classifier_providers import ClassificationProposal
 from app.services import classification_session_service
 
 
 client = TestClient(app)
+
+
+def _clear_vector_collections():
+    category_suggestion_service.client.recreate_collection(
+        collection_name="expense_embeddings",
+        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    )
+    category_suggestion_service.client.recreate_collection(
+        collection_name="income_embeddings",
+        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +44,7 @@ def _enable_runtime_stub_provider(monkeypatch):
 def _reset_database():
     response = client.post("/debug/reset-database")
     assert response.status_code == 200
+    _clear_vector_collections()
 
 
 def _restore_transaction(
@@ -783,6 +797,51 @@ def test_apply_batch_skips_already_transfer_classified_candidates(monkeypatch):
     assert refreshed_uncategorized.income_category is None
     assert refreshed_classified is not None
     assert refreshed_classified.transfer_category == TransferCategory.INTERNAL_TRANSFER
+
+
+def test_apply_batch_can_apply_every_high_confidence_match(monkeypatch):
+    _reset_database()
+    seed = _restore_transaction(description="Uber UBER * PENDING | SAO PAULO | BRA")
+    matches = [
+        _restore_transaction(description=f"Uber UBER * PENDING | SAO PAULO | BRA {index}", amount=-2.0 - index)
+        for index in range(4)
+    ]
+
+    session = client.post("/classification/sessions", json={"transaction_id": seed["id"]}).json()
+    accept_response = client.post(
+        f"/classification/sessions/{session['id']}/accept",
+        json={
+            "transaction_type": TransactionType.EXPENSE.value,
+            "category": ExpenseCategory.TRANSPORTATION.value,
+            "classification_source": "assistant",
+            "confirm_type_change": False,
+            "recurrence": {"is_recurrent": False},
+        },
+    )
+    assert accept_response.status_code == 200
+
+    monkeypatch.setattr(
+        classification_session_service.category_suggestion_service,
+        "similarity_scores",
+        lambda source_text, candidate_texts: [0.95 for _ in candidate_texts],
+    )
+
+    preview_response = client.post(f"/classification/sessions/{session['id']}/similar-preview")
+
+    assert preview_response.status_code == 200
+    preview_ids = [match["transaction_id"] for match in preview_response.json()["matches"]]
+    expected_ids = [match["id"] for match in matches]
+    assert preview_ids == expected_ids
+
+    apply_response = client.post(
+        f"/classification/sessions/{session['id']}/apply-batch",
+        json={"transaction_ids": preview_ids},
+    )
+
+    assert apply_response.status_code == 200
+    payload = apply_response.json()
+    assert payload["applied_transaction_ids"] == expected_ids
+    assert payload["skipped_transaction_ids"] == []
 
 
 def test_get_transactions_category_filter_matches_transfer_category():

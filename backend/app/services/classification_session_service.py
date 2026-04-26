@@ -36,7 +36,6 @@ from ..routers.suggestions import category_suggestion_service
 from ..services.classifier_providers import OpenAICompatibleClassifierProvider, StubClassifierProvider
 from ..services.currency_conversion import CurrencyConversionService
 from .classification_similarity import (
-    SIMILARITY_PREVIEW_LIMIT,
     SIMILARITY_THRESHOLD,
     has_conflicting_family,
     shares_source_bank,
@@ -583,7 +582,7 @@ class ClassificationSessionService:
             if score >= SIMILARITY_THRESHOLD
         ]
         candidates.sort(key=lambda item: (-item[1], item[0].id))
-        return candidates[:SIMILARITY_PREVIEW_LIMIT]
+        return candidates
 
     @classmethod
     def _build_provider(cls, provider_name: str | None = None, model_name: str | None = None):

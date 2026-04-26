@@ -3,7 +3,6 @@ from ..utils.text_normalization import normalize_for_matching
 
 
 SIMILARITY_THRESHOLD = 0.8
-SIMILARITY_PREVIEW_LIMIT = 3
 
 TRANSFER_LIKE_TERMS = (
     "p2p",

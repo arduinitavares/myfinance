@@ -755,7 +755,7 @@ def test_category_suggestion_service_skips_transfer_transactions_for_training_an
     monkeypatch.setattr(
         category_suggestion_service.model,
         "encode",
-        lambda text: np.array([0.1, 0.2, 0.3], dtype=float),
+        lambda text, show_progress_bar=False: np.array([0.1, 0.2, 0.3], dtype=float),
     )
     monkeypatch.setattr(
         category_suggestion_service.client,
