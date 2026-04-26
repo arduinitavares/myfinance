@@ -889,6 +889,29 @@ def test_check_conversion_coverage_short_circuits_unsupported_currency(db_sessio
     assert result.missing_dates == ()
 
 
+def test_check_conversion_coverage_ignores_unsupported_when_supported_pair_needs_fetch(db_session):
+    service = ECBExchangeRateService(db_session)
+
+    result = service.check_conversion_coverage(
+        [
+            FXConversionCoverageRequest(
+                raw_currency="NEXO",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 2),
+            ),
+            FXConversionCoverageRequest(
+                raw_currency="xUSD",
+                reporting_currency="EUR",
+                transaction_date=date(2026, 1, 1),
+            ),
+        ]
+    )
+
+    assert result.status == FXConversionCoverageStatus.MISSING
+    assert result.required_quotes == ("USD",)
+    assert result.missing_dates == (date(2026, 1, 1),)
+
+
 def test_check_conversion_coverage_reports_missing_date_for_supported_pair(db_session):
     service = ECBExchangeRateService(db_session)
 

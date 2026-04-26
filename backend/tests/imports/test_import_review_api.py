@@ -577,6 +577,59 @@ def test_get_review_payload_fetches_missing_supported_fx_before_display(db_sessi
     assert {request.raw_currency for request in coverage_calls[0]["requests"]} == {"xUSD", "EUR"}
 
 
+def test_get_review_payload_fetches_supported_fx_in_mixed_unsupported_batch(db_session, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.ecb_exchange_rates.ECBExchangeRateService._fetch_series",
+        lambda self, start_date, end_date: {
+            date(2026, 4, 10): {"USD": Decimal("1.2500")},
+        },
+    )
+
+    session = _upload_nexo_csv()
+    statement = db_session.query(ImportStatementDraft).filter_by(import_session_id=session["id"]).one()
+    db_session.add(
+        ImportTransactionDraft(
+            import_statement_draft_id=statement.id,
+            transaction_date=date(2026, 4, 10),
+            source_description="Nexo loyalty reward",
+            signed_amount=3.21,
+            currency="NEXO",
+            source_locator="csv:r5:NXT1004",
+            edit_source="deterministic_extracted",
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        f"/imports/{session['id']}",
+        headers={"X-Reporting-Currency": "EUR"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    transactions_by_locator = {
+        transaction["source_locator"]: transaction
+        for transaction in payload["transactions"]
+    }
+    xusd_transaction = transactions_by_locator["csv:r2:NXT1001"]
+    nexo_transaction = transactions_by_locator["csv:r5:NXT1004"]
+
+    assert xusd_transaction["currency"] == "xUSD"
+    assert xusd_transaction["display_amount"] == -9.87
+    assert xusd_transaction["display_currency"] == "EUR"
+    assert xusd_transaction["display_fx_rate"] == 0.8
+    assert xusd_transaction["display_rate_date"] == "2026-04-10"
+    assert xusd_transaction["display_is_available"] is True
+    assert xusd_transaction["display_unavailable_reason"] is None
+    assert nexo_transaction["currency"] == "NEXO"
+    assert nexo_transaction["display_amount"] is None
+    assert nexo_transaction["display_currency"] == "EUR"
+    assert nexo_transaction["display_fx_rate"] is None
+    assert nexo_transaction["display_rate_date"] is None
+    assert nexo_transaction["display_is_available"] is False
+    assert nexo_transaction["display_unavailable_reason"] == "unsupported_currency"
+
+
 def test_get_review_payload_keeps_missing_rate_when_review_fx_coverage_fetch_fails(db_session, monkeypatch):
     class FakeECBExchangeRateService:
         def __init__(self, db, *, timeout=30.0):

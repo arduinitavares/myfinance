@@ -55,6 +55,12 @@ class _FXConversionCoverageInput:
 
 
 @dataclass(frozen=True)
+class _FXConversionCoverageBatch:
+    inputs: tuple[_FXConversionCoverageInput, ...]
+    has_unsupported: bool
+
+
+@dataclass(frozen=True)
 class FXRefreshResult:
     start_date: date
     end_date: date
@@ -95,8 +101,13 @@ class ECBExchangeRateService:
         self,
         requests: list[FXConversionCoverageRequest],
     ) -> FXConversionCoverageResult:
-        coverage_inputs = self._coverage_inputs(requests)
-        if coverage_inputs is None:
+        coverage_batch = self._coverage_inputs(requests)
+        coverage_inputs = coverage_batch.inputs
+        has_supported_non_identity_request = any(
+            coverage_input.required_quotes
+            for coverage_input in coverage_inputs
+        )
+        if coverage_batch.has_unsupported and not has_supported_non_identity_request:
             return FXConversionCoverageResult(status=FXConversionCoverageStatus.UNSUPPORTED)
 
         required_quotes = tuple(
@@ -148,8 +159,9 @@ class ECBExchangeRateService:
     def _coverage_inputs(
         self,
         requests: list[FXConversionCoverageRequest],
-    ) -> tuple[_FXConversionCoverageInput, ...] | None:
+    ) -> _FXConversionCoverageBatch:
         coverage_inputs: list[_FXConversionCoverageInput] = []
+        has_unsupported = False
         for request in requests:
             normalized_raw_currency = normalize_currency_code(request.raw_currency)
             normalized_reporting_currency = normalize_currency_code(request.reporting_currency)
@@ -158,7 +170,8 @@ class ECBExchangeRateService:
                 normalized_raw_currency not in self.SUPPORTED_CURRENCIES
                 or normalized_reporting_currency not in self.SUPPORTED_CURRENCIES
             ):
-                return None
+                has_unsupported = True
+                continue
 
             coverage_inputs.append(
                 _FXConversionCoverageInput(
@@ -171,7 +184,10 @@ class ECBExchangeRateService:
                 )
             )
 
-        return tuple(coverage_inputs)
+        return _FXConversionCoverageBatch(
+            inputs=tuple(coverage_inputs),
+            has_unsupported=has_unsupported,
+        )
 
     def _latest_covered_rate_date(
         self,
