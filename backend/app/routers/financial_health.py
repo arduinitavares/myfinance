@@ -1,130 +1,173 @@
+"""Module for backend app routers financial_health."""
+
+import calendar
+import logging
+from datetime import UTC, date, datetime
+from typing import Annotated, Any, NoReturn
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import date, datetime
-import logging
 
 from ..database import get_db
-from ..models.transaction import Transaction
 from ..models.financial_health import FinancialHealth, FinancialRecommendation
+from ..models.transaction import Transaction
 from ..schemas import financial_health as schemas
 from ..services.financial_health_service import FinancialHealthService
 
 # Set up logging
-logger = logging.getLogger(__name__)
+logger: Any = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(
-    prefix="/financial-health",
-    tags=["financial-health"]
-)
+router: Any = APIRouter(prefix="/financial-health", tags=["financial-health"])
+type DbSession = Annotated[Session, Depends(get_db)]
+type TargetDateQuery = Annotated[
+    str | None,
+    Query(None, description="Target date (YYYY-MM-DD)"),
+]
+type HistoryMonthsQuery = Annotated[
+    int,
+    Query(12, gt=0, le=60, description="Number of months of history to retrieve"),
+]
+type ActiveOnlyQuery = Annotated[
+    bool,
+    Query(True, description="Only return active (not completed) recommendations"),
+]
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _parse_target_date(target_date: str | None) -> date | None:
+    if target_date is None:
+        return None
+    try:
+        return date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Use YYYY-MM-DD",
+        ) from exc
+
+
+def _resolve_health_score_date(db: Session, target_date: str | None) -> date:
+    parsed_date = _parse_target_date(target_date)
+    if parsed_date is not None:
+        return parsed_date
+
+    latest_transaction = (
+        db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
+    )
+    if latest_transaction:
+        return latest_transaction.transaction_date
+    return _today()
+
+
+def _month_end(value: date) -> date:
+    return value.replace(day=calendar.monthrange(value.year, value.month)[1])
+
+
+def _raise_not_found(detail: str) -> NoReturn:
+    raise HTTPException(status_code=404, detail=detail)
+
 
 @router.get("/score", response_model=schemas.FinancialHealth)
 def get_health_score(
-    target_date: Optional[str] = Query(None, description="Target date (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get the financial health score for a specific date.
+    target_date: TargetDateQuery,
+    db: DbSession,
+) -> FinancialHealth:
+    """Get the financial health score for a specific date.
+
     If no date is provided, uses the date from the latest available transaction.
     """
     try:
-        if target_date:
-            date_obj = datetime.strptime(target_date, "%Y-%m-%d").date()
-        else:
-            latest_transaction = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
-            date_obj = latest_transaction.transaction_date if latest_transaction else date.today()
-            
+        date_obj = _resolve_health_score_date(db, target_date)
         health_score = FinancialHealthService.calculate_health_score(db, date_obj)
-        return health_score
-    except Exception as e:
-        logger.error(f"Error calculating financial health score: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error calculating financial health score")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return health_score
+
 
 @router.get("/history", response_model=schemas.FinancialHealthHistory)
 def get_health_history(
-    months: int = Query(12, gt=0, le=60, description="Number of months of history to retrieve"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get historical financial health scores for the specified number of months.
-    """
+    months: HistoryMonthsQuery,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Get historical financial health scores for the specified number of months."""
     try:
         history = FinancialHealthService.get_health_history(db, months)
-        return history
-    except Exception as e:
-        logger.error(f"Error retrieving financial health history: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Error retrieving financial health history")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return history
 
-@router.get("/recommendations", response_model=List[schemas.Recommendation])
+
+@router.get("/recommendations", response_model=list[schemas.Recommendation])
 def get_recommendations(
-    active_only: bool = Query(True, description="Only return active (not completed) recommendations"),
-    db: Session = Depends(get_db)
-):
-    """
-    Get personalized financial recommendations.
-    """
+    active_only: ActiveOnlyQuery,
+    db: DbSession,
+) -> list[FinancialRecommendation]:
+    """Get personalized financial recommendations."""
     try:
         recommendations = FinancialHealthService.get_recommendations(db, active_only)
-        return recommendations
-    except Exception as e:
-        logger.error(f"Error retrieving recommendations: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Error retrieving recommendations")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return recommendations
 
-@router.patch("/recommendations/{recommendation_id}", response_model=schemas.Recommendation)
+
+@router.patch(
+    "/recommendations/{recommendation_id}", response_model=schemas.Recommendation
+)
 def update_recommendation(
     recommendation_id: int,
     update_data: schemas.RecommendationUpdate,
-    db: Session = Depends(get_db)
-):
-    """
-    Update a recommendation's completion status.
-    """
+    db: DbSession,
+) -> FinancialRecommendation:
+    """Update a recommendation's completion status."""
     try:
         updated_recommendation = FinancialHealthService.update_recommendation(
             db, recommendation_id, update_data.is_completed
         )
-        
-        if not updated_recommendation:
-            raise HTTPException(status_code=404, detail="Recommendation not found")
-            
-        return updated_recommendation
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating recommendation: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Error updating recommendation")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not updated_recommendation:
+        _raise_not_found("Recommendation not found")
+    return updated_recommendation
+
 
 @router.post("/recalculate", response_model=schemas.FinancialHealth)
 def recalculate_health_score(
-    target_date: Optional[str] = Query(None, description="Target date (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
-):
-    """
-    Force recalculation of the financial health score for a specific date.
+    target_date: TargetDateQuery,
+    db: DbSession,
+) -> FinancialHealth:
+    """Force recalculation of the financial health score for a specific date.
+
     If no date is provided, uses the current month.
     """
     try:
-        if target_date:
-            date_obj = datetime.strptime(target_date, "%Y-%m-%d").date()
-        else:
-            date_obj = date.today()
-            
+        date_obj = _parse_target_date(target_date) or _today()
+
         # Delete existing score for the month if it exists
         month_start = date_obj.replace(day=1)
-        month_end = date_obj.replace(day=31)  # This will work even for months with fewer days
-        
+        month_end = _month_end(date_obj)
+
         db.query(FinancialHealth).filter(
-            FinancialHealth.date >= month_start,
-            FinancialHealth.date <= month_end
+            FinancialHealth.date >= month_start, FinancialHealth.date <= month_end
         ).delete()
-        
+
         db.commit()
-        
+
         # Calculate new score
         health_score = FinancialHealthService.calculate_health_score(db, date_obj)
-        return health_score
-    except Exception as e:
-        logger.error(f"Error recalculating financial health score: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error recalculating financial health score")
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return health_score

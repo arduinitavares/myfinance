@@ -1,15 +1,20 @@
+"""Module for backend app imports csv_support."""
+
 from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from .contracts import ExtractedTransaction, RawEvidence
 
-CSV_CHARSETS = ("utf-8-sig", "utf-8", "latin-1")
-HEADER_SCAN_LIMIT = 20
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
-BELFIUS_HEADER = [
+CSV_CHARSETS: Any = ("utf-8-sig", "utf-8", "latin-1")
+HEADER_SCAN_LIMIT: Any = 20
+
+BELFIUS_HEADER: Any = [
     "Rekening",
     "Boekingsdatum",
     "Rekeninguittrekselnummer",
@@ -27,7 +32,7 @@ BELFIUS_HEADER = [
     "Mededelingen",
 ]
 
-BEOBANK_COMPACT_HEADER = [
+BEOBANK_COMPACT_HEADER: Any = [
     "Datum",
     "Waardedatum",
     "Debet",
@@ -36,7 +41,7 @@ BEOBANK_COMPACT_HEADER = [
     "Saldo",
 ]
 
-BEOBANK_DEBIT_CREDIT_HEADER = [
+BEOBANK_DEBIT_CREDIT_HEADER: Any = [
     "Date",
     "Debit",
     "Credit",
@@ -44,7 +49,7 @@ BEOBANK_DEBIT_CREDIT_HEADER = [
     "Balance",
 ]
 
-NEXO_HEADER = [
+NEXO_HEADER: Any = [
     "Transaction",
     "Type",
     "Input Currency",
@@ -67,6 +72,7 @@ def _normalize_encoding_name(encoding: str) -> str:
 
 
 def decode_csv_bytes(payload: bytes) -> tuple[str, str]:
+    """Handle decode csv bytes."""
     for encoding in CSV_CHARSETS:
         try:
             return payload.decode(encoding), _normalize_encoding_name(encoding)
@@ -76,11 +82,13 @@ def decode_csv_bytes(payload: bytes) -> tuple[str, str]:
 
 
 def read_csv_text(file_path: str | Path) -> tuple[str, str]:
+    """Read csv text."""
     payload = Path(file_path).read_bytes()
     return decode_csv_bytes(payload)
 
 
 def normalize_header_cells(cells: Sequence[str]) -> list[str]:
+    """Handle normalize header cells."""
     return [cell.strip().strip('"') for cell in cells]
 
 
@@ -91,6 +99,7 @@ def find_header_row(
     expected_header: Sequence[str],
     max_lines: int = HEADER_SCAN_LIMIT,
 ) -> tuple[int, list[str]] | None:
+    """Handle find header row."""
     for index, line in enumerate(lines[:max_lines]):
         cells = normalize_header_cells(next(csv.reader([line], delimiter=delimiter)))
         if cells == list(expected_header):
@@ -104,11 +113,16 @@ def build_dict_rows(
     delimiter: str,
     header_row_index: int,
 ) -> list[tuple[int, dict[str, str]]]:
+    """Build dict rows."""
     reader = csv.DictReader(lines[header_row_index:], delimiter=delimiter)
     return [
         (
             header_row_index + 2 + offset,
-            {key.strip(): (value or "").strip() for key, value in row.items() if key is not None},
+            {
+                key.strip(): (value or "").strip()
+                for key, value in row.items()
+                if key is not None
+            },
         )
         for offset, row in enumerate(reader)
     ]
@@ -119,6 +133,7 @@ def build_csv_raw_evidence(
     raw_text: str,
     snippets: Iterable[dict],
 ) -> RawEvidence:
+    """Build csv raw evidence."""
     return RawEvidence(
         text_blocks=[
             {
@@ -135,6 +150,7 @@ def build_csv_raw_evidence(
 def statement_period_from_transactions(
     transactions: Sequence[ExtractedTransaction],
 ) -> dict[str, str | None]:
+    """Handle statement period from transactions."""
     dates = [transaction.transaction_date for transaction in transactions]
     return {
         "statement_period_start": min(dates) if dates else None,

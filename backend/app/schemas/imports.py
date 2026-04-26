@@ -1,13 +1,19 @@
+"""Module for backend app schemas imports."""
+
 from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .transaction import serialize_display_money
+from app.models.imports import ImportTransactionDraft
+
 from ..services.currency_conversion import DisplayMoney
+from .transaction import serialize_display_money
 
 
 class ImportSessionResponse(BaseModel):
+    """Represent import session response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -28,6 +34,8 @@ class ImportSessionResponse(BaseModel):
 
 
 class ImportStatementDraftResponse(BaseModel):
+    """Represent import statement draft response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -43,6 +51,8 @@ class ImportStatementDraftResponse(BaseModel):
 
 
 class ImportTransactionDraftResponse(BaseModel):
+    """Represent import transaction draft response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -74,6 +84,8 @@ class ImportTransactionDraftResponse(BaseModel):
 
 
 class ImportIssueResponse(BaseModel):
+    """Represent import issue response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -86,6 +98,8 @@ class ImportIssueResponse(BaseModel):
 
 
 class ImportReviewResponse(BaseModel):
+    """Represent import review response."""
+
     model_config = ConfigDict(from_attributes=True)
 
     session: ImportSessionResponse
@@ -96,12 +110,16 @@ class ImportReviewResponse(BaseModel):
 
 
 class ImportUploadConflictResponse(BaseModel):
+    """Represent import upload conflict response."""
+
     message: str
     file_hash: str
     existing_session: ImportSessionResponse
 
 
 class ImportBatchItemResponse(BaseModel):
+    """Represent import batch item response."""
+
     id: int
     filename: str
     file_hash: str | None = None
@@ -118,6 +136,8 @@ class ImportBatchItemResponse(BaseModel):
 
 
 class ImportBatchRunResponse(BaseModel):
+    """Represent import batch run response."""
+
     id: int
     folder_path: str
     status: str
@@ -133,10 +153,11 @@ class ImportBatchRunResponse(BaseModel):
 
 
 def build_import_transaction_draft_response_payload(
-    transaction_draft: Any,
+    transaction_draft: ImportTransactionDraft,
     display_money: DisplayMoney,
-) -> dict[str, Any]:
-    payload = {
+) -> dict[str, object]:
+    """Build import transaction draft response payload."""
+    payload: dict[str, object] = {
         "id": transaction_draft.id,
         "transaction_date": transaction_draft.transaction_date,
         "source_description": transaction_draft.source_description,

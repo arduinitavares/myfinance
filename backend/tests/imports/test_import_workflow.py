@@ -1,28 +1,71 @@
+"""Module for backend tests imports test_import_workflow."""
+
+from __future__ import annotations
+
 import json
 from datetime import date
+from typing import TYPE_CHECKING, Never
 
 import pytest
-
 from app.config import settings
-from app.imports.artifacts import ArtifactStore
-from app.imports.contracts import ExtractionResult, ExtractedTransaction, RawEvidence
 from app.imports import workflow as import_workflow_module
+from app.imports.artifacts import ArtifactStore
+from app.imports.contracts import ExtractedTransaction, ExtractionResult, RawEvidence
 from app.imports.pipeline import ImportPipelineService
 from app.imports.state_machine import ImportSessionStatus
-from app.imports.workflow import ImportApprovalConflictError, ImportSessionStateError, ImportWorkflowService
-from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft, ImportTransactionDraft
-from app.models.transaction import ExpenseCategory, IncomeCategory, Transaction, TransactionType, TransferCategory
+from app.imports.workflow import (
+    ImportApprovalConflictError,
+    ImportSessionStateError,
+    ImportWorkflowService,
+)
+from app.models.imports import (
+    ImportIssue,
+    ImportSession,
+    ImportStatementDraft,
+    ImportTransactionDraft,
+)
+from app.models.transaction import (
+    ExpenseCategory,
+    Transaction,
+    TransactionType,
+    TransferCategory,
+)
 from app.services.ecb_exchange_rates import FXRefreshResult
 from tests.imports.fixtures.belfius_account_pages import SANITIZED_BELFIUS_PAGE_TEXTS
 from tests.imports.fixtures.belfius_card_pages import SANITIZED_BELFIUS_CARD_PAGE_TEXTS
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
-def _successful_result(session_id: int, attempt_number: int) -> tuple[RawEvidence, ExtractionResult]:
+    from sqlalchemy.orm import Session
+
+EXPECTED_BEOBANK_TRANSACTION_COUNT: int = 5
+EXPECTED_BELFIUS_TRANSACTION_COUNT: int = 4
+EXPECTED_NEXO_TRANSACTION_COUNT: int = 3
+EXPECTED_RETRY_ATTEMPT_COUNT: int = 2
+BEOBANK_FIRST_AMOUNT: float = -18.19
+
+
+def _require_import_session(session: ImportSession | None) -> ImportSession:
+    assert session is not None
+    return session
+
+
+def _successful_result(
+    session_id: int, attempt_number: int
+) -> tuple[RawEvidence, ExtractionResult]:
     return (
         RawEvidence(
-            text_blocks=[{"page_number": 1, "raw_text": "BEOBANK\nMASTERCARD\n", "lines": ["BEOBANK", "MASTERCARD"]}],
+            text_blocks=[
+                {
+                    "page_number": 1,
+                    "raw_text": "BEOBANK\nMASTERCARD\n",
+                    "lines": ["BEOBANK", "MASTERCARD"],
+                }
+            ],
             ocr_blocks=[],
             snippets=[],
         ),
@@ -75,55 +118,81 @@ def _nexo_successful_result(
 
 def _minimal_nexo_header_bytes() -> bytes:
     return (
-        "Transaction,Type,Input Currency,Input Amount,Output Currency,Output Amount,USD Equivalent,"
-        "Fee,Fee Currency,Details,Date / Time (UTC),normalizedDisplayDetails\n"
-    ).encode("utf-8")
+        b"Transaction,Type,Input Currency,Input Amount,Output Currency,"
+        b"Output Amount,USD Equivalent,"
+        b"Fee,Fee Currency,Details,Date / Time (UTC),normalizedDisplayDetails\n"
+    )
 
 
-def test_extract_detected_session_moves_pdf_statement_to_awaiting_review_and_persists_drafts(
-    db_session, monkeypatch
-):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+def test_extract_detected_session_moves_pdf_to_review_and_persists_drafts(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify extracted pdf statement persists review drafts."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BEOBANK_PAGE_TEXTS,
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
 
-    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(
+        session.id
+    )
 
     assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
     assert extracted_session.extractor_id == "beobank_mastercard_pdf_v1"
-    assert extracted_session.raw_artifact_ref == f"imports/{session.id}/attempts/1/evidence/raw.json"
+    assert (
+        extracted_session.raw_artifact_ref
+        == f"imports/{session.id}/attempts/1/evidence/raw.json"
+    )
 
     statement_draft = db_session.query(ImportStatementDraft).one()
     assert statement_draft.import_session_id == session.id
     assert statement_draft.attempt_number == 1
+    assert statement_draft.statement_period_start is not None
+    assert statement_draft.statement_period_end is not None
     assert statement_draft.statement_period_start.isoformat() == "2025-12-15"
     assert statement_draft.statement_period_end.isoformat() == "2026-01-14"
     assert statement_draft.card_number_hint == "xxxx xxxx xxxx 1111"
     assert statement_draft.currency == "EUR"
-    assert statement_draft.transaction_count == 5
+    assert statement_draft.transaction_count == EXPECTED_BEOBANK_TRANSACTION_COUNT
     assert statement_draft.review_status == "awaiting_review"
 
-    transaction_drafts = db_session.query(ImportTransactionDraft).order_by(ImportTransactionDraft.id).all()
-    assert len(transaction_drafts) == 5
+    transaction_drafts = (
+        db_session.query(ImportTransactionDraft)
+        .order_by(ImportTransactionDraft.id)
+        .all()
+    )
+    assert len(transaction_drafts) == EXPECTED_BEOBANK_TRANSACTION_COUNT
+    assert transaction_drafts[0].transaction_date is not None
     assert transaction_drafts[0].transaction_date.isoformat() == "2025-12-20"
-    assert transaction_drafts[0].source_description == "MERCADO EXTRA-1776 PRAIA GRANDE BR"
-    assert transaction_drafts[0].signed_amount == -18.19
+    assert (
+        transaction_drafts[0].source_description == "MERCADO EXTRA-1776 PRAIA GRANDE BR"
+    )
+    assert transaction_drafts[0].signed_amount == BEOBANK_FIRST_AMOUNT
     assert transaction_drafts[0].currency == "EUR"
     assert transaction_drafts[0].debit_credit == "debit"
     assert transaction_drafts[0].source_locator == "pdf:p2:l4"
     assert transaction_drafts[0].edit_source == "deterministic_extracted"
+    assert transaction_drafts[0].field_confidence is not None
+    assert transaction_drafts[0].raw_fields is not None
     assert json.loads(transaction_drafts[0].field_confidence) == {}
     assert json.loads(transaction_drafts[0].raw_fields)["source_locator"] == "pdf:p2:l4"
 
     assert db_session.query(ImportIssue).count() == 0
 
     attempt_dir = settings.imports_dir / str(session.id) / "attempts" / "1"
-    raw_payload = json.loads((attempt_dir / "evidence" / "raw.json").read_text(encoding="utf-8"))
+    raw_payload = json.loads(
+        (attempt_dir / "evidence" / "raw.json").read_text(encoding="utf-8")
+    )
     normalized_payload = json.loads(
-        (attempt_dir / "normalized" / "extraction_result.json").read_text(encoding="utf-8")
+        (attempt_dir / "normalized" / "extraction_result.json").read_text(
+            encoding="utf-8"
+        )
     )
 
     assert raw_payload["text_blocks"][0] == {
@@ -138,18 +207,36 @@ def test_extract_detected_session_moves_pdf_statement_to_awaiting_review_and_per
         ],
     }
     assert normalized_payload["extractor_id"] == "beobank_mastercard_pdf_v1"
-    assert normalized_payload["raw_artifact_ref"] == f"imports/{session.id}/attempts/1/evidence/raw.json"
+    assert (
+        normalized_payload["raw_artifact_ref"]
+        == f"imports/{session.id}/attempts/1/evidence/raw.json"
+    )
     assert not (attempt_dir / "ai" / "request.json").exists()
     assert not (attempt_dir / "ai" / "response.json").exists()
 
-    meta_payload = json.loads((settings.imports_dir / str(session.id) / "meta.json").read_text(encoding="utf-8"))
+    meta_payload = json.loads(
+        (settings.imports_dir / str(session.id) / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert meta_payload["state"] == ImportSessionStatus.AWAITING_REVIEW.value
     assert meta_payload["attempt_count"] == 1
 
 
-def test_extract_detected_session_routes_nexo_csv_and_persists_proposal_fields(db_session):
+def test_extract_detected_session_routes_nexo_csv_and_persists_proposal_fields(
+    db_session: Session,
+) -> None:
+    """Verify extract detected session routes nexo csv and persists proposal fields."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -186,7 +273,10 @@ def test_extract_detected_session_routes_nexo_csv_and_persists_proposal_fields(d
 
     assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
     assert extracted_session.extractor_id == "nexo_csv_v1"
-    assert extracted_session.raw_artifact_ref == f"imports/{session.id}/attempts/1/evidence/raw.json"
+    assert (
+        extracted_session.raw_artifact_ref
+        == f"imports/{session.id}/attempts/1/evidence/raw.json"
+    )
 
     statement_draft = db_session.query(ImportStatementDraft).one()
     assert statement_draft.account_number_hint == "NEXO"
@@ -200,9 +290,21 @@ def test_extract_detected_session_routes_nexo_csv_and_persists_proposal_fields(d
     assert transaction_draft.source_locator == "csv:r2:NXT_PURCHASE_1"
 
 
-def test_extract_detected_session_skips_upload_suggestions_for_transfer_drafts(db_session, monkeypatch):
+def test_extract_detected_session_skips_upload_suggestions_for_transfer_drafts(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify extract detected session skips upload suggestions for transfer drafts."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -224,7 +326,7 @@ def test_extract_detected_session_skips_upload_suggestions_for_transfer_drafts(d
 
     monkeypatch.setattr(
         "app.imports.enrichment.category_suggestion_service.suggest_category",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("transfer drafts should not trigger category suggestions")
         ),
     )
@@ -246,11 +348,21 @@ def test_extract_detected_session_skips_upload_suggestions_for_transfer_drafts(d
     assert transaction_draft.proposed_transfer_category == "Internal Transfer"
 
 
-def test_extract_detected_session_applies_upload_suggestions_to_unclassified_expense_drafts(
-    db_session, monkeypatch
-):
+def test_extract_detected_session_applies_upload_suggestions_to_expenses(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify upload suggestions apply to expense drafts."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -272,7 +384,7 @@ def test_extract_detected_session_applies_upload_suggestions_to_unclassified_exp
 
     monkeypatch.setattr(
         "app.imports.enrichment.category_suggestion_service.suggest_category",
-        lambda description, amount, transaction_type: [("Groceries", 0.91)],
+        lambda _description, _amount, _transaction_type: [("Groceries", 0.91)],
     )
 
     session, _ = ImportPipelineService(db_session).start_upload(
@@ -292,9 +404,20 @@ def test_extract_detected_session_applies_upload_suggestions_to_unclassified_exp
     assert transaction_draft.classification_source == "deterministic_nexo_csv"
 
 
-def test_approve_session_commits_proposed_transfer_fields_for_nexo_csv(db_session):
+def test_approve_session_commits_proposed_transfer_fields_for_nexo_csv(
+    db_session: Session,
+) -> None:
+    """Verify approve session commits proposed transfer fields for nexo csv."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -335,9 +458,21 @@ def test_approve_session_commits_proposed_transfer_fields_for_nexo_csv(db_sessio
     assert transaction.classification_source == "deterministic_nexo_csv"
 
 
-def test_approve_session_runs_post_commit_hooks_for_classified_expense_rows(db_session, monkeypatch):
+def test_approve_session_runs_post_commit_hooks_for_classified_expense_rows(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session runs post commit hooks for classified expense rows."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -366,7 +501,9 @@ def test_approve_session_runs_post_commit_hooks_for_classified_expense_rows(db_s
     )
     monkeypatch.setattr(
         "app.imports.workflow.AnomalyDetectionService.detect_anomalies",
-        lambda db, transaction_ids, force_redetection=False: anomaly_calls.append(list(transaction_ids)),
+        lambda _db, transaction_ids, _force_redetection=False: anomaly_calls.append(
+            list(transaction_ids)
+        ),
     )
 
     session, _ = ImportPipelineService(db_session).start_upload(
@@ -386,9 +523,21 @@ def test_approve_session_runs_post_commit_hooks_for_classified_expense_rows(db_s
     assert anomaly_calls == [[committed_transaction.id]]
 
 
-def test_approve_session_backfills_fx_after_other_post_commit_hooks_when_history_gap_exists(db_session, monkeypatch):
+def test_approve_session_backfills_fx_after_other_post_commit_hooks(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve backfills fx after other post commit hooks."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -411,18 +560,18 @@ def test_approve_session_backfills_fx_after_other_post_commit_hooks_when_history
     hook_calls = []
 
     class FakeECBExchangeRateService:
-        def __init__(self, db, *, timeout):
+        def __init__(self, db: Session, *, timeout: float) -> None:
             assert db is db_session
             assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
 
-        def earliest_covered_date(self):
+        def earliest_covered_date(self) -> date | None:
             return date(2026, 3, 10)
 
-        def latest_publication_day_on_or_before(self, day):
+        def latest_publication_day_on_or_before(self, day: date) -> date:
             assert day == date(2026, 3, 8)
             return date(2026, 3, 6)
 
-        def refresh_range(self, start_date, end_date):
+        def refresh_range(self, start_date: date, end_date: date) -> FXRefreshResult:
             hook_calls.append(("fx_backfill", start_date, end_date))
             return FXRefreshResult(
                 start_date=start_date,
@@ -438,7 +587,7 @@ def test_approve_session_backfills_fx_after_other_post_commit_hooks_when_history
     )
     monkeypatch.setattr(
         "app.imports.workflow.AnomalyDetectionService.detect_anomalies",
-        lambda db, transaction_ids, force_redetection=False: hook_calls.append(
+        lambda _db, transaction_ids, _force_redetection=False: hook_calls.append(
             ("anomaly_detection", list(transaction_ids))
         ),
     )
@@ -470,9 +619,21 @@ def test_approve_session_backfills_fx_after_other_post_commit_hooks_when_history
     ]
 
 
-def test_approve_session_skips_fx_backfill_when_dates_are_already_covered(db_session, monkeypatch):
+def test_approve_session_skips_fx_backfill_when_dates_are_already_covered(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session skips fx backfill when dates are already covered."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -495,19 +656,21 @@ def test_approve_session_skips_fx_backfill_when_dates_are_already_covered(db_ses
     refresh_calls = []
 
     class FakeECBExchangeRateService:
-        def __init__(self, db, *, timeout):
+        def __init__(self, db: Session, *, timeout: float) -> None:
             assert db is db_session
             assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
 
-        def earliest_covered_date(self):
+        def earliest_covered_date(self) -> date | None:
             return date(2026, 3, 1)
 
-        def latest_publication_day_on_or_before(self, day):
-            raise AssertionError("covered dates should skip backfill window calculation")
+        def latest_publication_day_on_or_before(self, _day: date) -> Never:
+            msg = "covered dates should skip backfill window calculation"
+            raise AssertionError(msg)
 
-        def refresh_range(self, start_date, end_date):
+        def refresh_range(self, start_date: date, end_date: date) -> Never:
             refresh_calls.append((start_date, end_date))
-            raise AssertionError("refresh_range should not be called when FX dates are already covered")
+            msg = "refresh_range should not be called when FX dates are already covered"
+            raise AssertionError(msg)
 
     monkeypatch.setattr(
         import_workflow_module,
@@ -532,9 +695,21 @@ def test_approve_session_skips_fx_backfill_when_dates_are_already_covered(db_ses
     assert refresh_calls == []
 
 
-def test_approve_session_uses_ecb_service_today_for_empty_fx_table_backfill(db_session, monkeypatch):
+def test_approve_session_uses_ecb_service_today_for_empty_fx_table_backfill(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session uses ecb service today for empty fx table backfill."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -557,21 +732,21 @@ def test_approve_session_uses_ecb_service_today_for_empty_fx_table_backfill(db_s
     refresh_calls = []
 
     class FakeECBExchangeRateService:
-        def __init__(self, db, *, timeout):
+        def __init__(self, db: Session, *, timeout: float) -> None:
             assert db is db_session
             assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
 
-        def earliest_covered_date(self):
+        def earliest_covered_date(self) -> date | None:
             return None
 
-        def latest_publication_day_on_or_before(self, day):
+        def latest_publication_day_on_or_before(self, day: date) -> date:
             assert day == date(2026, 4, 13)
             return date(2026, 4, 13)
 
-        def _today(self):
+        def _today(self) -> date:
             return date(2026, 4, 17)
 
-        def refresh_range(self, start_date, end_date):
+        def refresh_range(self, start_date: date, end_date: date) -> FXRefreshResult:
             refresh_calls.append((start_date, end_date))
             return FXRefreshResult(
                 start_date=start_date,
@@ -604,9 +779,21 @@ def test_approve_session_uses_ecb_service_today_for_empty_fx_table_backfill(db_s
     assert refresh_calls == [(date(2026, 4, 13), date(2026, 4, 17))]
 
 
-def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkeypatch):
+def test_approve_session_commits_even_when_fx_backfill_raises(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session commits even when fx backfill raises."""
+
     class StubNexoExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _nexo_successful_result(
                 int(session_id),
                 attempt_number,
@@ -629,25 +816,25 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
     original_rollback = db_session.rollback
     rollback_calls = []
 
-    def tracked_rollback():
+    def tracked_rollback() -> None:
         rollback_calls.append("rollback")
         return original_rollback()
 
     monkeypatch.setattr(db_session, "rollback", tracked_rollback)
 
     class FakeECBExchangeRateService:
-        def __init__(self, db, *, timeout):
+        def __init__(self, db: Session, *, timeout: float) -> None:
             assert db is db_session
             assert timeout == import_workflow_module.FX_BACKFILL_TIMEOUT_SECONDS
 
-        def earliest_covered_date(self):
+        def earliest_covered_date(self) -> date | None:
             return date(2026, 3, 10)
 
-        def latest_publication_day_on_or_before(self, day):
+        def latest_publication_day_on_or_before(self, day: date) -> date:
             assert day == date(2026, 3, 8)
             return date(2026, 3, 6)
 
-        def refresh_range(self, start_date, end_date):
+        def refresh_range(self, _start_date: date, _end_date: date) -> Never:
             db_session.add(
                 ImportIssue(
                     import_session_id=session.id,
@@ -659,7 +846,8 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
                     transaction_ref="csv:r2:NXT_FEE_1",
                 )
             )
-            raise RuntimeError("fx refresh failed")
+            msg = "fx refresh failed"
+            raise RuntimeError(msg)
 
     monkeypatch.setattr(
         import_workflow_module,
@@ -681,7 +869,9 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
     approved_session = ImportWorkflowService(db_session).approve_session(session.id)
 
     committed_transaction = db_session.query(Transaction).one()
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     assert approved_session.status == ImportSessionStatus.COMMITTED.value
     assert persisted_session.status == ImportSessionStatus.COMMITTED.value
     assert committed_transaction.import_session_id == session.id
@@ -690,17 +880,24 @@ def test_approve_session_commits_even_when_fx_backfill_raises(db_session, monkey
     assert db_session.query(ImportIssue).count() == 0
 
 
-def test_extract_detected_session_accepts_belfius_account_pdf_and_commits_with_belfius_hints(
-    db_session, monkeypatch
-):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BELFIUS_PAGE_TEXTS)
+def test_extract_detected_session_accepts_belfius_account_pdf(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify Belfius account pdf commits with Belfius hints."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BELFIUS_PAGE_TEXTS,
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
 
-    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(
+        session.id
+    )
 
     assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
     assert extracted_session.extractor_id == "belfius_account_pdf_v1"
@@ -708,29 +905,36 @@ def test_extract_detected_session_accepts_belfius_account_pdf_and_commits_with_b
     statement_draft = db_session.query(ImportStatementDraft).one()
     assert statement_draft.account_number_hint == "BE46 0636 5194 6836"
     assert statement_draft.card_number_hint is None
-    assert statement_draft.transaction_count == 4
+    assert statement_draft.transaction_count == EXPECTED_BELFIUS_TRANSACTION_COUNT
 
     approved_session = ImportWorkflowService(db_session).approve_session(session.id)
     assert approved_session.status == ImportSessionStatus.COMMITTED.value
 
     committed = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
-    assert len(committed) == 4
+    assert len(committed) == EXPECTED_BELFIUS_TRANSACTION_COUNT
     assert committed[0].source_bank == "Belfius"
     assert committed[0].account_number == "BE46 0636 5194 6836"
     assert committed[0].import_session_id == session.id
 
 
-def test_extract_detected_session_accepts_belfius_card_pdf_and_commits_with_card_hint(
-    db_session, monkeypatch
-):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BELFIUS_CARD_PAGE_TEXTS)
+def test_extract_detected_session_accepts_belfius_card_pdf(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify Belfius card pdf commits with card hint."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BELFIUS_CARD_PAGE_TEXTS,
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
 
-    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(
+        session.id
+    )
 
     assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
     assert extracted_session.extractor_id == "belfius_card_pdf_v1"
@@ -738,19 +942,22 @@ def test_extract_detected_session_accepts_belfius_card_pdf_and_commits_with_card
     statement_draft = db_session.query(ImportStatementDraft).one()
     assert statement_draft.card_number_hint == "5440 56XX XXXX 3844"
     assert statement_draft.account_number_hint is None
-    assert statement_draft.transaction_count == 4
+    assert statement_draft.transaction_count == EXPECTED_BELFIUS_TRANSACTION_COUNT
 
     approved_session = ImportWorkflowService(db_session).approve_session(session.id)
     assert approved_session.status == ImportSessionStatus.COMMITTED.value
 
     committed = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
-    assert len(committed) == 4
+    assert len(committed) == EXPECTED_BELFIUS_TRANSACTION_COUNT
     assert committed[0].source_bank == "Belfius"
     assert committed[0].account_number == "5440 56XX XXXX 3844"
     assert committed[0].import_session_id == session.id
 
 
-def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_commits_rows(db_session):
+def test_extract_detected_session_accepts_nexo_csv_and_commits_rows(
+    db_session: Session,
+) -> None:
+    """Verify Nexo csv persists proposals and commits rows."""
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="nexo.csv",
         content_type="text/csv",
@@ -782,7 +989,9 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
         ),
     )
 
-    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(
+        session.id
+    )
 
     assert extracted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
     assert extracted_session.extractor_id == "nexo_csv_v1"
@@ -792,8 +1001,12 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
     assert statement_draft.account_number_hint == "NEXO"
     assert statement_draft.review_status == "awaiting_review"
 
-    transaction_drafts = db_session.query(ImportTransactionDraft).order_by(ImportTransactionDraft.id.asc()).all()
-    assert len(transaction_drafts) == 3
+    transaction_drafts = (
+        db_session.query(ImportTransactionDraft)
+        .order_by(ImportTransactionDraft.id.asc())
+        .all()
+    )
+    assert len(transaction_drafts) == EXPECTED_NEXO_TRANSACTION_COUNT
 
     first_draft = transaction_drafts[0]
     assert first_draft.source_locator == "csv:r2:NXT1001"
@@ -819,7 +1032,7 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
     assert approved_session.status == ImportSessionStatus.COMMITTED.value
 
     committed = db_session.query(Transaction).order_by(Transaction.id.asc()).all()
-    assert len(committed) == 3
+    assert len(committed) == EXPECTED_NEXO_TRANSACTION_COUNT
     assert committed[0].source_bank == "Nexo"
     assert committed[0].transaction_type == TransactionType.EXPENSE
     assert committed[0].expense_category is None
@@ -833,14 +1046,20 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
 
 
 @pytest.mark.parametrize(
-    "proposal_updates, expected_message",
+    ("proposal_updates", "expected_message"),
     [
         (
-            {"proposed_transaction_type": None, "proposed_expense_category": "Financial Fees"},
+            {
+                "proposed_transaction_type": None,
+                "proposed_expense_category": "Financial Fees",
+            },
             "a transaction type is required when any category proposal is present",
         ),
         (
-            {"proposed_transaction_type": "Expense", "proposed_income_category": "Salary"},
+            {
+                "proposed_transaction_type": "Expense",
+                "proposed_income_category": "Salary",
+            },
             "Expense cannot carry income_category",
         ),
         (
@@ -859,7 +1078,12 @@ def test_extract_detected_session_accepts_nexo_csv_and_persists_proposals_and_co
         ),
     ],
 )
-def test_approve_session_rejects_invalid_proposal_combinations(db_session, proposal_updates, expected_message):
+def test_approve_session_rejects_invalid_proposal_combinations(
+    db_session: Session,
+    proposal_updates: dict[str, object],
+    expected_message: str,
+) -> None:
+    """Verify approve session rejects invalid proposal combinations."""
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="nexo.csv",
         content_type="text/csv",
@@ -886,7 +1110,9 @@ def test_approve_session_rejects_invalid_proposal_combinations(db_session, propo
         ImportWorkflowService(db_session).approve_session(session.id)
 
     db_session.expire_all()
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     statement_draft = db_session.query(ImportStatementDraft).one()
 
     assert persisted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
@@ -894,7 +1120,11 @@ def test_approve_session_rejects_invalid_proposal_combinations(db_session, propo
     assert db_session.query(Transaction).count() == 0
 
 
-def test_extract_detected_session_fails_closed_on_unsupported_layout(db_session, monkeypatch):
+def test_extract_detected_session_fails_closed_on_unsupported_layout(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify extract detected session fails closed on unsupported layout."""
     monkeypatch.setattr(
         "app.imports.pdf_statement.read_pdf_page_text",
         lambda _: [
@@ -908,7 +1138,9 @@ def test_extract_detected_session_fails_closed_on_unsupported_layout(db_session,
         file_bytes=b"%PDF-1.7\nstub",
     )
 
-    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(
+        session.id
+    )
 
     assert extracted_session.status == ImportSessionStatus.FAILED.value
     issues = db_session.query(ImportIssue).all()
@@ -921,49 +1153,82 @@ def test_extract_detected_session_fails_closed_on_unsupported_layout(db_session,
     attempt_dir = settings.imports_dir / str(session.id) / "attempts" / "1"
     assert (attempt_dir / "evidence" / "raw.json").exists()
     assert (attempt_dir / "normalized" / "extraction_result.json").exists()
-    meta_payload = json.loads((settings.imports_dir / str(session.id) / "meta.json").read_text(encoding="utf-8"))
+    meta_payload = json.loads(
+        (settings.imports_dir / str(session.id) / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert meta_payload["state"] == ImportSessionStatus.FAILED.value
     assert meta_payload["attempt_count"] == 1
 
 
-def test_extract_detected_session_fails_closed_on_parser_blocking_issue(db_session, monkeypatch):
+def test_extract_detected_session_fails_closed_on_parser_blocking_issue(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify extract detected session fails closed on parser blocking issue."""
     broken_pages = list(SANITIZED_BEOBANK_PAGE_TEXTS)
-    broken_pages[2] = "Kaart xxxx xxxx xxxx 1111\nUw transacties\n21/12/2025 ONLINE SHOP BRUSSEL BE 1.234,56\n"
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: broken_pages)
+    broken_pages[2] = (
+        "Kaart xxxx xxxx xxxx 1111\n"
+        "Uw transacties\n"
+        "21/12/2025 ONLINE SHOP BRUSSEL BE 1.234,56\n"
+    )
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text", lambda _: broken_pages
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
 
-    extracted_session = ImportWorkflowService(db_session).extract_detected_session(session.id)
+    extracted_session = ImportWorkflowService(db_session).extract_detected_session(
+        session.id
+    )
 
     assert extracted_session.status == ImportSessionStatus.FAILED.value
     issues = db_session.query(ImportIssue).order_by(ImportIssue.id).all()
-    assert any(issue.issue_code == "unclassifiable_table_line" and issue.blocking for issue in issues)
+    assert any(
+        issue.issue_code == "unclassifiable_table_line" and issue.blocking
+        for issue in issues
+    )
     assert db_session.query(ImportStatementDraft).count() == 0
     assert db_session.query(ImportTransactionDraft).count() == 0
 
 
-def test_extract_detected_session_uses_new_attempt_number_after_rolled_back_artifact_write(db_session):
+def test_extract_detected_session_uses_next_attempt_after_artifact_rollback(
+    db_session: Session,
+) -> None:
+    """Verify extraction retries with a new attempt after artifact rollback."""
+
     class StubExtractor:
-        def __init__(self):
+        def __init__(self) -> None:
             self.calls = 0
 
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             self.calls += 1
             return _successful_result(int(session_id), attempt_number)
 
     class FlakyArtifactStore(ArtifactStore):
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
             self.write_normalized_calls = 0
 
-        def write_normalized_result(self, session_id: str, attempt_number: int, result: ExtractionResult) -> None:
+        def write_normalized_result(
+            self, session_id: str, attempt_number: int, result: ExtractionResult
+        ) -> None:
             super().write_normalized_result(session_id, attempt_number, result)
             self.write_normalized_calls += 1
             if self.write_normalized_calls == 1:
-                raise RuntimeError("normalized write follow-up failed")
+                msg = "normalized write follow-up failed"
+                raise RuntimeError(msg)
 
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
@@ -972,7 +1237,9 @@ def test_extract_detected_session_uses_new_attempt_number_after_rolled_back_arti
     )
     extractor = StubExtractor()
     artifacts = FlakyArtifactStore()
-    service = ImportWorkflowService(db_session, pdf_statement_extractor=extractor, artifacts=artifacts)
+    service = ImportWorkflowService(
+        db_session, pdf_statement_extractor=extractor, artifacts=artifacts
+    )
 
     with pytest.raises(RuntimeError, match="normalized write follow-up failed"):
         service.extract_detected_session(session.id)
@@ -981,7 +1248,7 @@ def test_extract_detected_session_uses_new_attempt_number_after_rolled_back_arti
     assert (first_attempt_dir / "evidence" / "raw.json").exists()
     assert (first_attempt_dir / "normalized" / "extraction_result.json").exists()
 
-    failed_session = db_session.get(ImportSession, session.id)
+    failed_session = _require_import_session(db_session.get(ImportSession, session.id))
     failed_session.status = ImportSessionStatus.DETECTED.value
     failed_session.error_stage = None
     failed_session.error_message = None
@@ -990,62 +1257,105 @@ def test_extract_detected_session_uses_new_attempt_number_after_rolled_back_arti
     retried_session = service.extract_detected_session(session.id)
 
     assert retried_session.status == ImportSessionStatus.AWAITING_REVIEW.value
-    assert retried_session.raw_artifact_ref == f"imports/{session.id}/attempts/2/evidence/raw.json"
+    assert (
+        retried_session.raw_artifact_ref
+        == f"imports/{session.id}/attempts/2/evidence/raw.json"
+    )
     second_attempt_dir = settings.imports_dir / str(session.id) / "attempts" / "2"
     assert (second_attempt_dir / "evidence" / "raw.json").exists()
     assert (second_attempt_dir / "normalized" / "extraction_result.json").exists()
 
     statement_draft = db_session.query(ImportStatementDraft).one()
-    assert statement_draft.attempt_number == 2
+    assert statement_draft.attempt_number == EXPECTED_RETRY_ATTEMPT_COUNT
 
-    meta_payload = json.loads((settings.imports_dir / str(session.id) / "meta.json").read_text(encoding="utf-8"))
+    meta_payload = json.loads(
+        (settings.imports_dir / str(session.id) / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert meta_payload["state"] == ImportSessionStatus.AWAITING_REVIEW.value
-    assert meta_payload["attempt_count"] == 2
+    assert meta_payload["attempt_count"] == EXPECTED_RETRY_ATTEMPT_COUNT
 
 
-def test_extract_detected_session_clears_stale_refs_when_retry_crashes_before_new_result(db_session):
+def test_extract_detected_session_clears_stale_refs_when_retry_crashes(
+    db_session: Session,
+) -> None:
+    """Verify retry crash clears stale extractor refs."""
+
     class CrashingExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
-            raise RuntimeError("pdf extraction crashed")
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> Never:
+            _ = (file_path, session_id, attempt_number)
+            msg = "pdf extraction crashed"
+            raise RuntimeError(msg)
 
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     persisted_session.extractor_id = "stale_extractor"
     persisted_session.raw_artifact_ref = "imports/999/attempts/9/evidence/raw.json"
     db_session.commit()
 
     with pytest.raises(RuntimeError, match="pdf extraction crashed"):
-        ImportWorkflowService(db_session, pdf_statement_extractor=CrashingExtractor()).extract_detected_session(session.id)
+        ImportWorkflowService(
+            db_session, pdf_statement_extractor=CrashingExtractor()
+        ).extract_detected_session(session.id)
 
-    failed_session = db_session.get(ImportSession, session.id)
+    failed_session = _require_import_session(db_session.get(ImportSession, session.id))
     assert failed_session.status == ImportSessionStatus.FAILED.value
     assert failed_session.extractor_id is None
     assert failed_session.raw_artifact_ref is None
 
-    meta_payload = json.loads((settings.imports_dir / str(session.id) / "meta.json").read_text(encoding="utf-8"))
+    meta_payload = json.loads(
+        (settings.imports_dir / str(session.id) / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert meta_payload["state"] == ImportSessionStatus.FAILED.value
     assert meta_payload["attempt_count"] == 1
 
 
-def test_extract_detected_session_still_marks_failed_when_manifest_sync_blows_up_in_rescue(db_session):
+def test_extract_detected_session_marks_failed_when_manifest_sync_crashes(
+    db_session: Session,
+) -> None:
+    """Verify rescue still marks failed when manifest sync crashes."""
+
     class CrashingExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
-            raise RuntimeError("pdf extraction crashed")
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> Never:
+            _ = (file_path, session_id, attempt_number)
+            msg = "pdf extraction crashed"
+            raise RuntimeError(msg)
 
     class BrokenManifestArtifactStore(ArtifactStore):
         def read_meta(self, session_id: str) -> dict:
-            raise RuntimeError("manifest sync crashed")
+            _ = session_id
+            msg = "manifest sync crashed"
+            raise RuntimeError(msg)
 
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     persisted_session.extractor_id = "stale_extractor"
     persisted_session.raw_artifact_ref = "imports/999/attempts/9/evidence/raw.json"
     db_session.commit()
@@ -1057,7 +1367,7 @@ def test_extract_detected_session_still_marks_failed_when_manifest_sync_blows_up
             artifacts=BrokenManifestArtifactStore(),
         ).extract_detected_session(session.id)
 
-    failed_session = db_session.get(ImportSession, session.id)
+    failed_session = _require_import_session(db_session.get(ImportSession, session.id))
     assert failed_session.status == ImportSessionStatus.FAILED.value
     assert failed_session.error_stage == "extraction"
     assert failed_session.error_message == "pdf extraction crashed"
@@ -1065,11 +1375,15 @@ def test_extract_detected_session_still_marks_failed_when_manifest_sync_blows_up
     assert failed_session.raw_artifact_ref is None
 
 
-def test_try_backfill_fx_for_dates_returns_early_for_empty_date_set(db_session, monkeypatch):
+def test_try_backfill_fx_for_dates_returns_early_for_empty_date_set(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify try backfill fx for dates returns early for empty date set."""
     constructed = []
 
     class FakeECBExchangeRateService:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: object, **kwargs: object) -> None:
             constructed.append((args, kwargs))
 
     monkeypatch.setattr(
@@ -1085,9 +1399,20 @@ def test_try_backfill_fx_for_dates_returns_early_for_empty_date_set(db_session, 
     assert constructed == []
 
 
-def test_retry_failed_session_without_attempt_artifacts_uses_next_attempt_number(db_session):
+def test_retry_failed_session_without_artifacts_uses_next_attempt_number(
+    db_session: Session,
+) -> None:
+    """Verify retry without attempt artifacts uses the next attempt."""
+
     class StubExtractor:
-        def extract(self, *, file_path, session_id, attempt_number):
+        def extract(
+            self,
+            *,
+            file_path: Path,
+            session_id: str,
+            attempt_number: int,
+        ) -> tuple[RawEvidence, ExtractionResult]:
+            _ = file_path
             return _successful_result(int(session_id), attempt_number)
 
     session, _ = ImportPipelineService(db_session).start_upload(
@@ -1095,7 +1420,9 @@ def test_retry_failed_session_without_attempt_artifacts_uses_next_attempt_number
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     persisted_session.status = ImportSessionStatus.FAILED.value
     persisted_session.error_stage = "extraction"
     persisted_session.error_message = "first attempt failed before artifacts"
@@ -1106,7 +1433,9 @@ def test_retry_failed_session_without_attempt_artifacts_uses_next_attempt_number
     meta_payload["state"] = ImportSessionStatus.FAILED.value
     meta_payload["attempt_count"] = 1
     meta_payload["stage_timestamps"]["failed"] = "2026-04-12T10:00:00+00:00"
-    meta_path.write_text(json.dumps(meta_payload, indent=2, sort_keys=True), encoding="utf-8")
+    meta_path.write_text(
+        json.dumps(meta_payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
     retried_session = ImportWorkflowService(
         db_session,
@@ -1114,17 +1443,20 @@ def test_retry_failed_session_without_attempt_artifacts_uses_next_attempt_number
     ).retry_session(session.id)
 
     assert retried_session.status == ImportSessionStatus.AWAITING_REVIEW.value
-    assert retried_session.raw_artifact_ref == f"imports/{session.id}/attempts/2/evidence/raw.json"
+    assert (
+        retried_session.raw_artifact_ref
+        == f"imports/{session.id}/attempts/2/evidence/raw.json"
+    )
 
     statement_draft = db_session.query(ImportStatementDraft).one()
-    assert statement_draft.attempt_number == 2
+    assert statement_draft.attempt_number == EXPECTED_RETRY_ATTEMPT_COUNT
 
     attempt_dir = settings.imports_dir / str(session.id) / "attempts" / "2"
     assert (attempt_dir / "evidence" / "raw.json").exists()
     assert (attempt_dir / "normalized" / "extraction_result.json").exists()
 
     updated_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert updated_meta["attempt_count"] == 2
+    assert updated_meta["attempt_count"] == EXPECTED_RETRY_ATTEMPT_COUNT
     assert updated_meta["state"] == ImportSessionStatus.AWAITING_REVIEW.value
 
 
@@ -1133,25 +1465,33 @@ def test_retry_failed_session_without_attempt_artifacts_uses_next_attempt_number
     [
         (
             "approve",
-            lambda session: None,
+            lambda _session: None,
             ImportSessionStatus.AWAITING_REVIEW.value,
         ),
         (
             "reject",
-            lambda session: None,
+            lambda _session: None,
             ImportSessionStatus.AWAITING_REVIEW.value,
         ),
         (
             "retry",
-            lambda session: None,
+            lambda _session: None,
             ImportSessionStatus.AWAITING_REVIEW.value,
         ),
     ],
 )
 def test_review_state_meta_does_not_advance_when_db_commit_fails(
-    db_session, monkeypatch, operation_name, prepare_session, expected_status
-):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    operation_name: str,
+    prepare_session: Callable[[ImportSession], None],
+    expected_status: str,
+) -> None:
+    """Verify review state meta does not advance when db commit fails."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BEOBANK_PAGE_TEXTS,
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
@@ -1166,16 +1506,17 @@ def test_review_state_meta_does_not_advance_when_db_commit_fails(
     original_commit = db_session.commit
     commit_calls = {"count": 0}
 
-    def fail_first_commit():
+    def fail_first_commit() -> None:
         commit_calls["count"] += 1
         if commit_calls["count"] == 1:
-            raise RuntimeError("db commit failed")
+            msg = "db commit failed"
+            raise RuntimeError(msg)
         return original_commit()
 
     monkeypatch.setattr(db_session, "commit", fail_first_commit)
     service = ImportWorkflowService(db_session)
 
-    with pytest.raises(RuntimeError, match="db commit failed"):
+    def run_operation() -> None:
         if operation_name == "approve":
             service.approve_session(session.id)
         elif operation_name == "reject":
@@ -1183,8 +1524,13 @@ def test_review_state_meta_does_not_advance_when_db_commit_fails(
         else:
             service.retry_session(session.id)
 
+    with pytest.raises(RuntimeError, match="db commit failed"):
+        run_operation()
+
     db_session.expire_all()
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     after_meta = json.loads(meta_path.read_text(encoding="utf-8"))
 
     assert persisted_session.status == expected_status
@@ -1195,8 +1541,15 @@ def test_review_state_meta_does_not_advance_when_db_commit_fails(
         assert db_session.query(Transaction).count() == 0
 
 
-def test_approve_session_rejects_duplicate_committed_transactions(db_session, monkeypatch):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+def test_approve_session_rejects_duplicate_committed_transactions(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session rejects duplicate committed transactions."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BEOBANK_PAGE_TEXTS,
+    )
 
     first_session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
@@ -1216,14 +1569,29 @@ def test_approve_session_rejects_duplicate_committed_transactions(db_session, mo
     with pytest.raises(ImportApprovalConflictError) as exc_info:
         ImportWorkflowService(db_session).approve_session(duplicate_session.id)
 
-    assert exc_info.value.duplicates[0]["source_description"] == "MERCADO EXTRA-1776 PRAIA GRANDE BR"
+    assert (
+        exc_info.value.duplicates[0]["source_description"]
+        == "MERCADO EXTRA-1776 PRAIA GRANDE BR"
+    )
     db_session.expire_all()
-    assert db_session.query(Transaction).count() == 5
-    assert db_session.get(ImportSession, duplicate_session.id).status == ImportSessionStatus.AWAITING_REVIEW.value
+    assert db_session.query(Transaction).count() == EXPECTED_BEOBANK_TRANSACTION_COUNT
+    assert (
+        _require_import_session(
+            db_session.get(ImportSession, duplicate_session.id)
+        ).status
+        == ImportSessionStatus.AWAITING_REVIEW.value
+    )
 
 
-def test_approve_session_rejects_awaiting_review_session_with_blocking_issue(db_session, monkeypatch):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+def test_approve_session_rejects_awaiting_review_session_with_blocking_issue(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session rejects awaiting review session with blocking issue."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BEOBANK_PAGE_TEXTS,
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
@@ -1248,14 +1616,28 @@ def test_approve_session_rejects_awaiting_review_session_with_blocking_issue(db_
         ImportWorkflowService(db_session).approve_session(session.id)
 
     db_session.expire_all()
-    statement_draft = db_session.query(ImportStatementDraft).filter_by(import_session_id=session.id).one()
-    assert db_session.get(ImportSession, session.id).status == ImportSessionStatus.AWAITING_REVIEW.value
+    statement_draft = (
+        db_session.query(ImportStatementDraft)
+        .filter_by(import_session_id=session.id)
+        .one()
+    )
+    assert (
+        _require_import_session(db_session.get(ImportSession, session.id)).status
+        == ImportSessionStatus.AWAITING_REVIEW.value
+    )
     assert statement_draft.review_status == "awaiting_review"
     assert db_session.query(Transaction).count() == 0
 
 
-def test_approve_session_rolls_back_when_statistics_refresh_fails(db_session, monkeypatch):
-    monkeypatch.setattr("app.imports.pdf_statement.read_pdf_page_text", lambda _: SANITIZED_BEOBANK_PAGE_TEXTS)
+def test_approve_session_rolls_back_when_statistics_refresh_fails(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approve session rolls back when statistics refresh fails."""
+    monkeypatch.setattr(
+        "app.imports.pdf_statement.read_pdf_page_text",
+        lambda _: SANITIZED_BEOBANK_PAGE_TEXTS,
+    )
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
@@ -1263,10 +1645,13 @@ def test_approve_session_rolls_back_when_statistics_refresh_fails(db_session, mo
     )
     ImportWorkflowService(db_session).extract_detected_session(session.id)
 
-    def explode(*args, **kwargs):
-        raise RuntimeError("statistics refresh failed")
+    def explode(*_args: object, **_kwargs: object) -> Never:
+        msg = "statistics refresh failed"
+        raise RuntimeError(msg)
 
-    monkeypatch.setattr("app.imports.workflow.StatisticsService.calculate_statistics", explode)
+    monkeypatch.setattr(
+        "app.imports.workflow.StatisticsService.calculate_statistics", explode
+    )
 
     meta_path = settings.imports_dir / str(session.id) / "meta.json"
     before_meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -1275,7 +1660,9 @@ def test_approve_session_rolls_back_when_statistics_refresh_fails(db_session, mo
         ImportWorkflowService(db_session).approve_session(session.id)
 
     db_session.expire_all()
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     statement_draft = db_session.query(ImportStatementDraft).one()
 
     assert persisted_session.status == ImportSessionStatus.AWAITING_REVIEW.value
@@ -1284,13 +1671,18 @@ def test_approve_session_rolls_back_when_statistics_refresh_fails(db_session, mo
     assert json.loads(meta_path.read_text(encoding="utf-8")) == before_meta
 
 
-def test_retry_failed_session_marks_failed_when_original_upload_is_missing(db_session):
+def test_retry_failed_session_marks_failed_when_original_upload_is_missing(
+    db_session: Session,
+) -> None:
+    """Verify retry failed session marks failed when original upload is missing."""
     session, _ = ImportPipelineService(db_session).start_upload(
         filename="statement.pdf",
         content_type="application/pdf",
         file_bytes=b"%PDF-1.7\nstub",
     )
-    persisted_session = db_session.get(ImportSession, session.id)
+    persisted_session = _require_import_session(
+        db_session.get(ImportSession, session.id)
+    )
     persisted_session.status = ImportSessionStatus.FAILED.value
     persisted_session.error_stage = "extraction"
     persisted_session.error_message = "previous extraction failed"
@@ -1301,20 +1693,30 @@ def test_retry_failed_session_marks_failed_when_original_upload_is_missing(db_se
     meta_payload["state"] = ImportSessionStatus.FAILED.value
     meta_payload["attempt_count"] = 1
     meta_payload["stage_timestamps"]["failed"] = "2026-04-12T11:00:00+00:00"
-    meta_path.write_text(json.dumps(meta_payload, indent=2, sort_keys=True), encoding="utf-8")
+    meta_path.write_text(
+        json.dumps(meta_payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
-    original_file = settings.imports_dir / str(session.id) / "original" / session.file_name
+    original_file = (
+        settings.imports_dir / str(session.id) / "original" / session.file_name
+    )
     original_file.unlink()
 
-    with pytest.raises(FileNotFoundError, match=f"Original upload missing for import session {session.id}"):
+    with pytest.raises(
+        FileNotFoundError,
+        match=f"Original upload missing for import session {session.id}",
+    ):
         ImportWorkflowService(db_session).retry_session(session.id)
 
     db_session.expire_all()
-    failed_session = db_session.get(ImportSession, session.id)
+    failed_session = _require_import_session(db_session.get(ImportSession, session.id))
     meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
 
     assert failed_session.status == ImportSessionStatus.FAILED.value
     assert failed_session.error_stage == "extraction"
-    assert failed_session.error_message == f"Original upload missing for import session {session.id}."
+    assert (
+        failed_session.error_message
+        == f"Original upload missing for import session {session.id}."
+    )
     assert meta_payload["state"] == ImportSessionStatus.FAILED.value
-    assert meta_payload["attempt_count"] == 2
+    assert meta_payload["attempt_count"] == EXPECTED_RETRY_ATTEMPT_COUNT

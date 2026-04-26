@@ -1,4 +1,8 @@
-SANITIZED_BELFIUS_CARD_PAGE_TEXTS = [
+"""Module for backend tests imports fixtures belfius_card_pages."""
+
+from typing import Any
+
+SANITIZED_BELFIUS_CARD_PAGE_TEXTS: Any = [
     (
         "UITGAVENSTAAT\n"
         "Belfius Bank NV\n"
@@ -19,9 +23,5 @@ SANITIZED_BELFIUS_CARD_PAGE_TEXTS = [
         "(Via Apple Pay)\n"
         "Totaal 572,20 EUR -\n"
     ),
-    (
-        "PRAKTISCHE INFORMATIE\n"
-        "Pagina : 2-2\n"
-        "Contacteer Belfius Direct Contact\n"
-    ),
+    ("PRAKTISCHE INFORMATIE\nPagina : 2-2\nContacteer Belfius Direct Contact\n"),
 ]

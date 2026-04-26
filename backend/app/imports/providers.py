@@ -1,5 +1,7 @@
-from pathlib import Path
+"""Module for backend app imports providers."""
+
 import os
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -7,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class FallbackRule(BaseModel):
+    """Represent fallback rule."""
+
     model_config = ConfigDict(extra="forbid")
 
     condition: str
@@ -14,6 +18,8 @@ class FallbackRule(BaseModel):
 
 
 class ProviderConfig(BaseModel):
+    """Represent provider config."""
+
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
@@ -31,6 +37,8 @@ class ProviderConfig(BaseModel):
 
 
 class ProviderFamilyConfig(BaseModel):
+    """Represent provider family config."""
+
     model_config = ConfigDict(extra="forbid")
 
     order: list[str] = Field(default_factory=list)
@@ -39,25 +47,40 @@ class ProviderFamilyConfig(BaseModel):
 
 
 class ProviderRegistry(BaseModel):
+    """Represent provider registry."""
+
     model_config = ConfigDict(extra="forbid")
 
-    document_extraction: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
-    translation_normalization: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
-    category_inference: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
-    duplicate_detection: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
-    classification_assistant: ProviderFamilyConfig = Field(default_factory=ProviderFamilyConfig)
+    document_extraction: ProviderFamilyConfig = Field(
+        default_factory=ProviderFamilyConfig
+    )
+    translation_normalization: ProviderFamilyConfig = Field(
+        default_factory=ProviderFamilyConfig
+    )
+    category_inference: ProviderFamilyConfig = Field(
+        default_factory=ProviderFamilyConfig
+    )
+    duplicate_detection: ProviderFamilyConfig = Field(
+        default_factory=ProviderFamilyConfig
+    )
+    classification_assistant: ProviderFamilyConfig = Field(
+        default_factory=ProviderFamilyConfig
+    )
 
     @classmethod
     def from_path(cls, path: Path) -> "ProviderRegistry":
+        """Handle from path."""
         if not path.exists():
             return cls()
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return cls.model_validate(payload)
 
     def family(self, family_name: str) -> ProviderFamilyConfig:
+        """Handle family."""
         return getattr(self, family_name)
 
-    def validate(self) -> dict[str, dict[str, dict[str, Any]]]:
+    def availability_report(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Return provider availability by family."""
         report: dict[str, dict[str, dict[str, Any]]] = {}
         for family_name in (
             "document_extraction",
@@ -77,7 +100,11 @@ class ProviderRegistry(BaseModel):
                     "reason": reason,
                 }
 
-            invalid_order_refs = [provider_name for provider_name in family.order if provider_name not in family.providers]
+            invalid_order_refs = [
+                provider_name
+                for provider_name in family.order
+                if provider_name not in family.providers
+            ]
             if invalid_order_refs:
                 report[family_name]["__family__"] = {
                     "chain_available": False,
@@ -115,7 +142,9 @@ class ProviderRegistry(BaseModel):
         return report
 
     @staticmethod
-    def _provider_availability(family_name: str, provider: ProviderConfig) -> tuple[bool, str]:
+    def _provider_availability(
+        family_name: str, provider: ProviderConfig
+    ) -> tuple[bool, str]:
         if not provider.enabled:
             return False, "disabled"
         if family_name == "document_extraction" and not provider.supports_pdf:

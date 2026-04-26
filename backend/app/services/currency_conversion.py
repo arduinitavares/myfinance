@@ -1,11 +1,12 @@
+"""Module for backend app services currency_conversion."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.models.fx import FXDailyReferenceRate
 from app.services.currency_aliases import normalize_currency_code
@@ -13,14 +14,20 @@ from app.services.ecb_exchange_rates import ECBExchangeRateService
 from app.services.fx_pairs import required_fx_quotes
 from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
 
+if TYPE_CHECKING:
+    from datetime import date
 
-DISPLAY_PRECISION = Decimal("0.01")
-IDENTITY_FX_RATE = Decimal("1.0")
-RawAmount = Decimal | float
+    from sqlalchemy.orm import Session
+
+DISPLAY_PRECISION: Any = Decimal("0.01")
+IDENTITY_FX_RATE: Any = Decimal("1.0")
+RawAmount: Any = Decimal | float
 
 
 @dataclass(frozen=True)
 class DisplayMoney:
+    """Represent display money."""
+
     display_amount: Decimal | None
     display_currency: str
     display_fx_rate: Decimal | None
@@ -29,7 +36,8 @@ class DisplayMoney:
     unavailable_reason: str | None = None
 
     @classmethod
-    def unavailable(cls, *, display_currency: str, reason: str) -> "DisplayMoney":
+    def unavailable(cls, *, display_currency: str, reason: str) -> DisplayMoney:
+        """Handle unavailable."""
         return cls(
             display_amount=None,
             display_currency=display_currency,
@@ -41,11 +49,14 @@ class DisplayMoney:
 
 
 class CurrencyConversionService:
+    """Represent currency conversion service."""
+
     BASE_CURRENCY = ECBExchangeRateService.BASE_CURRENCY
     SOURCE_NAME = ECBExchangeRateService.SOURCE_NAME
     SUPPORTED_CURRENCIES = frozenset(ALLOWED_REPORTING_CURRENCIES)
 
     def __init__(self, db: Session) -> None:
+        """Initialize the instance."""
         self.db = db
 
     def convert(
@@ -56,6 +67,7 @@ class CurrencyConversionService:
         reporting_currency: str,
         transaction_date: date,
     ) -> DisplayMoney:
+        """Handle convert."""
         normalized_raw_currency = normalize_currency_code(raw_currency)
         normalized_reporting_currency = normalize_currency_code(reporting_currency)
         decimal_amount = Decimal(str(raw_amount))
@@ -65,7 +77,8 @@ class CurrencyConversionService:
             or normalized_reporting_currency not in self.SUPPORTED_CURRENCIES
         ):
             return DisplayMoney.unavailable(
-                display_currency=normalized_reporting_currency or reporting_currency.strip().upper(),
+                display_currency=normalized_reporting_currency
+                or reporting_currency.strip().upper(),
                 reason="unsupported_currency",
             )
 
@@ -93,7 +106,9 @@ class CurrencyConversionService:
                 reason="missing_rate",
             )
 
-        eur_native_rates = self._load_eur_native_rates(rate_date=rate_date, required_quotes=required_quotes)
+        eur_native_rates = self._load_eur_native_rates(
+            rate_date=rate_date, required_quotes=required_quotes
+        )
         if set(eur_native_rates) != set(required_quotes):
             return DisplayMoney.unavailable(
                 display_currency=normalized_reporting_currency,
@@ -116,7 +131,9 @@ class CurrencyConversionService:
             unavailable_reason=None,
         )
 
-    def _required_quotes(self, *, raw_currency: str, reporting_currency: str) -> tuple[str, ...]:
+    def _required_quotes(
+        self, *, raw_currency: str, reporting_currency: str
+    ) -> tuple[str, ...]:
         return required_fx_quotes(
             raw_currency=raw_currency,
             reporting_currency=reporting_currency,
@@ -138,7 +155,10 @@ class CurrencyConversionService:
                 FXDailyReferenceRate.quoted_currency.in_(required_quotes),
             )
             .group_by(FXDailyReferenceRate.rate_date)
-            .having(func.count(func.distinct(FXDailyReferenceRate.quoted_currency)) == len(required_quotes))
+            .having(
+                func.count(func.distinct(FXDailyReferenceRate.quoted_currency))
+                == len(required_quotes)
+            )
             .order_by(FXDailyReferenceRate.rate_date.desc())
             .limit(1)
         ).scalar_one_or_none()
@@ -158,10 +178,7 @@ class CurrencyConversionService:
             )
         ).scalars()
 
-        return {
-            row.quoted_currency: Decimal(str(row.units_per_base))
-            for row in rows
-        }
+        return {row.quoted_currency: Decimal(str(row.units_per_base)) for row in rows}
 
     def _display_fx_rate(
         self,

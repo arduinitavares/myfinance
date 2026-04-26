@@ -1,10 +1,16 @@
-from pydantic import BaseModel, validator
-from datetime import datetime, date
-from typing import Optional, List, Dict, Any
-from enum import Enum
-from ..models.anomaly import AnomalyType, AnomalySeverity, AnomalyStatus
+"""Module for backend app schemas anomaly."""
+
+from datetime import date, datetime
+from typing import Any
+
+from pydantic import BaseModel
+
+from ..models.anomaly import AnomalySeverity, AnomalyStatus, AnomalyType
+
 
 class AnomalyBase(BaseModel):
+    """Represent anomaly base."""
+
     transaction_id: int
     anomaly_type: AnomalyType
     severity: AnomalySeverity
@@ -12,117 +18,167 @@ class AnomalyBase(BaseModel):
     confidence: float
     detection_method: str
     reason: str
-    details: Optional[str] = None
-    expected_value: Optional[float] = None
-    actual_value: Optional[float] = None
-    deviation_magnitude: Optional[float] = None
+    details: str | None = None
+    expected_value: float | None = None
+    actual_value: float | None = None
+    deviation_magnitude: float | None = None
+
 
 class AnomalyCreate(AnomalyBase):
-    pass
+    """Represent anomaly create."""
+
+
 
 class AnomalyUpdate(BaseModel):
-    status: Optional[AnomalyStatus] = None
-    review_notes: Optional[str] = None
+    """Represent anomaly update."""
+
+    status: AnomalyStatus | None = None
+    review_notes: str | None = None
+
 
 class Anomaly(AnomalyBase):
+    """Represent anomaly."""
+
     id: int
     status: AnomalyStatus
     detection_timestamp: datetime
-    reviewed_at: Optional[datetime] = None
-    reviewed_by: Optional[str] = None
-    review_notes: Optional[str] = None
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+    review_notes: str | None = None
 
     class Config:
+        """Represent config."""
+
         orm_mode = True
 
+
 class AnomalyWithTransaction(Anomaly):
-    transaction: Optional[Dict[str, Any]] = None
+    """Represent anomaly with transaction."""
+
+    transaction: dict[str, Any] | None = None
+
 
 class AnomalyPatternBase(BaseModel):
+    """Represent anomaly pattern base."""
+
     pattern_type: str
     pattern_key: str
-    mean_value: Optional[float] = None
-    std_deviation: Optional[float] = None
-    median_value: Optional[float] = None
-    percentile_95: Optional[float] = None
-    percentile_99: Optional[float] = None
-    typical_days: Optional[str] = None
-    typical_hours: Optional[str] = None
-    avg_frequency_days: Optional[float] = None
-    min_frequency_days: Optional[float] = None
-    max_frequency_days: Optional[float] = None
+    mean_value: float | None = None
+    std_deviation: float | None = None
+    median_value: float | None = None
+    percentile_95: float | None = None
+    percentile_99: float | None = None
+    typical_days: str | None = None
+    typical_hours: str | None = None
+    avg_frequency_days: float | None = None
+    min_frequency_days: float | None = None
+    max_frequency_days: float | None = None
     sample_size: int
 
+
 class AnomalyPatternCreate(AnomalyPatternBase):
-    pass
+    """Represent anomaly pattern create."""
+
+
 
 class AnomalyPattern(AnomalyPatternBase):
+    """Represent anomaly pattern."""
+
     id: int
     last_updated: datetime
     created_at: datetime
 
     class Config:
+        """Represent config."""
+
         orm_mode = True
 
+
 class AnomalyRuleBase(BaseModel):
+    """Represent anomaly rule base."""
+
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     rule_type: AnomalyType
-    category_filter: Optional[str] = None
-    merchant_filter: Optional[str] = None
-    amount_threshold: Optional[float] = None
-    frequency_threshold: Optional[int] = None
+    category_filter: str | None = None
+    merchant_filter: str | None = None
+    amount_threshold: float | None = None
+    frequency_threshold: int | None = None
     time_period_days: int = 30
     is_active: bool = True
-    severity_override: Optional[AnomalySeverity] = None
+    severity_override: AnomalySeverity | None = None
+
 
 class AnomalyRuleCreate(AnomalyRuleBase):
-    pass
+    """Represent anomaly rule create."""
+
+
 
 class AnomalyRuleUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
-    amount_threshold: Optional[float] = None
-    frequency_threshold: Optional[int] = None
-    severity_override: Optional[AnomalySeverity] = None
+    """Represent anomaly rule update."""
+
+    name: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+    amount_threshold: float | None = None
+    frequency_threshold: int | None = None
+    severity_override: AnomalySeverity | None = None
+
 
 class AnomalyRule(AnomalyRuleBase):
+    """Represent anomaly rule."""
+
     id: int
     created_at: datetime
     updated_at: datetime
 
     class Config:
+        """Represent config."""
+
         orm_mode = True
 
+
 class AnomalyDetectionRequest(BaseModel):
-    transaction_ids: Optional[List[int]] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
+    """Represent anomaly detection request."""
+
+    transaction_ids: list[int] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
     force_redetection: bool = False
 
+
 class AnomalyDetectionResult(BaseModel):
+    """Represent anomaly detection result."""
+
     total_transactions_analyzed: int
     anomalies_detected: int
-    anomalies_by_type: Dict[str, int]
-    anomalies_by_severity: Dict[str, int]
+    anomalies_by_type: dict[str, int]
+    anomalies_by_severity: dict[str, int]
     processing_time_seconds: float
 
+
 class AnomalyStatistics(BaseModel):
+    """Represent anomaly statistics."""
+
     total_anomalies: int
     unreviewed_anomalies: int
     confirmed_anomalies: int
     false_positives: int
-    anomalies_by_type: Dict[str, int]
-    anomalies_by_severity: Dict[str, int]
+    anomalies_by_type: dict[str, int]
+    anomalies_by_severity: dict[str, int]
     detection_accuracy: float  # Percentage of confirmed vs total reviewed
 
+
 class AnomalyPage(BaseModel):
-    items: List[AnomalyWithTransaction]
+    """Represent anomaly page."""
+
+    items: list[AnomalyWithTransaction]
     total: int
     page: int
     page_size: int
     total_pages: int
 
     class Config:
+        """Represent config."""
+
         orm_mode = True

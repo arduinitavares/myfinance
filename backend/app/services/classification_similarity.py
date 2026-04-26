@@ -1,10 +1,13 @@
+"""Module for backend app services classification_similarity."""
+
+from typing import Any
+
 from ..models.transaction import Transaction
 from ..utils.text_normalization import normalize_for_matching
 
+SIMILARITY_THRESHOLD: Any = 0.8
 
-SIMILARITY_THRESHOLD = 0.8
-
-TRANSFER_LIKE_TERMS = (
+TRANSFER_LIKE_TERMS: Any = (
     "p2p",
     "transfer",
     "mobile",
@@ -12,12 +15,12 @@ TRANSFER_LIKE_TERMS = (
     "internal transfer",
 )
 
-EXCHANGE_FEE_TERMS = (
+EXCHANGE_FEE_TERMS: Any = (
     "wisselkosten",
     "exchange fee",
 )
 
-MERCHANT_OR_BILL_LIKE_TERMS = (
+MERCHANT_OR_BILL_LIKE_TERMS: Any = (
     "energie",
     "proximus",
     "rent",
@@ -28,21 +31,25 @@ MERCHANT_OR_BILL_LIKE_TERMS = (
 
 
 def looks_like_transfer(description: str) -> bool:
+    """Handle looks like transfer."""
     normalized = normalize_for_matching(description)
     return any(term in normalized for term in TRANSFER_LIKE_TERMS)
 
 
 def looks_like_bill_or_merchant(description: str) -> bool:
+    """Handle looks like bill or merchant."""
     normalized = normalize_for_matching(description)
     return any(term in normalized for term in MERCHANT_OR_BILL_LIKE_TERMS)
 
 
 def looks_like_exchange_fee(description: str) -> bool:
+    """Handle looks like exchange fee."""
     normalized = normalize_for_matching(description)
     return any(term in normalized for term in EXCHANGE_FEE_TERMS)
 
 
 def has_conflicting_family(seed: Transaction, candidate: Transaction) -> bool:
+    """Handle has conflicting family."""
     seed_transfer = looks_like_transfer(seed.description)
     candidate_transfer = looks_like_transfer(candidate.description)
     seed_bill = looks_like_bill_or_merchant(seed.description)
@@ -57,6 +64,7 @@ def has_conflicting_family(seed: Transaction, candidate: Transaction) -> bool:
 
 
 def shares_source_bank(seed: Transaction, candidate: Transaction) -> bool:
+    """Handle shares source bank."""
     if not seed.source_bank or not candidate.source_bank:
         return True
     return seed.source_bank == candidate.source_bank

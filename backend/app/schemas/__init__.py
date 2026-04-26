@@ -1,9 +1,11 @@
-from . import transaction, statistics, financial_health, financial_projection, anomaly
+"""Module for backend app schemas __init__."""
+
+from . import anomaly, financial_health, financial_projection, statistics, transaction
 
 __all__ = [
-    'transaction',
-    'statistics', 
-    'financial_health',
-    'financial_projection',
-    'anomaly'
+    "anomaly",
+    "financial_health",
+    "financial_projection",
+    "statistics",
+    "transaction",
 ]

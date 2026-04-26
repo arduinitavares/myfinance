@@ -1,12 +1,14 @@
+"""Module for backend tests imports test_artifacts."""
+
 import json
 
 import pytest
-
 from app.imports.artifacts import ArtifactStore
 from app.imports.contracts import DetectionResult, ImportStrategyKey, RawEvidence
 
 
-def test_artifact_store_writes_manifest_detection_and_raw_evidence():
+def test_artifact_store_writes_manifest_detection_and_raw_evidence() -> None:
+    """Verify artifact store writes manifest detection and raw evidence."""
     store = ArtifactStore()
     session_dir = store.init_session("session-001")
     store.write_meta("session-001", {"state": "uploaded", "attempt_count": 1})
@@ -32,12 +34,18 @@ def test_artifact_store_writes_manifest_detection_and_raw_evidence():
 
     assert session_dir.exists()
     assert json.loads((session_dir / "meta.json").read_text())["state"] == "uploaded"
-    assert json.loads((session_dir / "detection.json").read_text()) == detection.model_dump(mode="json")
+    assert json.loads(
+        (session_dir / "detection.json").read_text()
+    ) == detection.model_dump(mode="json")
     evidence_path = session_dir / "attempts" / "1" / "evidence" / "raw.json"
-    assert json.loads(evidence_path.read_text())["text_blocks"][0]["text"] == "Statement header"
+    assert (
+        json.loads(evidence_path.read_text())["text_blocks"][0]["text"]
+        == "Statement header"
+    )
 
 
-def test_artifact_store_writes_original_file_bytes():
+def test_artifact_store_writes_original_file_bytes() -> None:
+    """Verify artifact store writes original file bytes."""
     store = ArtifactStore()
     session_dir = store.init_session("session-002")
 
@@ -50,13 +58,14 @@ def test_artifact_store_writes_original_file_bytes():
 @pytest.mark.parametrize(
     "filename",
     [
-        "/tmp/escape.csv",
+        "/escape.csv",
         "../escape.csv",
         "nested/escape.csv",
         "nested\\escape.csv",
     ],
 )
-def test_artifact_store_rejects_unsafe_original_filenames(filename):
+def test_artifact_store_rejects_unsafe_original_filenames(filename: str) -> None:
+    """Verify artifact store rejects unsafe original filenames."""
     store = ArtifactStore()
     store.init_session("session-003")
 

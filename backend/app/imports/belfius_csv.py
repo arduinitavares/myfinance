@@ -1,10 +1,12 @@
+"""Module for backend app imports belfius_csv."""
+
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
+from .contracts import ExtractedTransaction, ExtractionResult, ImportIssue, RawEvidence
 from .csv_support import (
     BELFIUS_HEADER,
     build_csv_raw_evidence,
@@ -14,9 +16,12 @@ from .csv_support import (
     statement_period_from_transactions,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def _to_iso_date(value: str) -> str:
-    return datetime.strptime(value, "%d/%m/%Y").date().isoformat()
+    return datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=UTC).date().isoformat()
 
 
 def _parse_amount(value: str) -> float:
@@ -24,26 +29,42 @@ def _parse_amount(value: str) -> float:
 
 
 class BelfiusCsvExtractor:
+    """Represent belfius csv extractor."""
+
     extractor_id = "belfius_csv_v1"
 
-    def extract(self, *, file_path: str | Path, session_id: str, attempt_number: int):
+    def extract(
+        self, *, file_path: str | Path, session_id: str, attempt_number: int
+    ) -> tuple[RawEvidence, ExtractionResult]:
+        """Handle extract."""
         raw_text, encoding = read_csv_text(file_path)
         lines = raw_text.splitlines()
-        header_match = find_header_row(lines, delimiter=";", expected_header=BELFIUS_HEADER)
-        raw_artifact_ref = f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
+        header_match = find_header_row(
+            lines, delimiter=";", expected_header=BELFIUS_HEADER
+        )
+        raw_artifact_ref = (
+            f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
+        )
 
         if header_match is None:
             evidence = build_csv_raw_evidence(raw_text=raw_text, snippets=[])
             return evidence, ExtractionResult(
                 extractor_id=self.extractor_id,
                 raw_artifact_ref=raw_artifact_ref,
-                source_metadata={"provider_hint": "belfius", "file_type": "csv", "encoding": encoding},
+                source_metadata={
+                    "provider_hint": "belfius",
+                    "file_type": "csv",
+                    "encoding": encoding,
+                },
                 statement_metadata={},
                 transactions=[],
                 issues=[
                     ImportIssue(
                         code="missing_belfius_csv_header",
-                        message="Supported Belfius CSV header was not found in the first 20 lines.",
+                        message=(
+                            "Supported Belfius CSV header was not found in the "
+                            "first 20 lines."
+                        ),
                         blocking=True,
                     )
                 ],
@@ -68,7 +89,9 @@ class BelfiusCsvExtractor:
                     signed_amount=signed_amount,
                     currency=(row.get("Devies") or "EUR").strip() or "EUR",
                     debit_credit="credit" if signed_amount > 0 else "debit",
-                    proposed_transaction_type="Income" if signed_amount > 0 else "Expense",
+                    proposed_transaction_type="Income"
+                    if signed_amount > 0
+                    else "Expense",
                     source_locator=f"csv:r{row_number}",
                     edit_source="deterministic_extracted",
                 )
@@ -104,7 +127,11 @@ class BelfiusCsvExtractor:
         return evidence, ExtractionResult(
             extractor_id=self.extractor_id,
             raw_artifact_ref=raw_artifact_ref,
-            source_metadata={"provider_hint": "belfius", "file_type": "csv", "encoding": encoding},
+            source_metadata={
+                "provider_hint": "belfius",
+                "file_type": "csv",
+                "encoding": encoding,
+            },
             statement_metadata=statement_metadata,
             transactions=transactions,
             issues=issues,

@@ -1,12 +1,15 @@
+"""Module for backend app imports nexo_csv."""
+
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..models.transaction import ExpenseCategory, TransactionType, TransferCategory
-from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
+from .contracts import ExtractedTransaction, ExtractionResult, ImportIssue, RawEvidence
 from .csv_support import (
     NEXO_HEADER,
     build_csv_raw_evidence,
@@ -16,19 +19,43 @@ from .csv_support import (
     statement_period_from_transactions,
 )
 
-NEXO_SKIP_TYPES = {
+if TYPE_CHECKING:
+    from pathlib import Path
+
+NEXO_SKIP_TYPES: set[str] = {
     "Cashback",
     "Exchange Credit",
     "Credit Card Withdrawal Credit",
 }
-INTERNAL_TRANSFER_MARKERS = ("auto transfer", "savings wallet", "credit line wallet")
-EXTERNAL_TRANSFER_MARKERS = ("bank transfer", "sepa")
-IBAN_RE = re.compile(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}")
-STATUS_PREFIX_RE = re.compile(r"^(approved|rejected)\s*/\s*", re.IGNORECASE)
+INTERNAL_TRANSFER_MARKERS: tuple[str, ...] = (
+    "auto transfer",
+    "savings wallet",
+    "credit line wallet",
+)
+EXTERNAL_TRANSFER_MARKERS: tuple[str, ...] = ("bank transfer", "sepa")
+IBAN_RE: re.Pattern[str] = re.compile(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}")
+STATUS_PREFIX_RE: re.Pattern[str] = re.compile(
+    r"^(approved|rejected)\s*/\s*", re.IGNORECASE
+)
+
+
+@dataclass(frozen=True)
+class NexoRowClassification:
+    """Classification selected for a Nexo CSV row."""
+
+    transaction_type: TransactionType
+    reason: str
+    expense_category: ExpenseCategory | None = None
+    transfer_category: TransferCategory | None = None
 
 
 def _to_iso_date(value: str) -> str:
-    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").date().isoformat()
+    return (
+        datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        .replace(tzinfo=UTC)
+        .date()
+        .isoformat()
+    )
 
 
 def _parse_amount(value: str) -> float:
@@ -56,27 +83,107 @@ def _looks_like_internal_transfer(description: str) -> bool:
     return any(marker in normalized for marker in INTERNAL_TRANSFER_MARKERS)
 
 
+def _skip_reason(
+    status_prefix: str | None, row_type: str, description: str
+) -> str | None:
+    if status_prefix == "rejected":
+        return "rejected_row"
+    if row_type in NEXO_SKIP_TYPES:
+        return "deterministic_skip_type"
+    if row_type == "Transfer Out" and _looks_like_internal_transfer(description):
+        return "internal_plumbing_transfer"
+    return None
+
+
+def _classification_issue(
+    *, row_number: int, transaction_id: str, row_type: str
+) -> ImportIssue:
+    transaction_ref = (
+        f"csv:r{row_number}:{transaction_id}"
+        if transaction_id
+        else f"csv:r{row_number}"
+    )
+    row_label = transaction_id or row_number
+    if row_type == "Transfer Out":
+        return ImportIssue(
+            code="nexo_ambiguous_transfer_out",
+            message=(
+                f"Nexo Transfer Out row {row_label} could not be "
+                "classified deterministically."
+            ),
+            blocking=False,
+            transaction_ref=transaction_ref,
+        )
+
+    return ImportIssue(
+        code="unsupported_nexo_row_type",
+        message=f"Nexo row {row_label} has unsupported type {row_type!r}.",
+        blocking=False,
+        transaction_ref=transaction_ref,
+    )
+
+
+def _classify_nexo_row(
+    *, row_type: str, amount: float, description: str
+) -> NexoRowClassification | None:
+    if row_type == "Nexo Card Purchase" and amount < 0:
+        return NexoRowClassification(TransactionType.EXPENSE, "card_purchase")
+    if row_type == "Nexo Card Transaction Fee" and amount < 0:
+        return NexoRowClassification(
+            TransactionType.EXPENSE,
+            "card_fee",
+            expense_category=ExpenseCategory.FINANCIAL_FEES,
+        )
+    if (
+        row_type == "Transfer Out"
+        and amount < 0
+        and _looks_like_external_cashout(description)
+    ):
+        return NexoRowClassification(
+            TransactionType.TRANSFER,
+            "external_cash_out",
+            transfer_category=TransferCategory.INTERNAL_TRANSFER,
+        )
+    return None
+
+
 class NexoCsvExtractor:
+    """Represent nexo csv extractor."""
+
     extractor_id = "nexo_csv_v1"
 
-    def extract(self, *, file_path: str | Path, session_id: str, attempt_number: int):
+    def extract(
+        self, *, file_path: str | Path, session_id: str, attempt_number: int
+    ) -> tuple[RawEvidence, ExtractionResult]:
+        """Handle extract."""
         raw_text, encoding = read_csv_text(file_path)
         lines = raw_text.splitlines()
-        raw_artifact_ref = f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
+        raw_artifact_ref = (
+            f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
+        )
 
-        header_match = find_header_row(lines, delimiter=",", expected_header=NEXO_HEADER)
+        header_match = find_header_row(
+            lines, delimiter=",", expected_header=NEXO_HEADER
+        )
         if header_match is None:
             evidence = build_csv_raw_evidence(raw_text=raw_text, snippets=[])
             return evidence, ExtractionResult(
                 extractor_id=self.extractor_id,
                 raw_artifact_ref=raw_artifact_ref,
-                source_metadata={"provider_hint": "nexo", "file_type": "csv", "charset": encoding},
+                source_metadata={
+                    "provider_hint": "nexo",
+                    "file_type": "csv",
+                    "charset": encoding,
+                },
                 statement_metadata={},
                 transactions=[],
                 issues=[
                     ImportIssue(
                         code="missing_nexo_csv_header",
-                        message="The Nexo CSV header did not match the supported deterministic format.",
+                        message=(
+                            "The Nexo CSV header did not match the supported "
+                            "deterministic format."
+                        ),
                         blocking=True,
                     )
                 ],
@@ -87,7 +194,7 @@ class NexoCsvExtractor:
         rows = build_dict_rows(lines, delimiter=",", header_row_index=header_row_index)
         transactions: list[ExtractedTransaction] = []
         issues: list[ImportIssue] = []
-        snippets: list[dict] = []
+        snippets: list[dict[str, object]] = []
 
         for row_number, row in rows:
             if not any(row.values()):
@@ -99,7 +206,7 @@ class NexoCsvExtractor:
             status_prefix, description = _strip_status_prefix(details)
             amount = _parse_amount(row.get("Input Amount", "0"))
 
-            snippet = {
+            snippet: dict[str, object] = {
                 "row_number": row_number,
                 "transaction_id": transaction_id,
                 "type": row_type,
@@ -107,61 +214,32 @@ class NexoCsvExtractor:
                 "decision": "skipped",
             }
 
-            if status_prefix == "rejected":
-                snippet["reason"] = "rejected_row"
+            skip_reason = _skip_reason(status_prefix, row_type, description)
+            if skip_reason is not None:
+                snippet["reason"] = skip_reason
                 snippets.append(snippet)
                 continue
 
-            if row_type in NEXO_SKIP_TYPES:
-                snippet["reason"] = "deterministic_skip_type"
-                snippets.append(snippet)
-                continue
-
-            if row_type == "Transfer Out" and _looks_like_internal_transfer(description):
-                snippet["reason"] = "internal_plumbing_transfer"
-                snippets.append(snippet)
-                continue
-
-            proposed_transaction_type = None
-            proposed_expense_category = None
-            proposed_transfer_category = None
-
-            if row_type == "Nexo Card Purchase" and amount < 0:
-                proposed_transaction_type = TransactionType.EXPENSE
-                snippet["reason"] = "card_purchase"
-            elif row_type == "Nexo Card Transaction Fee" and amount < 0:
-                proposed_transaction_type = TransactionType.EXPENSE
-                proposed_expense_category = ExpenseCategory.FINANCIAL_FEES
-                snippet["reason"] = "card_fee"
-            elif row_type == "Transfer Out" and amount < 0 and _looks_like_external_cashout(description):
-                proposed_transaction_type = TransactionType.TRANSFER
-                proposed_transfer_category = TransferCategory.INTERNAL_TRANSFER
-                snippet["reason"] = "external_cash_out"
-            elif row_type == "Transfer Out":
+            classification = _classify_nexo_row(
+                row_type=row_type, amount=amount, description=description
+            )
+            if classification is None:
                 issues.append(
-                    ImportIssue(
-                        code="nexo_ambiguous_transfer_out",
-                        message=f"Nexo Transfer Out row {transaction_id or row_number} could not be classified deterministically.",
-                        blocking=False,
-                        transaction_ref=f"csv:r{row_number}:{transaction_id}" if transaction_id else f"csv:r{row_number}",
+                    _classification_issue(
+                        row_number=row_number,
+                        transaction_id=transaction_id,
+                        row_type=row_type,
                     )
                 )
-                snippet["reason"] = "ambiguous_transfer_out"
-                snippets.append(snippet)
-                continue
-            else:
-                issues.append(
-                    ImportIssue(
-                        code="unsupported_nexo_row_type",
-                        message=f"Nexo row {transaction_id or row_number} has unsupported type {row_type!r}.",
-                        blocking=False,
-                        transaction_ref=f"csv:r{row_number}:{transaction_id}" if transaction_id else f"csv:r{row_number}",
-                    )
+                snippet["reason"] = (
+                    "ambiguous_transfer_out"
+                    if row_type == "Transfer Out"
+                    else "unsupported_type"
                 )
-                snippet["reason"] = "unsupported_type"
                 snippets.append(snippet)
                 continue
 
+            snippet["reason"] = classification.reason
             transactions.append(
                 ExtractedTransaction(
                     transaction_date=_to_iso_date(row["Date / Time (UTC)"]),
@@ -169,12 +247,14 @@ class NexoCsvExtractor:
                     signed_amount=amount,
                     currency=row.get("Input Currency", "").strip(),
                     debit_credit="credit" if amount > 0 else "debit",
-                    proposed_transaction_type=proposed_transaction_type,
-                    proposed_expense_category=proposed_expense_category,
-                    proposed_transfer_category=proposed_transfer_category,
+                    proposed_transaction_type=classification.transaction_type,
+                    proposed_expense_category=classification.expense_category,
+                    proposed_transfer_category=classification.transfer_category,
                     proposal_source="deterministic_extracted",
                     classification_source="deterministic_nexo_csv",
-                    source_locator=f"csv:r{row_number}:{transaction_id}" if transaction_id else f"csv:r{row_number}",
+                    source_locator=f"csv:r{row_number}:{transaction_id}"
+                    if transaction_id
+                    else f"csv:r{row_number}",
                     edit_source="deterministic_extracted",
                 )
             )
@@ -185,7 +265,10 @@ class NexoCsvExtractor:
             issues.append(
                 ImportIssue(
                     code="no_importable_nexo_rows",
-                    message="The Nexo CSV did not contain any reviewable rows after deterministic skips.",
+                    message=(
+                        "The Nexo CSV did not contain any reviewable rows after "
+                        "deterministic skips."
+                    ),
                     blocking=True,
                 )
             )
@@ -194,7 +277,11 @@ class NexoCsvExtractor:
         return evidence, ExtractionResult(
             extractor_id=self.extractor_id,
             raw_artifact_ref=raw_artifact_ref,
-            source_metadata={"provider_hint": "nexo", "file_type": "csv", "charset": encoding},
+            source_metadata={
+                "provider_hint": "nexo",
+                "file_type": "csv",
+                "charset": encoding,
+            },
             statement_metadata={
                 **statement_period_from_transactions(transactions),
                 "account_number_hint": "NEXO",

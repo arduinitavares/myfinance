@@ -1,27 +1,38 @@
+"""Module for backend app imports batch_folder."""
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from pathlib import Path
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
-from app.imports.pipeline import ImportPipelineService, ImportUploadDuplicateError
+from app.imports.pipeline import (
+    ImportPipelineService,
+    ImportUploadDuplicateError,
+    ImportUploadSessionCreationError,
+)
 from app.imports.state_machine import ImportSessionStatus
-from app.imports.workflow import ImportWorkflowService
+from app.imports.workflow import ImportWorkflowError, ImportWorkflowService
 from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
 
 from .contracts import ImportStrategyKey
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-logger = logging.getLogger(__name__)
+    from sqlalchemy.orm import Session
 
-MAX_BATCH_FILES = 200
-MAX_SUPPORTED_PDFS = 50
-MAX_BATCH_FILE_SIZE_BYTES = 5 * 1024 * 1024
-REVIEWABLE_BATCH_STRATEGIES = {
+logger: logging.Logger = logging.getLogger(__name__)
+
+MAX_BATCH_FILES: int = 200
+MAX_SUPPORTED_PDFS: int = 50
+MAX_BATCH_FILE_SIZE_BYTES: int = 5 * 1024 * 1024
+REVIEWABLE_BATCH_STRATEGIES: set[ImportStrategyKey] = {
     ImportStrategyKey.PDF_STATEMENT,
     ImportStrategyKey.BELFIUS_CSV,
     ImportStrategyKey.BEOBANK_CSV,
@@ -30,21 +41,38 @@ REVIEWABLE_BATCH_STRATEGIES = {
 
 
 class ImportBatchRunNotFoundError(Exception):
-    pass
+    """Represent import batch run not found error."""
+
+
+@dataclass(frozen=True)
+class _BatchItemFinalization:
+    status: str
+    message: str | None = None
+    file_hash: str | None = None
+    session_id: int | None = None
+    session_status: str | None = None
+    existing_session_id: int | None = None
+    existing_session_status: str | None = None
+    strategy_key: str | None = None
+    extractor_id: str | None = None
 
 
 class ImportBatchFolderService:
+    """Represent import batch folder service."""
+
     def __init__(
         self,
         db: Session,
         pipeline: ImportPipelineService | None = None,
         workflow: ImportWorkflowService | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.db = db
         self.pipeline = pipeline or ImportPipelineService(db)
         self.workflow = workflow or ImportWorkflowService(db)
 
     def process_configured_folder(self) -> dict:
+        """Process configured folder."""
         folder_path, files = self._preflight_batch_folder()
         batch_run = self._create_batch_run(folder_path, total_files=len(files))
         batch_run_id = batch_run.id
@@ -78,23 +106,33 @@ class ImportBatchFolderService:
             raise
 
     def get_batch_run(self, batch_id: int) -> dict:
+        """Return batch run."""
         batch_run = self.db.get(ImportBatchRun, batch_id)
         if batch_run is None:
-            raise ImportBatchRunNotFoundError(f"Import batch run {batch_id} was not found.")
+            msg = f"Import batch run {batch_id} was not found."
+            raise ImportBatchRunNotFoundError(msg)
         return self._serialize_batch_run(batch_run.id)
 
     def get_latest_batch_run(self) -> dict:
-        batch_run = self.db.query(ImportBatchRun).order_by(ImportBatchRun.created_at.desc(), ImportBatchRun.id.desc()).first()
+        """Return latest batch run."""
+        batch_run = (
+            self.db.query(ImportBatchRun)
+            .order_by(ImportBatchRun.created_at.desc(), ImportBatchRun.id.desc())
+            .first()
+        )
         if batch_run is None:
-            raise ImportBatchRunNotFoundError("No import batch runs were found.")
+            msg = "No import batch runs were found."
+            raise ImportBatchRunNotFoundError(msg)
         return self._serialize_batch_run(batch_run.id)
 
     def _preflight_batch_folder(self) -> tuple[Path, list[Path]]:
         folder_path = settings.batch_import_dir
         if not folder_path.exists():
-            raise ValueError(f"Configured batch import folder does not exist: {folder_path}")
+            msg = f"Configured batch import folder does not exist: {folder_path}"
+            raise ValueError(msg)
         if not folder_path.is_dir():
-            raise ValueError(f"Configured batch import folder is not a directory: {folder_path}")
+            msg = f"Configured batch import folder is not a directory: {folder_path}"
+            raise ValueError(msg)
 
         files = sorted(
             [
@@ -105,25 +143,42 @@ class ImportBatchFolderService:
             key=lambda child: (child.name.casefold(), child.name),
         )
         if len(files) > MAX_BATCH_FILES:
-            raise ValueError(f"Configured batch import folder contains too many files: {len(files)} > {MAX_BATCH_FILES}")
+            msg = (
+                "Configured batch import folder contains too many files: "
+                f"{len(files)} > {MAX_BATCH_FILES}"
+            )
+            raise ValueError(msg)
 
-        supported_pdfs = [file_path for file_path in files if self._is_supported_pdf(file_path)]
+        supported_pdfs = [
+            file_path for file_path in files if self._is_supported_pdf(file_path)
+        ]
         if len(supported_pdfs) > MAX_SUPPORTED_PDFS:
-            raise ValueError(f"Configured batch import folder contains too many PDF files: {len(supported_pdfs)} > {MAX_SUPPORTED_PDFS}")
+            msg = (
+                "Configured batch import folder contains too many PDF files: "
+                f"{len(supported_pdfs)} > {MAX_SUPPORTED_PDFS}"
+            )
+            raise ValueError(msg)
 
-        supported_files = [file_path for file_path in files if self._is_supported_batch_file(file_path)]
+        supported_files = [
+            file_path for file_path in files if self._is_supported_batch_file(file_path)
+        ]
         oversized_file = next(
-            (file_path for file_path in supported_files if file_path.stat().st_size > MAX_BATCH_FILE_SIZE_BYTES),
+            (
+                file_path
+                for file_path in supported_files
+                if file_path.stat().st_size > MAX_BATCH_FILE_SIZE_BYTES
+            ),
             None,
         )
         if oversized_file is not None:
-            raise ValueError(
-                f"Batch import file exceeds the 5 MB limit: {oversized_file.name}"
-            )
+            msg = f"Batch import file exceeds the 5 MB limit: {oversized_file.name}"
+            raise ValueError(msg)
 
         return folder_path, files
 
-    def _create_batch_run(self, folder_path: Path, *, total_files: int) -> ImportBatchRun:
+    def _create_batch_run(
+        self, folder_path: Path, *, total_files: int
+    ) -> ImportBatchRun:
         batch_run = ImportBatchRun(
             folder_path=str(folder_path),
             status="running",
@@ -151,14 +206,18 @@ class ImportBatchFolderService:
         self.db.refresh(item)
         return item
 
-    def _process_file(self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path) -> None:
+    def _process_file(
+        self, batch_run: ImportBatchRun, item: ImportBatchItem, file_path: Path
+    ) -> None:
         if not self._is_supported_batch_file(file_path):
             suffix = file_path.suffix.lower() or "(no extension)"
             self._finalize_item(
                 batch_run,
                 item,
-                status="unsupported",
-                message=f"Unsupported batch file type: {suffix}",
+                _BatchItemFinalization(
+                    status="unsupported",
+                    message=f"Unsupported batch file type: {suffix}",
+                ),
             )
             return
 
@@ -170,23 +229,31 @@ class ImportBatchFolderService:
                 file_bytes=file_bytes,
             )
         except ImportUploadDuplicateError as exc:
-            existing_session = self.workflow.get_session_snapshot(exc.existing_session_id)
+            existing_session = self.workflow.get_session_snapshot(
+                exc.existing_session_id
+            )
             self._finalize_item(
                 batch_run,
                 item,
-                file_hash=exc.file_hash,
-                status="skipped_existing",
-                message=str(exc),
-                existing_session_id=existing_session["id"],
-                existing_session_status=existing_session["status"],
+                _BatchItemFinalization(
+                    file_hash=exc.file_hash,
+                    status="skipped_existing",
+                    message=str(exc),
+                    existing_session_id=existing_session["id"],
+                    existing_session_status=existing_session["status"],
+                ),
             )
             return
-        except Exception as exc:
+        except (
+            ImportUploadSessionCreationError,
+            OSError,
+            SQLAlchemyError,
+            ValueError,
+        ) as exc:
             self._finalize_item(
                 batch_run,
                 item,
-                status="failed",
-                message=str(exc),
+                _BatchItemFinalization(status="failed", message=str(exc)),
             )
             return
 
@@ -194,77 +261,80 @@ class ImportBatchFolderService:
             session = self.workflow.fail_session(
                 session.id,
                 stage="detection",
-                message=f"Unsupported import strategy for batch import: {detection.strategy_key.value}",
+                message=(
+                    "Unsupported import strategy for batch import: "
+                    f"{detection.strategy_key.value}"
+                ),
             )
             snapshot = self.workflow.get_session_snapshot(session.id)
             self._finalize_item(
                 batch_run,
                 item,
-                file_hash=session.file_hash,
-                status="failed",
-                message=snapshot["error_message"],
-                session_id=session.id,
-                session_status=snapshot["status"],
-                strategy_key=detection.strategy_key.value,
-                extractor_id=snapshot["extractor_id"],
+                _BatchItemFinalization(
+                    file_hash=session.file_hash,
+                    status="failed",
+                    message=snapshot["error_message"],
+                    session_id=session.id,
+                    session_status=snapshot["status"],
+                    strategy_key=detection.strategy_key.value,
+                    extractor_id=snapshot["extractor_id"],
+                ),
             )
             return
 
         try:
             session = self.workflow.extract_detected_session(session.id)
-        except Exception:
-            logger.warning("Import extraction crashed during batch run for session %s", session.id, exc_info=True)
+        except (ImportWorkflowError, OSError, SQLAlchemyError, ValueError):
+            logger.warning(
+                "Import extraction crashed during batch run for session %s",
+                session.id,
+                exc_info=True,
+            )
 
         snapshot = self.workflow.get_session_snapshot(session.id)
-        item_status = "processed" if snapshot["status"] == ImportSessionStatus.AWAITING_REVIEW.value else "failed"
+        item_status = (
+            "processed"
+            if snapshot["status"] == ImportSessionStatus.AWAITING_REVIEW.value
+            else "failed"
+        )
         self._finalize_item(
             batch_run,
             item,
-            file_hash=session.file_hash,
-            status=item_status,
-            message=None if item_status == "processed" else snapshot["error_message"],
-            session_id=session.id,
-            session_status=snapshot["status"],
-            strategy_key=snapshot["strategy_key"],
-            extractor_id=snapshot["extractor_id"],
+            _BatchItemFinalization(
+                file_hash=session.file_hash,
+                status=item_status,
+                message=(
+                    None if item_status == "processed" else snapshot["error_message"]
+                ),
+                session_id=session.id,
+                session_status=snapshot["status"],
+                strategy_key=snapshot["strategy_key"],
+                extractor_id=snapshot["extractor_id"],
+            ),
         )
 
     def _finalize_item(
         self,
         batch_run: ImportBatchRun,
         item: ImportBatchItem,
-        *,
-        status: str,
-        message: str | None = None,
-        file_hash: str | None = None,
-        session_id: int | None = None,
-        session_status: str | None = None,
-        existing_session_id: int | None = None,
-        existing_session_status: str | None = None,
-        strategy_key: str | None = None,
-        extractor_id: str | None = None,
+        finalization: _BatchItemFinalization,
     ) -> None:
-        item.file_hash = file_hash
-        item.status = status
-        item.message = message
-        item.session_id = session_id
-        item.session_status = session_status
-        item.existing_session_id = existing_session_id
-        item.existing_session_status = existing_session_status
-        item.strategy_key = strategy_key
-        item.extractor_id = extractor_id
+        item.file_hash = finalization.file_hash
+        item.status = finalization.status
+        item.message = finalization.message
+        item.session_id = finalization.session_id
+        item.session_status = finalization.session_status
+        item.existing_session_id = finalization.existing_session_id
+        item.existing_session_status = finalization.existing_session_status
+        item.strategy_key = finalization.strategy_key
+        item.extractor_id = finalization.extractor_id
         item.completed_at = self._utcnow()
         self.db.commit()
         self.db.refresh(item)
         self._refresh_batch_counts(batch_run)
 
     def _refresh_batch_counts(self, batch_run: ImportBatchRun) -> None:
-        counts = dict(
-            self.db.query(ImportBatchItem.status, func.count(ImportBatchItem.id))
-            .filter(ImportBatchItem.batch_run_id == batch_run.id)
-            .group_by(ImportBatchItem.status)
-            .all()
-        )
+        counts = self._batch_item_status_counts(batch_run.id)
         batch_run.processed_count = counts.get("processed", 0)
         batch_run.skipped_existing_count = counts.get("skipped_existing", 0)
         batch_run.unsupported_count = counts.get("unsupported", 0)
@@ -272,29 +342,39 @@ class ImportBatchFolderService:
         self.db.commit()
         self.db.refresh(batch_run)
 
-    def _fail_batch_run(self, batch_run: ImportBatchRun, exc: Exception, current_item: ImportBatchItem | None) -> None:
+    def _fail_batch_run(
+        self,
+        batch_run: ImportBatchRun,
+        exc: Exception,
+        current_item: ImportBatchItem | None,
+    ) -> None:
         if current_item is not None:
             persisted_current_item = self.db.get(ImportBatchItem, current_item.id)
-            if persisted_current_item is not None and persisted_current_item.completed_at is None:
+            if (
+                persisted_current_item is not None
+                and persisted_current_item.completed_at is None
+            ):
                 session_status = persisted_current_item.session_status
-                if persisted_current_item.session_id is not None and session_status is None:
-                    session = self.db.get(ImportSession, persisted_current_item.session_id)
+                if (
+                    persisted_current_item.session_id is not None
+                    and session_status is None
+                ):
+                    session = self.db.get(
+                        ImportSession, persisted_current_item.session_id
+                    )
                     session_status = session.status if session is not None else None
                 persisted_current_item.status = "failed"
                 persisted_current_item.message = str(exc)
                 persisted_current_item.session_status = session_status
                 persisted_current_item.completed_at = self._utcnow()
 
-        counts = dict(
-            self.db.query(ImportBatchItem.status, func.count(ImportBatchItem.id))
-            .filter(ImportBatchItem.batch_run_id == batch_run.id)
-            .group_by(ImportBatchItem.status)
-            .all()
-        )
+        counts = self._batch_item_status_counts(batch_run.id)
         self.db.query(ImportBatchRun).filter(ImportBatchRun.id == batch_run.id).update(
             {
                 ImportBatchRun.processed_count: counts.get("processed", 0),
-                ImportBatchRun.skipped_existing_count: counts.get("skipped_existing", 0),
+                ImportBatchRun.skipped_existing_count: counts.get(
+                    "skipped_existing", 0
+                ),
                 ImportBatchRun.unsupported_count: counts.get("unsupported", 0),
                 ImportBatchRun.failed_count: counts.get("failed", 0),
                 ImportBatchRun.status: "failed",
@@ -305,10 +385,20 @@ class ImportBatchFolderService:
         )
         self.db.commit()
 
+    def _batch_item_status_counts(self, batch_run_id: int) -> dict[str, int]:
+        rows = (
+            self.db.query(ImportBatchItem.status, func.count(ImportBatchItem.id))
+            .filter(ImportBatchItem.batch_run_id == batch_run_id)
+            .group_by(ImportBatchItem.status)
+            .all()
+        )
+        return {status: int(count) for status, count in rows}
+
     def _serialize_batch_run(self, batch_id: int) -> dict:
         batch_run = self.db.get(ImportBatchRun, batch_id)
         if batch_run is None:
-            raise ImportBatchRunNotFoundError(f"Import batch run {batch_id} was not found.")
+            msg = f"Import batch run {batch_id} was not found."
+            raise ImportBatchRunNotFoundError(msg)
         items = (
             self.db.query(ImportBatchItem)
             .filter(ImportBatchItem.batch_run_id == batch_id)
@@ -350,7 +440,9 @@ class ImportBatchFolderService:
 
     @staticmethod
     def _is_supported_batch_file(file_path: Path) -> bool:
-        return ImportBatchFolderService._is_supported_pdf(file_path) or ImportBatchFolderService._is_supported_csv(file_path)
+        return ImportBatchFolderService._is_supported_pdf(
+            file_path
+        ) or ImportBatchFolderService._is_supported_csv(file_path)
 
     @staticmethod
     def _is_supported_pdf(file_path: Path) -> bool:
@@ -362,16 +454,21 @@ class ImportBatchFolderService:
 
     @staticmethod
     def _content_type_for_batch_file(file_path: Path) -> str:
-        return "text/csv" if ImportBatchFolderService._is_supported_csv(file_path) else "application/pdf"
+        return (
+            "text/csv"
+            if ImportBatchFolderService._is_supported_csv(file_path)
+            else "application/pdf"
+        )
 
     @staticmethod
     def _is_ignored_batch_file(file_path: Path) -> bool:
         lowered_name = file_path.name.casefold()
-        return (
-            lowered_name in {".ds_store", "thumbs.db", "desktop.ini"}
-            or lowered_name.startswith("._")
-        )
+        return lowered_name in {
+            ".ds_store",
+            "thumbs.db",
+            "desktop.ini",
+        } or lowered_name.startswith("._")
 
     @staticmethod
     def _utcnow() -> datetime:
-        return datetime.utcnow()
+        return datetime.now(UTC)

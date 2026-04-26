@@ -1,12 +1,19 @@
+"""Module for backend app migrations migrate_classification_assistant."""
+
+import contextlib
 import logging
-import os
 import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, cast
 
 from sqlalchemy import inspect, text
 
-sys.path.append(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from sqlalchemy import Table
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.database import Base, engine
 from app.models.classification import (
@@ -18,10 +25,14 @@ from app.models.classification import (
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-TRANSACTIONS_MIGRATION_TABLE = "transactions__classification_assistant_migration"
+class SqlCursor(Protocol):
+    """Minimal DB-API cursor protocol used by this migration."""
+
+    def execute(self, operation: str) -> object:
+        """Execute one SQL statement."""
 
 
 def _has_recurrence_pattern_foreign_key() -> bool:
@@ -44,10 +55,12 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
     try:
         cursor = raw_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=OFF")
-        cursor.execute(f"DROP TABLE IF EXISTS {TRANSACTIONS_MIGRATION_TABLE}")
         cursor.execute(
-            f"""
-            CREATE TABLE {TRANSACTIONS_MIGRATION_TABLE} (
+            "DROP TABLE IF EXISTS transactions__classification_assistant_migration"
+        )
+        cursor.execute(
+            """
+            CREATE TABLE transactions__classification_assistant_migration (
                 id INTEGER NOT NULL PRIMARY KEY,
                 import_session_id INTEGER,
                 import_source_locator VARCHAR(255),
@@ -68,47 +81,16 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
                 recurrence_pattern_id INTEGER,
                 source_bank VARCHAR(10),
                 CONSTRAINT fk_transactions_recurrence_pattern_id
-                    FOREIGN KEY(recurrence_pattern_id) REFERENCES recurrence_patterns (id)
+                    FOREIGN KEY(recurrence_pattern_id)
+                    REFERENCES recurrence_patterns (id)
             )
             """
         )
 
-        transfer_category_sql = (
-            "transfer_category"
-            if "transfer_category" in transaction_columns
-            else "NULL"
-        )
-        classification_source_sql = (
-            "classification_source"
-            if "classification_source" in transaction_columns
-            else "NULL"
-        )
-        recurrence_pattern_id_sql = (
-            "recurrence_pattern_id"
-            if "recurrence_pattern_id" in transaction_columns
-            else "NULL"
-        )
-        import_session_id_sql = (
-            "import_session_id" if "import_session_id" in transaction_columns else "NULL"
-        )
-        import_source_locator_sql = (
-            "import_source_locator"
-            if "import_source_locator" in transaction_columns
-            else "NULL"
-        )
-        import_source_description_sql = (
-            "import_source_description"
-            if "import_source_description" in transaction_columns
-            else "NULL"
-        )
-        canonical_description_en_sql = (
-            "canonical_description_en"
-            if "canonical_description_en" in transaction_columns
-            else "NULL"
-        )
+        _ensure_source_columns_for_copy(cursor, transaction_columns)
         cursor.execute(
-            f"""
-            INSERT INTO {TRANSACTIONS_MIGRATION_TABLE} (
+            """
+            INSERT INTO transactions__classification_assistant_migration (
                 id,
                 import_session_id,
                 import_source_locator,
@@ -131,10 +113,10 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
             )
             SELECT
                 id,
-                {import_session_id_sql},
-                {import_source_locator_sql},
-                {import_source_description_sql},
-                {canonical_description_en_sql},
+                import_session_id,
+                import_source_locator,
+                import_source_description,
+                canonical_description_en,
                 account_number,
                 transaction_date,
                 amount,
@@ -145,47 +127,92 @@ def _rebuild_transactions_table_with_foreign_key(transaction_columns: set[str]) 
                 transaction_type,
                 expense_category,
                 income_category,
-                {transfer_category_sql},
-                {classification_source_sql},
-                {recurrence_pattern_id_sql},
+                transfer_category,
+                classification_source,
+                recurrence_pattern_id,
                 source_bank
             FROM transactions
             """
         )
         cursor.execute("DROP TABLE transactions")
         cursor.execute(
-            f"ALTER TABLE {TRANSACTIONS_MIGRATION_TABLE} RENAME TO transactions"
+            "ALTER TABLE transactions__classification_assistant_migration "
+            "RENAME TO transactions"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS ix_transactions_id ON transactions (id)"
         )
         cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_transactions_account_number ON transactions (account_number)"
+            "CREATE INDEX IF NOT EXISTS ix_transactions_account_number "
+            "ON transactions (account_number)"
         )
         cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_transactions_transaction_date ON transactions (transaction_date)"
+            "CREATE INDEX IF NOT EXISTS ix_transactions_transaction_date "
+            "ON transactions (transaction_date)"
         )
         cursor.execute(
-            "CREATE INDEX IF NOT EXISTS ix_transactions_recurrence_pattern_id ON transactions (recurrence_pattern_id)"
+            "CREATE INDEX IF NOT EXISTS ix_transactions_recurrence_pattern_id "
+            "ON transactions (recurrence_pattern_id)"
         )
         raw_connection.commit()
     finally:
-        try:
+        with contextlib.suppress(Exception):
             cursor.execute("PRAGMA foreign_keys=ON")
-        except Exception:
-            pass
         raw_connection.close()
 
 
-def migrate_classification_assistant():
+def _ensure_source_columns_for_copy(
+    cursor: SqlCursor, transaction_columns: set[str]
+) -> None:
+    for column_name, statement in (
+        (
+            "transfer_category",
+            "ALTER TABLE transactions ADD COLUMN transfer_category VARCHAR(50)",
+        ),
+        (
+            "classification_source",
+            "ALTER TABLE transactions ADD COLUMN classification_source VARCHAR(50)",
+        ),
+        (
+            "recurrence_pattern_id",
+            "ALTER TABLE transactions ADD COLUMN recurrence_pattern_id INTEGER",
+        ),
+        (
+            "import_session_id",
+            "ALTER TABLE transactions ADD COLUMN import_session_id INTEGER",
+        ),
+        (
+            "import_source_locator",
+            "ALTER TABLE transactions ADD COLUMN import_source_locator VARCHAR(255)",
+        ),
+        (
+            "import_source_description",
+            "ALTER TABLE transactions ADD COLUMN "
+            "import_source_description VARCHAR(500)",
+        ),
+        (
+            "canonical_description_en",
+            "ALTER TABLE transactions ADD COLUMN canonical_description_en VARCHAR(500)",
+        ),
+    ):
+        if column_name not in transaction_columns:
+            cursor.execute(statement)
+
+
+def migrate_classification_assistant() -> None:
+    """Handle migrate classification assistant."""
     logger.info("Starting classification assistant migration...")
-    Base.metadata.create_all(
-        bind=engine,
-        tables=[
+    classification_tables = cast(
+        "Sequence[Table]",
+        [
             ClassificationSession.__table__,
             ClassificationTurn.__table__,
             RecurrencePattern.__table__,
         ],
+    )
+    Base.metadata.create_all(
+        bind=engine,
+        tables=classification_tables,
     )
     inspector = inspect(engine)
     transaction_columns = {

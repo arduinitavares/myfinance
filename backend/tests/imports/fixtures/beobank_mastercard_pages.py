@@ -1,4 +1,8 @@
-SANITIZED_BEOBANK_PAGE_TEXTS = [
+"""Module for backend tests imports fixtures beobank_mastercard_pages."""
+
+from typing import Any
+
+SANITIZED_BEOBANK_PAGE_TEXTS: Any = [
     (
         "BEOBANK\n"
         "MASTERCARD\n"

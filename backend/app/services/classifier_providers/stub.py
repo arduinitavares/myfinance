@@ -36,8 +36,7 @@ class StubClassifierProvider(ClassifierProvider):
                 confidence=0.91,
                 recurrence_frequency="monthly",
                 rationale=(
-                    "Proximus is typically a telecom utility billed on a "
-                    "monthly cycle."
+                    "Proximus is typically a telecom utility billed on a monthly cycle."
                 ),
                 prompt_tokens=32,
                 completion_tokens=18,

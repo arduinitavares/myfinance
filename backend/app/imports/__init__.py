@@ -4,6 +4,8 @@ This package provides data models and contracts for handling financial data impo
 including detection, extraction, and validation of transactions from various sources.
 """
 
+from .belfius_csv import BelfiusCsvExtractor
+from .beobank_csv import BeobankCsvExtractor
 from .contracts import (
     DetectionResult,
     ExtractedTransaction,
@@ -13,8 +15,6 @@ from .contracts import (
     ProviderDescription,
     RawEvidence,
 )
-from .belfius_csv import BelfiusCsvExtractor
-from .beobank_csv import BeobankCsvExtractor
 from .nexo_csv import NexoCsvExtractor
 
 __all__: list[str] = [

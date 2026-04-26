@@ -1,23 +1,33 @@
+"""Module for backend app services category_suggestion_service."""
+
 import logging
 import re
-from typing import List, Tuple
 
 import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from sentence_transformers import SentenceTransformer
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 from sqlalchemy.orm import Session
 
-from ..models.transaction import Transaction, TransactionType
+from ..models.transaction import (
+    Transaction,
+    TransactionType,
+)
 from ..utils import (
     CARD_NUMBER_PATTERNS,
     IBAN_BIC_PATTERNS,
     REFERENCE_PATTERNS,
     TRANSACTION_DATE_PATTERNS,
+)
+
+logging.basicConfig(level=logging.INFO)
+logger: logging.Logger = logging.getLogger(__name__)
+
+QDRANT_ERRORS: tuple[type[Exception], ...] = (
+    ResponseHandlingException,
+    UnexpectedResponse,
+    ValueError,
 )
 
 
@@ -27,12 +37,15 @@ def _strip_patterns(text: str, patterns: list[str]) -> str:
     return text
 
 
-SERVICE_DOT_TIME_PATTERN = r"\b(?:[01]?\d|2[0-3])\.[0-5]\d(?:\s?(?:am|pm))?\b"
+SERVICE_DOT_TIME_PATTERN: str = r"\b(?:[01]?\d|2[0-3])\.[0-5]\d(?:\s?(?:am|pm))?\b"
 
 
 class CategorySuggestionService:
-    def __init__(self):
+    """Represent category suggestion service."""
+
+    def __init__(self) -> None:
         # Initialize the sentence transformer model
+        """Initialize the instance."""
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
         # Initialize Qdrant client (vector database)
@@ -121,10 +134,10 @@ class CategorySuggestionService:
         return text
 
     def _create_transaction_text(self, transaction: Transaction) -> str:
-        """Create a text representation of the transaction for embedding"""
+        """Create a text representation of the transaction for embedding."""
         description = self._preprocess_description(transaction.description)
         transaction_text = f"{description} {abs(transaction.amount)}"
-        logger.info(f"Creating transaction text: {transaction_text}")
+        logger.info("Creating transaction text: %s", transaction_text)
         return transaction_text
 
     def _cosine_similarity(
@@ -144,6 +157,7 @@ class CategorySuggestionService:
     def similarity_score(
         self, source_description: str, candidate_description: str
     ) -> float:
+        """Handle similarity score."""
         source_text = self._preprocess_description(source_description)
         candidate_text = self._preprocess_description(candidate_description)
         if not source_text or not candidate_text:
@@ -158,6 +172,7 @@ class CategorySuggestionService:
         source_description: str,
         candidate_descriptions: list[str],
     ) -> list[float]:
+        """Handle similarity scores."""
         if not candidate_descriptions:
             return []
 
@@ -182,19 +197,23 @@ class CategorySuggestionService:
             candidate_text for _, candidate_text in non_empty_candidates
         ]
         embeddings = self.model.encode(
-            [source_text] + candidate_texts_to_encode,
+            [source_text, *candidate_texts_to_encode],
             show_progress_bar=False,
         )
         expected_embedding_count = 1 + len(non_empty_candidates)
         if len(embeddings) != expected_embedding_count:
-            raise RuntimeError(
+            msg = (
                 "similarity_scores expected "
-                f"{expected_embedding_count} embeddings from model.encode, got {len(embeddings)}"
+                f"{expected_embedding_count} embeddings from model.encode, "
+                f"got {len(embeddings)}"
             )
+            raise RuntimeError(msg)
 
         source_embedding = embeddings[0]
         scores: list[float] = [0.0] * len(candidate_descriptions)
-        for index, candidate_embedding in zip(candidate_indices, embeddings[1:]):
+        for index, candidate_embedding in zip(
+            candidate_indices, embeddings[1:], strict=False
+        ):
             scores[index] = self._cosine_similarity(
                 source_embedding, candidate_embedding
             )
@@ -205,12 +224,11 @@ class CategorySuggestionService:
             return "expense_embeddings"
         if transaction_type == TransactionType.INCOME:
             return "income_embeddings"
-        raise ValueError(
-            f"Unsupported transaction type for suggestions: {transaction_type}"
-        )
+        msg = f"Unsupported transaction type for suggestions: {transaction_type}"
+        raise ValueError(msg)
 
-    def train_on_existing_transactions(self, db: Session):
-        """Train the model on existing transactions"""
+    def train_on_existing_transactions(self, db: Session) -> None:
+        """Train the model on existing transactions."""
         transactions = db.query(Transaction).all()
 
         for transaction in transactions:
@@ -255,12 +273,12 @@ class CategorySuggestionService:
         amount: float,
         transaction_type: TransactionType,
         top_k: int = 3,
-    ) -> List[Tuple[str, float]]:
-        """Suggest categories for a new transaction"""
+    ) -> list[tuple[str, float]]:
+        """Suggest categories for a new transaction."""
         if transaction_type == TransactionType.TRANSFER:
             return []
         text = f"{self._preprocess_description(description)} {abs(amount)}"
-        logger.info(f"Suggesting category for text: {text}")
+        logger.info("Suggesting category for text: %s", text)
         embedding = self.model.encode(text, show_progress_bar=False)
 
         collection_name = self._get_collection_name(transaction_type)
@@ -270,12 +288,14 @@ class CategorySuggestionService:
             collection_info = self.client.get_collection(collection_name)
             if collection_info.points_count == 0:
                 logger.warning(
-                    f"No points in {collection_name} collection, returning empty suggestions"
+                    "No points in %s collection, returning empty suggestions",
+                    collection_name,
                 )
                 return []
-        except Exception as e:
+        except QDRANT_ERRORS as exc:
             logger.warning(
-                f"Error checking collection: {e}, returning empty suggestions"
+                "Error checking collection: %s, returning empty suggestions",
+                exc,
             )
             return []
 
@@ -286,17 +306,21 @@ class CategorySuggestionService:
                 query=embedding.tolist(),
                 limit=top_k,
             )
-
-            # Return categories with confidence scores
-            return [
-                (hit.payload["category"], hit.score) for hit in search_result.points
-            ]
-        except Exception as e:
-            logger.error(f"Error searching for similar transactions: {e}")
+        except QDRANT_ERRORS:
+            logger.exception("Error searching for similar transactions")
             return []
 
-    def add_transaction(self, transaction: Transaction):
-        """Add a new transaction to the vector database"""
+        # Return categories with confidence scores.
+        suggestions: list[tuple[str, float]] = []
+        for hit in search_result.points:
+            payload = hit.payload or {}
+            category = payload.get("category")
+            if isinstance(category, str):
+                suggestions.append((category, float(hit.score)))
+        return suggestions
+
+    def add_transaction(self, transaction: Transaction) -> None:
+        """Add a new transaction to the vector database."""
         if transaction.transaction_type == TransactionType.TRANSFER:
             return
         if transaction.transfer_category is not None:
@@ -313,6 +337,8 @@ class CategorySuggestionService:
             if transaction.transaction_type == TransactionType.EXPENSE
             else transaction.income_category
         )
+        if category is None:
+            return
 
         self.client.upsert(
             collection_name=collection_name,
@@ -325,7 +351,7 @@ class CategorySuggestionService:
             ],
         )
 
-    def remove_transaction(self, transaction_id: int | None):
+    def remove_transaction(self, transaction_id: int | None) -> None:
         """Remove a transaction from all embedding collections."""
         if transaction_id is None:
             return
@@ -335,7 +361,7 @@ class CategorySuggestionService:
                 collection_name=collection_name, points_selector=[transaction_id]
             )
 
-    def sync_transaction(self, transaction: Transaction):
+    def sync_transaction(self, transaction: Transaction) -> None:
         """Synchronize the indexed representation for a transaction."""
         self.remove_transaction(transaction.id)
         self.add_transaction(transaction)

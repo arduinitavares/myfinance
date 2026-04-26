@@ -1,9 +1,12 @@
+"""Module for backend tests imports test_belfius_card_pdf."""
+
 from app.imports.belfius_card_pdf import BelfiusCardPdfExtractor
 from app.imports.pdf_text import lineize_pdf_pages
 from tests.imports.fixtures.belfius_card_pages import SANITIZED_BELFIUS_CARD_PAGE_TEXTS
 
 
-def test_parser_extracts_belfius_card_transactions_with_year_inference_and_ignores_fx_helper_lines():
+def test_parser_extracts_belfius_card_transactions() -> None:
+    """Verify parser extracts card rows and ignores fx helper lines."""
     result = BelfiusCardPdfExtractor().extract_from_pages(
         lineize_pdf_pages(SANITIZED_BELFIUS_CARD_PAGE_TEXTS),
         raw_artifact_ref="imports/session-22/attempts/1/evidence/raw.json",
@@ -28,8 +31,18 @@ def test_parser_extracts_belfius_card_transactions_with_year_inference_and_ignor
         "Uber UBER TRIP HELP.U SAO PAULO BR (Via Apple Pay)",
         "Wise Bruxelles BE (Via Apple Pay)",
     ]
-    assert [tx.signed_amount for tx in result.transactions] == [-30.74, -3.15, -2.81, -500.0]
-    assert [tx.debit_credit for tx in result.transactions] == ["debit", "debit", "debit", "debit"]
+    assert [tx.signed_amount for tx in result.transactions] == [
+        -30.74,
+        -3.15,
+        -2.81,
+        -500.0,
+    ]
+    assert [tx.debit_credit for tx in result.transactions] == [
+        "debit",
+        "debit",
+        "debit",
+        "debit",
+    ]
     assert [tx.source_locator for tx in result.transactions] == [
         "pdf:p1:l8-9",
         "pdf:p1:l10-11",

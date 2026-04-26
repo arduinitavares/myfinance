@@ -1,6 +1,7 @@
 """Migrate financial statistics fields to the current schema."""
 
 import logging
+from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -9,7 +10,7 @@ from app.database import SQLALCHEMY_DATABASE_URL
 from app.services.statistics_service import StatisticsService
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger: Any = logging.getLogger(__name__)
 
 
 def migrate_statistics_fields() -> None:

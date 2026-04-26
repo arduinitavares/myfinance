@@ -1,10 +1,14 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+"""Module for backend app schemas financial_projection."""
+
 from datetime import date
-from enum import Enum
+from enum import StrEnum
+
+from pydantic import BaseModel
 
 
-class ParamType(str, Enum):
+class ParamType(StrEnum):
+    """Represent param type."""
+
     PERCENTAGE = "percentage"
     AMOUNT = "amount"
     MONTHS = "months"
@@ -13,24 +17,33 @@ class ParamType(str, Enum):
 
 
 class ProjectionParameterBase(BaseModel):
+    """Represent projection parameter base."""
+
     param_name: str
     param_value: float
     param_type: ParamType
 
 
 class ProjectionParameterCreate(ProjectionParameterBase):
-    pass
+    """Represent projection parameter create."""
+
 
 
 class ProjectionParameter(ProjectionParameterBase):
+    """Represent projection parameter."""
+
     id: int
     scenario_id: int
-    
+
     class Config:
+        """Represent config."""
+
         orm_mode = True
 
 
 class ProjectionScenarioBase(BaseModel):
+    """Represent projection scenario base."""
+
     name: str
     description: str
     is_default: bool = False
@@ -38,23 +51,33 @@ class ProjectionScenarioBase(BaseModel):
 
 
 class ProjectionScenarioCreate(ProjectionScenarioBase):
-    parameters: List[ProjectionParameterCreate]
+    """Represent projection scenario create."""
+
+    parameters: list[ProjectionParameterCreate]
 
 
 class ProjectionScenario(ProjectionScenarioBase):
+    """Represent projection scenario."""
+
     id: int
     created_at: date
-    user_id: Optional[int] = None
-    
+    user_id: int | None = None
+
     class Config:
+        """Represent config."""
+
         orm_mode = True
 
 
 class ProjectionScenarioDetail(ProjectionScenario):
-    parameters: List[ProjectionParameter] = []
+    """Represent projection scenario detail."""
+
+    parameters: list[ProjectionParameter] = []
 
 
 class ProjectionResultBase(BaseModel):
+    """Represent projection result base."""
+
     month: int
     year: int
     projected_income: float
@@ -65,30 +88,40 @@ class ProjectionResultBase(BaseModel):
 
 
 class ProjectionResultCreate(ProjectionResultBase):
+    """Represent projection result create."""
+
     scenario_id: int
 
 
 class ProjectionResult(ProjectionResultBase):
+    """Represent projection result."""
+
     id: int
     scenario_id: int
     created_at: date
-    
+
     class Config:
+        """Represent config."""
+
         orm_mode = True
 
 
 class ProjectionTimeseries(BaseModel):
-    dates: List[str]
-    projected_income: List[float]
-    projected_expenses: List[float]
-    projected_investments: List[float]
-    projected_savings: List[float]
-    projected_net_worth: List[float]
+    """Represent projection timeseries."""
+
+    dates: list[str]
+    projected_income: list[float]
+    projected_expenses: list[float]
+    projected_investments: list[float]
+    projected_savings: list[float]
+    projected_net_worth: list[float]
 
 
 class ScenarioComparison(BaseModel):
-    scenario_names: List[str]
-    dates: List[str]
-    net_worth_series: Dict[str, List[float]]
-    savings_series: Dict[str, List[float]]
-    investment_series: Dict[str, List[float]]
+    """Represent scenario comparison."""
+
+    scenario_names: list[str]
+    dates: list[str]
+    net_worth_series: dict[str, list[float]]
+    savings_series: dict[str, list[float]]
+    investment_series: dict[str, list[float]]

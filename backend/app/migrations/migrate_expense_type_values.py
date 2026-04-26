@@ -1,5 +1,4 @@
-"""
-Migration to update expense_type enum values in category_statistics table.
+"""Migration to update expense_type enum values in category_statistics table.
 
 Old values:
 - ESSENTIAL -> FIXED_ESSENTIAL
@@ -11,15 +10,13 @@ This migration also adds support for new expense types:
 """
 
 import logging
-import os
 import sys
+from pathlib import Path
 
 from sqlalchemy import text
 
 # Add the parent directory to sys.path
-sys.path.append(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.database import engine
 
@@ -27,12 +24,12 @@ from app.database import engine
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def migrate_expense_type_values():
+def migrate_expense_type_values() -> None:
     """
-    Update expense_type enum values in category_statistics table from old values to new values.
+    Update expense_type enum values in category_statistics.
 
     Mapping:
     - ESSENTIAL -> FIXED_ESSENTIAL
@@ -51,13 +48,17 @@ def migrate_expense_type_values():
             # Update the expense_type column values
             result = conn.execute(
                 text(
-                    "UPDATE category_statistics SET expense_type = :new_value WHERE expense_type = :old_value"
+                    "UPDATE category_statistics SET expense_type = :new_value "
+                    "WHERE expense_type = :old_value"
                 ),
                 {"old_value": old_value, "new_value": new_value},
             )
 
             logger.info(
-                f"Updated {result.rowcount} rows from '{old_value}' to '{new_value}'"
+                "Updated %s rows from %r to %r",
+                result.rowcount,
+                old_value,
+                new_value,
             )
 
     logger.info("Expense type values migration completed successfully.")

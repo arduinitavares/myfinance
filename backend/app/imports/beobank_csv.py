@@ -1,10 +1,12 @@
+"""Module for backend app imports beobank_csv."""
+
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
+from .contracts import ExtractedTransaction, ExtractionResult, ImportIssue, RawEvidence
 from .csv_support import (
     BEOBANK_COMPACT_HEADER,
     BEOBANK_DEBIT_CREDIT_HEADER,
@@ -17,7 +19,7 @@ from .csv_support import (
 
 
 def _to_iso_date(value: str) -> str:
-    return datetime.strptime(value, "%d/%m/%Y").date().isoformat()
+    return datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=UTC).date().isoformat()
 
 
 def _parse_amount(value: str) -> float:
@@ -29,31 +31,85 @@ def _infer_numeric_filename_stem(file_path: str | Path) -> str:
     return stem if stem.isdigit() else ""
 
 
+def _find_supported_header(lines: list[str]) -> tuple[int, str, str] | None:
+    header_match = find_header_row(
+        lines, delimiter=";", expected_header=BEOBANK_COMPACT_HEADER
+    )
+    if header_match is not None:
+        header_row_index, _ = header_match
+        return header_row_index, ";", "compact"
+
+    header_match = find_header_row(
+        lines, delimiter=";", expected_header=BEOBANK_DEBIT_CREDIT_HEADER
+    )
+    if header_match is not None:
+        header_row_index, _ = header_match
+        return header_row_index, ";", "debit_credit"
+
+    header_match = find_header_row(
+        lines, delimiter=",", expected_header=BEOBANK_DEBIT_CREDIT_HEADER
+    )
+    if header_match is None:
+        return None
+    header_row_index, _ = header_match
+    return header_row_index, ",", "debit_credit"
+
+
+def _extract_row_fields(
+    row: dict[str, str], format_name: str
+) -> tuple[str, str, str, str]:
+    if format_name == "compact":
+        return (
+            row.get("Debet", ""),
+            row.get("Krediet", ""),
+            row.get("Omschrijving", ""),
+            row.get("Datum", ""),
+        )
+    return (
+        row.get("Debit", ""),
+        row.get("Credit", ""),
+        row.get("Message", ""),
+        row.get("Date", ""),
+    )
+
+
+def _signed_amount_and_type(debit: str, credit: str) -> tuple[float, str] | None:
+    if debit:
+        signed_amount = _parse_amount(debit)
+        if signed_amount > 0:
+            signed_amount = -signed_amount
+        return signed_amount, "Expense"
+    if credit:
+        return _parse_amount(credit), "Income"
+    return None
+
+
 class BeobankCsvExtractor:
+    """Represent beobank csv extractor."""
+
     extractor_id = "beobank_csv_v1"
 
-    def extract(self, *, file_path: str | Path, session_id: str, attempt_number: int):
+    def extract(
+        self, *, file_path: str | Path, session_id: str, attempt_number: int
+    ) -> tuple[RawEvidence, ExtractionResult]:
+        """Handle extract."""
         raw_text, encoding = read_csv_text(file_path)
         lines = raw_text.splitlines()
-        raw_artifact_ref = f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
+        raw_artifact_ref = (
+            f"imports/{session_id}/attempts/{attempt_number}/evidence/raw.json"
+        )
 
-        header_match = find_header_row(lines, delimiter=";", expected_header=BEOBANK_COMPACT_HEADER)
-        format_name = "compact"
-        delimiter = ";"
-        if header_match is None:
-            header_match = find_header_row(lines, delimiter=";", expected_header=BEOBANK_DEBIT_CREDIT_HEADER)
-            format_name = "debit_credit"
-        if header_match is None:
-            header_match = find_header_row(lines, delimiter=",", expected_header=BEOBANK_DEBIT_CREDIT_HEADER)
-            delimiter = ","
-            format_name = "debit_credit"
-
-        if header_match is None:
+        header_info = _find_supported_header(lines)
+        if header_info is None:
             evidence = build_csv_raw_evidence(raw_text=raw_text, snippets=[])
             return evidence, ExtractionResult(
                 extractor_id=self.extractor_id,
                 raw_artifact_ref=raw_artifact_ref,
-                source_metadata={"provider_hint": "beobank", "file_type": "csv", "encoding": encoding},
+                source_metadata={
+                    "provider_hint": "beobank",
+                    "file_type": "csv",
+                    "encoding": encoding,
+                },
                 statement_metadata={},
                 transactions=[],
                 issues=[
@@ -66,8 +122,10 @@ class BeobankCsvExtractor:
                 overall_confidence=0.0,
             )
 
-        header_row_index, _ = header_match
-        rows = build_dict_rows(lines, delimiter=delimiter, header_row_index=header_row_index)
+        header_row_index, delimiter, format_name = header_info
+        rows = build_dict_rows(
+            lines, delimiter=delimiter, header_row_index=header_row_index
+        )
         transactions: list[ExtractedTransaction] = []
         snippets: list[dict] = []
 
@@ -75,29 +133,9 @@ class BeobankCsvExtractor:
             if not any(row.values()):
                 continue
 
-            if format_name == "compact":
-                debit = row.get("Debet", "")
-                credit = row.get("Krediet", "")
-                description = row.get("Omschrijving", "")
-                tx_date = row.get("Datum", "")
-            else:
-                debit = row.get("Debit", "")
-                credit = row.get("Credit", "")
-                description = row.get("Message", "")
-                tx_date = row.get("Date", "")
-
-            signed_amount: float | None = None
-            proposed_type: str | None = None
-            if debit:
-                signed_amount = _parse_amount(debit)
-                if signed_amount > 0:
-                    signed_amount = -signed_amount
-                proposed_type = "Expense"
-            elif credit:
-                signed_amount = _parse_amount(credit)
-                proposed_type = "Income"
-
-            if signed_amount is None:
+            debit, credit, description, tx_date = _extract_row_fields(row, format_name)
+            amount_and_type = _signed_amount_and_type(debit, credit)
+            if amount_and_type is None:
                 snippets.append(
                     {
                         "row_number": row_number,
@@ -108,6 +146,7 @@ class BeobankCsvExtractor:
                 )
                 continue
 
+            signed_amount, proposed_type = amount_and_type
             transactions.append(
                 ExtractedTransaction(
                     transaction_date=_to_iso_date(tx_date),
@@ -132,7 +171,9 @@ class BeobankCsvExtractor:
         evidence = build_csv_raw_evidence(raw_text=raw_text, snippets=snippets)
         statement_metadata = {
             **statement_period_from_transactions(transactions),
-            "account_number_hint": _infer_numeric_filename_stem(file_path) if format_name == "compact" else "",
+            "account_number_hint": _infer_numeric_filename_stem(file_path)
+            if format_name == "compact"
+            else "",
             "currency": "EUR",
         }
         issues = []

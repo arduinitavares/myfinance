@@ -1,8 +1,15 @@
-from datetime import date
+"""Module for backend tests test_europe_transfer_cleanup_migration."""
 
-import pytest
+from dataclasses import dataclass
+from datetime import date
+from typing import Never, cast
 
 import app.migrations.migrate_europe_iban_reclassification as migration_module
+import pytest
+from app.migrations.migrate_europe_iban_reclassification import (
+    _contains_known_iban,
+    migrate_europe_iban_reclassification,
+)
 from app.models.classification import (
     ClassificationSession,
     ClassificationSessionStatus,
@@ -10,15 +17,38 @@ from app.models.classification import (
 )
 from app.models.imports import ImportSession
 from app.models.statistics import FinancialStatistics, StatisticsPeriod
-from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
-
-from app.migrations.migrate_europe_iban_reclassification import (
-    _contains_known_iban,
-    migrate_europe_iban_reclassification,
+from app.models.transaction import (
+    ExpenseCategory,
+    Transaction,
+    TransactionType,
+    TransferCategory,
 )
+from sqlalchemy.orm import Session
+
+EXPECTED_RECOMPUTED_EXPENSES: float = 150.0
+EXPECTED_RECOMPUTED_EXPENSE_COUNT: int = 2
 
 
-def _create_import_session(db_session, *, extractor_id: str | None = None, suffix: str) -> ImportSession:
+@dataclass(frozen=True)
+class MigrationFixture:
+    """Transaction identifiers used by the migration scenario."""
+
+    belfius_settlement_id: int
+    recurrence_pattern_id: int
+    europe_loan_payment_id: int
+    compact_beobank_settlement_id: int
+    internal_transfer_id: int
+    mastercard_payment_id: int
+    wise_row_id: int
+    parser_artifact_id: int
+
+
+def _create_import_session(
+    db_session: Session,
+    *,
+    extractor_id: str | None = None,
+    suffix: str,
+) -> ImportSession:
     session = ImportSession(
         file_name=f"statement-{suffix}.pdf",
         file_hash=f"hash-{suffix}",
@@ -32,19 +62,29 @@ def _create_import_session(db_session, *, extractor_id: str | None = None, suffi
 
 
 def _create_transaction(
-    db_session,
-    *,
-    account_number: str,
-    description: str,
-    amount: float,
-    transaction_type: TransactionType,
-    expense_category: ExpenseCategory | None = None,
-    transfer_category: TransferCategory | None = None,
-    counterparty_account: str | None = None,
-    import_source_description: str | None = None,
-    import_session_id: int | None = None,
-    source_bank: str = "Beobank",
+    db_session: Session,
+    **fields: object,
 ) -> Transaction:
+    account_number = cast("str", fields.pop("account_number"))
+    description = cast("str", fields.pop("description"))
+    amount = cast("float", fields.pop("amount"))
+    transaction_type = cast("TransactionType", fields.pop("transaction_type"))
+    expense_category = cast(
+        "ExpenseCategory | None",
+        fields.pop("expense_category", None),
+    )
+    transfer_category = cast(
+        "TransferCategory | None",
+        fields.pop("transfer_category", None),
+    )
+    counterparty_account = cast("str | None", fields.pop("counterparty_account", None))
+    import_source_description = cast(
+        "str | None",
+        fields.pop("import_source_description", None),
+    )
+    import_session_id = cast("int | None", fields.pop("import_session_id", None))
+    source_bank = cast("str", fields.pop("source_bank", "Beobank"))
+    assert fields == {}
     transaction = Transaction(
         account_number=account_number,
         transaction_date=date(2025, 1, 15),
@@ -66,7 +106,7 @@ def _create_transaction(
 
 
 def _attach_active_legacy_recurrence(
-    db_session,
+    db_session: Session,
     *,
     transaction: Transaction,
     category: str,
@@ -101,13 +141,12 @@ def _attach_active_legacy_recurrence(
     return pattern
 
 
-def test_contains_known_iban_returns_single_match_only():
-    assert _contains_known_iban("IBAN BE36950263030181") == "BE36950263030181"
-    assert _contains_known_iban("IBAN BE36950263030181 and BE74950226230607") is None
-    assert _contains_known_iban("nothing to see here") is None
+def _require_id(value: int | None) -> int:
+    assert value is not None
+    return value
 
 
-def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(db_session):
+def _seed_reclassification_fixture(db_session: Session) -> MigrationFixture:
     mastercard_session = _create_import_session(
         db_session,
         extractor_id="beobank_mastercard_pdf_v1",
@@ -118,7 +157,6 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         extractor_id="beobank_mastercard_pdf_v1",
         suffix="parser-artifact",
     )
-
     belfius_settlement = _create_transaction(
         db_session,
         account_number="BE46063651946836",
@@ -134,7 +172,6 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         transaction=belfius_settlement,
         category=ExpenseCategory.CREDIT_PAYMENT.value,
     )
-
     europe_loan_payment = _create_transaction(
         db_session,
         account_number="50212984548",
@@ -194,104 +231,143 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         import_session_id=parser_session.id,
         source_bank="Beobank",
     )
-
-    db_session.add(
-        FinancialStatistics(
-            period=StatisticsPeriod.MONTHLY,
-            date=date(2025, 1, 31),
-            period_income=0.0,
-            period_expenses=565.0,
-            period_net_savings=-565.0,
-            savings_rate=0.0,
-            total_income=0.0,
-            total_expenses=565.0,
-            total_net_savings=-565.0,
-            income_count=0,
-            expense_count=4,
-            average_income=0.0,
-            average_expense=141.25,
-            yearly_income=0.0,
-            yearly_expenses=565.0,
-        )
+    return MigrationFixture(
+        belfius_settlement_id=_require_id(belfius_settlement.id),
+        recurrence_pattern_id=_require_id(recurrence_pattern.id),
+        europe_loan_payment_id=_require_id(europe_loan_payment.id),
+        compact_beobank_settlement_id=_require_id(compact_beobank_settlement.id),
+        internal_transfer_id=_require_id(internal_transfer.id),
+        mastercard_payment_id=_require_id(mastercard_payment.id),
+        wise_row_id=_require_id(wise_row.id),
+        parser_artifact_id=_require_id(parser_artifact.id),
     )
-    db_session.add(
-        FinancialStatistics(
-            period=StatisticsPeriod.ALL_TIME,
-            date=None,
-            period_income=0.0,
-            period_expenses=565.0,
-            period_net_savings=-565.0,
-            savings_rate=0.0,
-            total_income=0.0,
-            total_expenses=565.0,
-            total_net_savings=-565.0,
-            income_count=0,
-            expense_count=4,
-            average_income=0.0,
-            average_expense=141.25,
-            yearly_income=0.0,
-            yearly_expenses=565.0,
+
+
+def _seed_financial_statistics(db_session: Session) -> None:
+    for period, stats_date in (
+        (StatisticsPeriod.MONTHLY, date(2025, 1, 31)),
+        (StatisticsPeriod.ALL_TIME, None),
+    ):
+        db_session.add(
+            FinancialStatistics(
+                period=period,
+                date=stats_date,
+                period_income=0.0,
+                period_expenses=565.0,
+                period_net_savings=-565.0,
+                savings_rate=0.0,
+                total_income=0.0,
+                total_expenses=565.0,
+                total_net_savings=-565.0,
+                income_count=0,
+                expense_count=4,
+                average_income=0.0,
+                average_expense=141.25,
+                yearly_income=0.0,
+                yearly_expenses=565.0,
+            )
         )
-    )
-    db_session.commit()
 
-    summary = migrate_europe_iban_reclassification(db_session)
-    db_session.expire_all()
 
-    refreshed_settlement = db_session.get(Transaction, belfius_settlement.id)
+def _assert_reclassification_results(
+    db_session: Session,
+    fixture: MigrationFixture,
+) -> None:
+    refreshed_settlement = db_session.get(Transaction, fixture.belfius_settlement_id)
     assert refreshed_settlement is not None
     assert refreshed_settlement.transaction_type == TransactionType.TRANSFER
-    assert refreshed_settlement.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
+    assert (
+        refreshed_settlement.transfer_category
+        == TransferCategory.CREDIT_CARD_SETTLEMENT
+    )
     assert refreshed_settlement.expense_category is None
     assert refreshed_settlement.income_category is None
     assert refreshed_settlement.recurrence_pattern_id is None
 
-    refreshed_pattern = db_session.get(RecurrencePattern, recurrence_pattern.id)
+    refreshed_pattern = db_session.get(RecurrencePattern, fixture.recurrence_pattern_id)
     assert refreshed_pattern is not None
     assert refreshed_pattern.active is False
 
-    refreshed_loan_payment = db_session.get(Transaction, europe_loan_payment.id)
+    refreshed_loan_payment = db_session.get(
+        Transaction, fixture.europe_loan_payment_id
+    )
     assert refreshed_loan_payment is not None
     assert refreshed_loan_payment.transaction_type == TransactionType.TRANSFER
-    assert refreshed_loan_payment.transfer_category == TransferCategory.DEBT_REPAYMENT_SENT
+    assert (
+        refreshed_loan_payment.transfer_category == TransferCategory.DEBT_REPAYMENT_SENT
+    )
 
-    refreshed_internal_transfer = db_session.get(Transaction, internal_transfer.id)
+    refreshed_internal_transfer = db_session.get(
+        Transaction, fixture.internal_transfer_id
+    )
     assert refreshed_internal_transfer is not None
     assert refreshed_internal_transfer.transaction_type == TransactionType.TRANSFER
-    assert refreshed_internal_transfer.transfer_category == TransferCategory.INTERNAL_TRANSFER
+    assert (
+        refreshed_internal_transfer.transfer_category
+        == TransferCategory.INTERNAL_TRANSFER
+    )
 
-    refreshed_compact_settlement = db_session.get(Transaction, compact_beobank_settlement.id)
+    refreshed_compact_settlement = db_session.get(
+        Transaction, fixture.compact_beobank_settlement_id
+    )
     assert refreshed_compact_settlement is not None
     assert refreshed_compact_settlement.transaction_type == TransactionType.TRANSFER
-    assert refreshed_compact_settlement.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
+    assert (
+        refreshed_compact_settlement.transfer_category
+        == TransferCategory.CREDIT_CARD_SETTLEMENT
+    )
 
-    refreshed_mastercard_payment = db_session.get(Transaction, mastercard_payment.id)
+    refreshed_mastercard_payment = db_session.get(
+        Transaction, fixture.mastercard_payment_id
+    )
     assert refreshed_mastercard_payment is not None
     assert refreshed_mastercard_payment.transaction_type == TransactionType.TRANSFER
-    assert refreshed_mastercard_payment.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
+    assert (
+        refreshed_mastercard_payment.transfer_category
+        == TransferCategory.CREDIT_CARD_SETTLEMENT
+    )
 
-    refreshed_wise = db_session.get(Transaction, wise_row.id)
+    refreshed_wise = db_session.get(Transaction, fixture.wise_row_id)
     assert refreshed_wise is not None
     assert refreshed_wise.transaction_type == TransactionType.EXPENSE
     assert refreshed_wise.transfer_category is None
 
-    refreshed_parser_artifact = db_session.get(Transaction, parser_artifact.id)
+    refreshed_parser_artifact = db_session.get(
+        Transaction, fixture.parser_artifact_id
+    )
     assert refreshed_parser_artifact is not None
-    assert refreshed_parser_artifact.description.endswith("-2 IBAN BE11950212984548")
+    assert refreshed_parser_artifact.description.endswith(
+        "-2 IBAN BE11950212984548"
+    )
     assert refreshed_parser_artifact.transaction_type == TransactionType.EXPENSE
     assert refreshed_parser_artifact.transfer_category is None
 
+
+def _assert_pattern_links_removed(
+    db_session: Session,
+    fixture: MigrationFixture,
+) -> None:
     active_pattern_links = (
         db_session.query(Transaction)
-        .join(RecurrencePattern, Transaction.recurrence_pattern_id == RecurrencePattern.id)
+        .join(
+            RecurrencePattern, Transaction.recurrence_pattern_id == RecurrencePattern.id
+        )
         .filter(
-            Transaction.id.in_([belfius_settlement.id, europe_loan_payment.id, mastercard_payment.id]),
+            Transaction.id.in_(
+                [
+                    fixture.belfius_settlement_id,
+                    fixture.europe_loan_payment_id,
+                    fixture.mastercard_payment_id,
+                ]
+            ),
             RecurrencePattern.active.is_(True),
         )
         .count()
     )
     assert active_pattern_links == 0
 
+
+def _assert_recomputed_statistics(db_session: Session) -> None:
     monthly_stats = (
         db_session.query(FinancialStatistics)
         .filter(
@@ -305,12 +381,34 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         .filter(FinancialStatistics.period == StatisticsPeriod.ALL_TIME)
         .one()
     )
-    assert monthly_stats.period_expenses == 150.0
-    assert monthly_stats.total_expenses == 150.0
-    assert monthly_stats.expense_count == 2
-    assert all_time_stats.period_expenses == 150.0
-    assert all_time_stats.total_expenses == 150.0
+    assert monthly_stats.period_expenses == EXPECTED_RECOMPUTED_EXPENSES
+    assert monthly_stats.total_expenses == EXPECTED_RECOMPUTED_EXPENSES
+    assert monthly_stats.expense_count == EXPECTED_RECOMPUTED_EXPENSE_COUNT
+    assert all_time_stats.period_expenses == EXPECTED_RECOMPUTED_EXPENSES
+    assert all_time_stats.total_expenses == EXPECTED_RECOMPUTED_EXPENSES
 
+
+def test_contains_known_iban_returns_single_match_only() -> None:
+    """Verify contains known iban returns single match only."""
+    assert _contains_known_iban("IBAN BE36950263030181") == "BE36950263030181"
+    assert _contains_known_iban("IBAN BE36950263030181 and BE74950226230607") is None
+    assert _contains_known_iban("nothing to see here") is None
+
+
+def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(
+    db_session: Session,
+) -> None:
+    """Verify migration rewrites only deterministic rows."""
+    fixture = _seed_reclassification_fixture(db_session)
+    _seed_financial_statistics(db_session)
+    db_session.commit()
+
+    summary = migrate_europe_iban_reclassification(db_session)
+    db_session.expire_all()
+
+    _assert_reclassification_results(db_session, fixture)
+    _assert_pattern_links_removed(db_session, fixture)
+    _assert_recomputed_statistics(db_session)
     assert summary == {
         "updated_transactions": 4,
         "skipped_wise": 1,
@@ -322,8 +420,10 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(d
         "recomputed_aggregates": 1,
     }
 
-
-def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_changes(db_session):
+def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_changes(
+    db_session: Session,
+) -> None:
+    """Verify migration skips recompute when nothing changes."""
     already_correct = _create_transaction(
         db_session,
         account_number="BE11950212984548",
@@ -356,7 +456,10 @@ def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_chang
     }
 
 
-def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_signals(db_session):
+def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_signals(
+    db_session: Session,
+) -> None:
+    """Verify migration skips conflicting known account signals."""
     conflicting = _create_transaction(
         db_session,
         account_number="BE11950212984548",
@@ -391,7 +494,10 @@ def test_migrate_europe_iban_reclassification_skips_conflicting_known_account_si
     }
 
 
-def test_migrate_europe_iban_reclassification_skips_non_europe_row_even_with_known_iban_pair(db_session):
+def test_migration_skips_non_europe_row_with_known_iban_pair(
+    db_session: Session,
+) -> None:
+    """Verify migration skips non Europe rows with known IBANs."""
     non_europe = _create_transaction(
         db_session,
         account_number="BE46063651946836",
@@ -425,7 +531,10 @@ def test_migrate_europe_iban_reclassification_skips_non_europe_row_even_with_kno
     }
 
 
-def test_migrate_europe_iban_reclassification_counts_missing_pair_as_no_signal(db_session):
+def test_migrate_europe_iban_reclassification_counts_missing_pair_as_no_signal(
+    db_session: Session,
+) -> None:
+    """Verify migrate europe iban reclassification counts missing pair as no signal."""
     no_pair = _create_transaction(
         db_session,
         account_number="50212984548",
@@ -458,9 +567,10 @@ def test_migrate_europe_iban_reclassification_counts_missing_pair_as_no_signal(d
 
 
 def test_migrate_europe_iban_reclassification_rolls_back_when_recompute_fails(
-    db_session,
-    monkeypatch,
-):
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify migrate europe iban reclassification rolls back when recompute fails."""
     settlement = _create_transaction(
         db_session,
         account_number="BE46063651946836",
@@ -473,8 +583,9 @@ def test_migrate_europe_iban_reclassification_rolls_back_when_recompute_fails(
     )
     db_session.commit()
 
-    def fail_initialize_statistics(*args, **kwargs):
-        raise RuntimeError("forced recompute failure")
+    def fail_initialize_statistics(*_args: object, **_kwargs: object) -> Never:
+        msg = "forced recompute failure"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(
         migration_module.StatisticsService,

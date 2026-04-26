@@ -1,14 +1,17 @@
+"""Module for backend app services ecb_exchange_rates."""
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from enum import Enum
-import xml.etree.ElementTree as ET
+from enum import StrEnum
+from typing import TYPE_CHECKING, ClassVar
 
 import httpx
+from defusedxml import ElementTree
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.fx import FXDailyReferenceRate
@@ -19,17 +22,31 @@ from app.services.fx_pairs import required_fx_quotes
 from app.services.fx_refresh_lock import acquire_fx_refresh_lock
 from app.services.reporting_currency import ALLOWED_REPORTING_CURRENCIES
 
-FX_COVERAGE_LOOKBACK_DAYS = 10
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+FX_COVERAGE_LOOKBACK_DAYS: int = 10
+ECB_PUBLICATION_WEEKDAY_COUNT: int = 5
+type NowProvider = Callable[[], datetime]
+
+
+def utc_now() -> datetime:
+    """Return the current UTC datetime."""
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
 class FXConversionCoverageRequest:
+    """Represent f x conversion coverage request."""
+
     raw_currency: str
     reporting_currency: str
     transaction_date: date
 
 
-class FXConversionCoverageStatus(str, Enum):
+class FXConversionCoverageStatus(StrEnum):
+    """Represent f x conversion coverage status."""
+
     ALREADY_COVERED = "already_covered"
     FETCHED_AND_COVERED = "fetched_and_covered"
     UNSUPPORTED = "unsupported"
@@ -40,6 +57,8 @@ class FXConversionCoverageStatus(str, Enum):
 
 @dataclass(frozen=True)
 class FXConversionCoverageResult:
+    """Represent f x conversion coverage result."""
+
     status: FXConversionCoverageStatus
     required_quotes: tuple[str, ...] = ()
     missing_dates: tuple[date, ...] = ()
@@ -62,6 +81,8 @@ class _FXConversionCoverageBatch:
 
 @dataclass(frozen=True)
 class FXRefreshResult:
+    """Represent f x refresh result."""
+
     start_date: date
     end_date: date
     inserted_or_updated_rows: int
@@ -70,11 +91,15 @@ class FXRefreshResult:
 
 
 class ECBExchangeRateService:
+    """Represent e c b exchange rate service."""
+
     SOURCE_NAME = "ECB_EXR"
     BASE_CURRENCY = "EUR"
     SUPPORTED_QUOTES = ("USD", "BRL")
     SUPPORTED_CURRENCIES = frozenset(ALLOWED_REPORTING_CURRENCIES)
-    ECB_XML_NAMESPACE = {"ecb": "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"}
+    ECB_XML_NAMESPACE: ClassVar[dict[str, str]] = {
+        "ecb": "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"
+    }
 
     def __init__(
         self,
@@ -82,14 +107,16 @@ class ECBExchangeRateService:
         *,
         http_client: httpx.Client | None = None,
         timeout: float = 30.0,
-        now_provider=None,
+        now_provider: NowProvider | None = None,
     ) -> None:
+        """Initialize the instance."""
         self.db = db
         self._http_client = http_client
         self._timeout = timeout
-        self._now_provider = now_provider or datetime.utcnow
+        self._now_provider = now_provider or utc_now
 
     def has_seed_data(self) -> bool:
+        """Handle has seed data."""
         existing_id = self.db.execute(
             select(FXDailyReferenceRate.id)
             .where(FXDailyReferenceRate.source_name == self.SOURCE_NAME)
@@ -101,17 +128,25 @@ class ECBExchangeRateService:
         self,
         requests: list[FXConversionCoverageRequest],
     ) -> FXConversionCoverageResult:
+        """Handle check conversion coverage."""
         coverage_batch = self._coverage_inputs(requests)
         coverage_inputs = coverage_batch.inputs
         has_supported_non_identity_request = any(
-            coverage_input.required_quotes
-            for coverage_input in coverage_inputs
+            coverage_input.required_quotes for coverage_input in coverage_inputs
         )
         if coverage_batch.has_unsupported and not has_supported_non_identity_request:
-            return FXConversionCoverageResult(status=FXConversionCoverageStatus.UNSUPPORTED)
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.UNSUPPORTED
+            )
 
         required_quotes = tuple(
-            sorted({quote for coverage_input in coverage_inputs for quote in coverage_input.required_quotes})
+            sorted(
+                {
+                    quote
+                    for coverage_input in coverage_inputs
+                    for quote in coverage_input.required_quotes
+                }
+            )
         )
         missing_dates = tuple(
             sorted(
@@ -141,6 +176,7 @@ class ECBExchangeRateService:
         )
 
     def earliest_covered_date(self) -> date | None:
+        """Handle earliest covered date."""
         covered_dates = (
             select(FXDailyReferenceRate.rate_date.label("rate_date"))
             .where(
@@ -149,7 +185,10 @@ class ECBExchangeRateService:
                 FXDailyReferenceRate.quoted_currency.in_(self.SUPPORTED_QUOTES),
             )
             .group_by(FXDailyReferenceRate.rate_date)
-            .having(func.count(func.distinct(FXDailyReferenceRate.quoted_currency)) == len(self.SUPPORTED_QUOTES))
+            .having(
+                func.count(func.distinct(FXDailyReferenceRate.quoted_currency))
+                == len(self.SUPPORTED_QUOTES)
+            )
             .subquery()
         )
         return self.db.execute(
@@ -164,7 +203,9 @@ class ECBExchangeRateService:
         has_unsupported = False
         for request in requests:
             normalized_raw_currency = normalize_currency_code(request.raw_currency)
-            normalized_reporting_currency = normalize_currency_code(request.reporting_currency)
+            normalized_reporting_currency = normalize_currency_code(
+                request.reporting_currency
+            )
 
             if (
                 normalized_raw_currency not in self.SUPPORTED_CURRENCIES
@@ -207,20 +248,27 @@ class ECBExchangeRateService:
                 FXDailyReferenceRate.quoted_currency.in_(required_quotes),
             )
             .group_by(FXDailyReferenceRate.rate_date)
-            .having(func.count(func.distinct(FXDailyReferenceRate.quoted_currency)) == len(required_quotes))
+            .having(
+                func.count(func.distinct(FXDailyReferenceRate.quoted_currency))
+                == len(required_quotes)
+            )
             .order_by(FXDailyReferenceRate.rate_date.desc())
             .limit(1)
         ).scalar_one_or_none()
 
     def latest_publication_day_on_or_before(self, day: date) -> date:
+        """Handle latest publication day on or before."""
         while not self._is_ecb_publication_day(day):
             day -= timedelta(days=1)
         return day
 
     def has_historical_seed_coverage(self, *, today: date | None = None) -> bool:
+        """Handle has historical seed coverage."""
         end_date = today or self._today()
         required_start_date = self._historical_seed_start_date(end_date)
-        expected_row_count = self._expected_observation_count(required_start_date, end_date)
+        expected_row_count = self._expected_observation_count(
+            required_start_date, end_date
+        )
         actual_row_count = self.db.execute(
             select(func.count(FXDailyReferenceRate.id)).where(
                 FXDailyReferenceRate.source_name == self.SOURCE_NAME,
@@ -234,6 +282,7 @@ class ECBExchangeRateService:
         return actual_row_count == expected_row_count
 
     def seed_historical_rates(self, *, today: date | None = None) -> FXRefreshResult:
+        """Handle seed historical rates."""
         end_date = today or self._today()
         start_date = self._historical_seed_start_date(end_date)
         return self.refresh_range(start_date, end_date)
@@ -244,6 +293,7 @@ class ECBExchangeRateService:
         today: date | None = None,
         window_days: int | None = None,
     ) -> FXRefreshResult:
+        """Handle catch up recent days."""
         end_date = today or self._today()
         effective_window = window_days or settings.fx_startup_catchup_days
         start_date = end_date - timedelta(days=max(effective_window - 1, 0))
@@ -256,11 +306,14 @@ class ECBExchangeRateService:
         lock_timeout_seconds: float = 0.0,
         lock_poll_seconds: float = 0.1,
     ) -> FXConversionCoverageResult:
+        """Handle ensure conversion coverage."""
         coverage = self.check_conversion_coverage(requests)
         if coverage.status != FXConversionCoverageStatus.MISSING:
             return coverage
 
-        start_date = min(coverage.missing_dates) - timedelta(days=FX_COVERAGE_LOOKBACK_DAYS)
+        start_date = min(coverage.missing_dates) - timedelta(
+            days=FX_COVERAGE_LOOKBACK_DAYS
+        )
         end_date = max(coverage.missing_dates)
 
         with acquire_fx_refresh_lock(
@@ -283,7 +336,7 @@ class ECBExchangeRateService:
 
             try:
                 self.refresh_range(start_date, end_date)
-            except Exception as exc:
+            except (ElementTree.ParseError, httpx.HTTPError, ValueError) as exc:
                 self.db.rollback()
                 return FXConversionCoverageResult(
                     status=FXConversionCoverageStatus.FETCH_FAILED,
@@ -313,8 +366,10 @@ class ECBExchangeRateService:
             )
 
     def refresh_range(self, start_date: date, end_date: date) -> FXRefreshResult:
+        """Handle refresh range."""
         if start_date > end_date:
-            raise ValueError("start_date must be on or before end_date")
+            msg = "start_date must be on or before end_date"
+            raise ValueError(msg)
 
         fetched_at = self._now_provider()
         series = self._normalize_series(
@@ -344,7 +399,10 @@ class ECBExchangeRateService:
         ).scalar_one_or_none()
         candidate_dates = [
             candidate_date
-            for candidate_date in (earliest_transaction_date, earliest_import_draft_date)
+            for candidate_date in (
+                earliest_transaction_date,
+                earliest_import_draft_date,
+            )
             if candidate_date is not None
         ]
         if candidate_dates:
@@ -353,11 +411,19 @@ class ECBExchangeRateService:
         try:
             return end_date.replace(year=end_date.year - settings.fx_seed_years)
         except ValueError:
-            return end_date.replace(month=2, day=28, year=end_date.year - settings.fx_seed_years)
+            return end_date.replace(
+                month=2, day=28, year=end_date.year - settings.fx_seed_years
+            )
 
-    def _fetch_series(self, start_date: date, end_date: date) -> dict[date, dict[str, Decimal]]:
-        response = self._get_xml_response(self._series_url_for_range(start_date, end_date))
-        return self._parse_series(response.text, start_date=start_date, end_date=end_date)
+    def _fetch_series(
+        self, start_date: date, end_date: date
+    ) -> dict[date, dict[str, Decimal]]:
+        response = self._get_xml_response(
+            self._series_url_for_range(start_date, end_date)
+        )
+        return self._parse_series(
+            response.text, start_date=start_date, end_date=end_date
+        )
 
     def _series_url_for_range(self, start_date: date, end_date: date) -> str:
         recent_cutoff = self._today() - timedelta(days=89)
@@ -370,7 +436,9 @@ class ECBExchangeRateService:
             with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
                 response = client.get(url, timeout=self._timeout, follow_redirects=True)
         else:
-            response = self._http_client.get(url, timeout=self._timeout, follow_redirects=True)
+            response = self._http_client.get(
+                url, timeout=self._timeout, follow_redirects=True
+            )
 
         response.raise_for_status()
         return response
@@ -382,7 +450,7 @@ class ECBExchangeRateService:
         start_date: date,
         end_date: date,
     ) -> dict[date, dict[str, Decimal]]:
-        root = ET.fromstring(xml_text)
+        root = ElementTree.fromstring(xml_text)
         series: dict[date, dict[str, Decimal]] = {}
 
         for day_cube in root.findall(".//ecb:Cube[@time]", self.ECB_XML_NAMESPACE):
@@ -391,7 +459,9 @@ class ECBExchangeRateService:
                 continue
 
             quotes: dict[str, Decimal] = {}
-            for quote_cube in day_cube.findall("ecb:Cube[@currency]", self.ECB_XML_NAMESPACE):
+            for quote_cube in day_cube.findall(
+                "ecb:Cube[@currency]", self.ECB_XML_NAMESPACE
+            ):
                 currency = quote_cube.attrib["currency"]
                 if currency not in self.SUPPORTED_QUOTES:
                     continue
@@ -424,7 +494,9 @@ class ECBExchangeRateService:
 
         return normalized
 
-    def _upsert_series(self, series: dict[date, dict[str, Decimal]], *, fetched_at: datetime) -> int:
+    def _upsert_series(
+        self, series: dict[date, dict[str, Decimal]], *, fetched_at: datetime
+    ) -> int:
         if not series:
             return 0
 
@@ -437,8 +509,7 @@ class ECBExchangeRateService:
             )
         ).scalars()
         existing_by_key = {
-            (row.rate_date, row.quoted_currency): row
-            for row in existing_rows
+            (row.rate_date, row.quoted_currency): row for row in existing_rows
         }
 
         inserted_or_updated = 0
@@ -509,7 +580,10 @@ class ECBExchangeRateService:
         return publication_day_count * len(self.SUPPORTED_QUOTES)
 
     def _is_ecb_publication_day(self, day: date) -> bool:
-        return day.weekday() < 5 and day not in self._target_closing_days(day.year)
+        return (
+            day.weekday() < ECB_PUBLICATION_WEEKDAY_COUNT
+            and day not in self._target_closing_days(day.year)
+        )
 
     def _target_closing_days(self, year: int) -> set[date]:
         easter_sunday = self._easter_sunday(year)
@@ -533,10 +607,10 @@ class ECBExchangeRateService:
         h = (19 * a + b - d - g + 15) % 30
         i = c // 4
         k = c % 4
-        l = (32 + 2 * e + 2 * i - h - k) % 7
-        m = (a + 11 * h + 22 * l) // 451
-        month = (h + l - 7 * m + 114) // 31
-        day = ((h + l - 7 * m + 114) % 31) + 1
+        adjustment = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * adjustment) // 451
+        month = (h + adjustment - 7 * m + 114) // 31
+        day = ((h + adjustment - 7 * m + 114) % 31) + 1
         return date(year, month, day)
 
     def _today(self) -> date:

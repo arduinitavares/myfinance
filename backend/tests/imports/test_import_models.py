@@ -1,15 +1,25 @@
-from sqlalchemy import create_engine, inspect, text
+"""Module for backend tests imports test_import_models."""
 
-from app.database import engine
-from app.database import Base
-import app.database_manager as database_manager
+from pathlib import Path
+
 import app.config as config_module
+import pytest
+from app import database_manager
+from app.database import Base, engine
 from app.imports.contracts import ExtractedTransaction, ImportStrategyKey
-from app.models.imports import ImportBatchItem, ImportBatchRun, ImportSession
+from app.models.imports import ImportSession
 from app.schemas.transaction import Transaction, TransactionCreate
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
+
+RECURRENCE_PATTERN_ID: int = 42
 
 
-def test_settings_exposes_batch_import_dir(monkeypatch, tmp_path):
+def test_settings_exposes_batch_import_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verify settings exposes batch import dir."""
     batch_dir = tmp_path / "bank_files"
     monkeypatch.setenv("MYFINANCE_BATCH_IMPORT_DIR", str(batch_dir))
 
@@ -18,16 +28,22 @@ def test_settings_exposes_batch_import_dir(monkeypatch, tmp_path):
     assert loaded.batch_import_dir == batch_dir.resolve()
 
 
-def test_import_tables_exist_after_init_database(tmp_path, monkeypatch):
+def test_import_tables_exist_after_init_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify import tables exist after init database."""
     db_path = tmp_path / "bootstrap.sqlite"
-    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    temp_engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
 
     monkeypatch.setattr(database_manager, "engine", temp_engine)
     database_manager.init_database()
 
     with temp_engine.begin() as conn:
-        ImportBatchItem.__table__.drop(bind=conn)
-        ImportBatchRun.__table__.drop(bind=conn)
+        conn.execute(text("DROP TABLE import_batch_items"))
+        conn.execute(text("DROP TABLE import_batch_runs"))
 
     database_manager.init_database()
 
@@ -41,7 +57,10 @@ def test_import_tables_exist_after_init_database(tmp_path, monkeypatch):
         "import_batch_items",
     } <= tables
 
-    batch_item_columns = {column["name"] for column in inspect(temp_engine).get_columns("import_batch_items")}
+    batch_item_columns = {
+        column["name"]
+        for column in inspect(temp_engine).get_columns("import_batch_items")
+    }
     assert {
         "batch_run_id",
         "filename",
@@ -50,7 +69,10 @@ def test_import_tables_exist_after_init_database(tmp_path, monkeypatch):
         "existing_session_id",
     } <= batch_item_columns
 
-    batch_run_columns = {column["name"] for column in inspect(temp_engine).get_columns("import_batch_runs")}
+    batch_run_columns = {
+        column["name"]
+        for column in inspect(temp_engine).get_columns("import_batch_runs")
+    }
     assert {
         "folder_path",
         "status",
@@ -64,7 +86,10 @@ def test_import_tables_exist_after_init_database(tmp_path, monkeypatch):
     } <= batch_run_columns
 
 
-def test_import_session_timestamp_columns_are_populated_on_insert(db_session):
+def test_import_session_timestamp_columns_are_populated_on_insert(
+    db_session: Session,
+) -> None:
+    """Verify import session timestamp columns are populated on insert."""
     session = ImportSession(
         file_name="statement.pdf",
         file_hash="abc123",
@@ -80,13 +105,23 @@ def test_import_session_timestamp_columns_are_populated_on_insert(db_session):
     assert session.created_at <= session.updated_at
 
 
-def test_import_schema_includes_statement_and_transaction_metadata_columns():
+def test_import_schema_includes_statement_and_transaction_metadata_columns() -> None:
+    """Verify import schema includes statement and transaction metadata columns."""
     database_manager.reset_database()
     database_manager.init_database()
 
-    import_columns = {column["name"]: column for column in inspect(engine).get_columns("import_sessions")}
-    statement_columns = {column["name"]: column for column in inspect(engine).get_columns("import_statement_drafts")}
-    transaction_columns = {column["name"]: column for column in inspect(engine).get_columns("import_transaction_drafts")}
+    import_columns = {
+        column["name"]: column
+        for column in inspect(engine).get_columns("import_sessions")
+    }
+    statement_columns = {
+        column["name"]: column
+        for column in inspect(engine).get_columns("import_statement_drafts")
+    }
+    transaction_columns = {
+        column["name"]: column
+        for column in inspect(engine).get_columns("import_transaction_drafts")
+    }
 
     assert {"created_at", "updated_at"} <= import_columns.keys()
     assert {
@@ -115,11 +150,13 @@ def test_import_schema_includes_statement_and_transaction_metadata_columns():
     } <= transaction_columns.keys()
 
 
-def test_import_strategy_key_includes_nexo_csv():
+def test_import_strategy_key_includes_nexo_csv() -> None:
+    """Verify import strategy key includes nexo csv."""
     assert ImportStrategyKey.NEXO_CSV.value == "nexo_csv"
 
 
-def test_extracted_transaction_exposes_review_time_proposals():
+def test_extracted_transaction_exposes_review_time_proposals() -> None:
+    """Verify extracted transaction exposes review time proposals."""
     transaction = ExtractedTransaction(
         transaction_date="2026-04-11",
         source_description="Nexo card purchase",
@@ -132,21 +169,24 @@ def test_extracted_transaction_exposes_review_time_proposals():
         proposed_income_category=None,
         proposed_transfer_category=None,
         classification_source="deterministic",
-        recurrence_pattern_id=42,
+        recurrence_pattern_id=RECURRENCE_PATTERN_ID,
     )
 
     dumped = transaction.model_dump()
     assert dumped["proposed_transaction_type"] == "Expense"
     assert dumped["proposed_expense_category"] == "Groceries"
     assert dumped["classification_source"] == "deterministic"
-    assert dumped["recurrence_pattern_id"] == 42
+    assert dumped["recurrence_pattern_id"] == RECURRENCE_PATTERN_ID
 
 
-def test_transactions_include_import_traceability_columns():
+def test_transactions_include_import_traceability_columns() -> None:
+    """Verify transactions include import traceability columns."""
     database_manager.reset_database()
     database_manager.init_database()
 
-    transaction_columns = {column["name"]: column for column in inspect(engine).get_columns("transactions")}
+    transaction_columns = {
+        column["name"]: column for column in inspect(engine).get_columns("transactions")
+    }
 
     assert {
         "import_session_id",
@@ -156,13 +196,23 @@ def test_transactions_include_import_traceability_columns():
     } <= transaction_columns.keys()
 
 
-def test_init_database_backfills_missing_transaction_traceability_columns(tmp_path, monkeypatch):
+def test_init_database_backfills_missing_transaction_traceability_columns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify init database backfills missing transaction traceability columns."""
     db_path = tmp_path / "legacy_imports.sqlite"
-    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    temp_engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
 
     Base.metadata.create_all(
         bind=temp_engine,
-        tables=[table for table in Base.metadata.sorted_tables if table.name != "transactions"],
+        tables=[
+            table
+            for table in Base.metadata.sorted_tables
+            if table.name != "transactions"
+        ],
     )
     with temp_engine.begin() as conn:
         conn.execute(
@@ -192,7 +242,9 @@ def test_init_database_backfills_missing_transaction_traceability_columns(tmp_pa
     monkeypatch.setattr(database_manager, "engine", temp_engine)
     database_manager.init_database()
 
-    transaction_columns = {column["name"] for column in inspect(temp_engine).get_columns("transactions")}
+    transaction_columns = {
+        column["name"] for column in inspect(temp_engine).get_columns("transactions")
+    }
     assert {
         "import_session_id",
         "import_source_locator",
@@ -201,16 +253,29 @@ def test_init_database_backfills_missing_transaction_traceability_columns(tmp_pa
     } <= transaction_columns
 
     transaction_indexes = inspect(temp_engine).get_indexes("transactions")
-    assert any(index["name"] == "ix_transactions_import_session_id" for index in transaction_indexes)
+    assert any(
+        index["name"] == "ix_transactions_import_session_id"
+        for index in transaction_indexes
+    )
 
 
-def test_init_database_backfills_missing_import_transaction_draft_proposal_columns(tmp_path, monkeypatch):
+def test_init_database_backfills_missing_import_draft_proposal_columns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify init database backfills missing proposal columns."""
     db_path = tmp_path / "legacy_import_drafts.sqlite"
-    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    temp_engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
 
     Base.metadata.create_all(
         bind=temp_engine,
-        tables=[table for table in Base.metadata.sorted_tables if table.name != "import_transaction_drafts"],
+        tables=[
+            table
+            for table in Base.metadata.sorted_tables
+            if table.name != "import_transaction_drafts"
+        ],
     )
     with temp_engine.begin() as conn:
         conn.execute(
@@ -240,7 +305,10 @@ def test_init_database_backfills_missing_import_transaction_draft_proposal_colum
     monkeypatch.setattr(database_manager, "engine", temp_engine)
     database_manager.init_database()
 
-    transaction_columns = {column["name"] for column in inspect(temp_engine).get_columns("import_transaction_drafts")}
+    transaction_columns = {
+        column["name"]
+        for column in inspect(temp_engine).get_columns("import_transaction_drafts")
+    }
     assert {
         "proposed_transaction_type",
         "proposed_expense_category",
@@ -251,7 +319,8 @@ def test_init_database_backfills_missing_import_transaction_draft_proposal_colum
     } <= transaction_columns
 
 
-def test_transaction_read_schema_exposes_traceability_fields_only():
+def test_transaction_read_schema_exposes_traceability_fields_only() -> None:
+    """Verify transaction read schema exposes traceability fields only."""
     assert "import_session_id" in Transaction.model_fields
     assert "import_source_locator" in Transaction.model_fields
     assert "import_source_description" in Transaction.model_fields

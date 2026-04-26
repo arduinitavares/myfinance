@@ -1,18 +1,22 @@
+"""Module for backend tests services test_category_suggestion_service."""
+
+from collections.abc import Sequence
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
 from app.services.category_suggestion_service import CategorySuggestionService
 
 
-def test_similarity_scores_returns_empty_list_for_no_candidates():
+def test_similarity_scores_returns_empty_list_for_no_candidates() -> None:
+    """Verify similarity scores returns empty list for no candidates."""
     service = CategorySuggestionService.__new__(CategorySuggestionService)
 
     assert service.similarity_scores("seed merchant", []) == []
 
 
-def test_similarity_scores_batches_candidates_in_input_order():
+def test_similarity_scores_batches_candidates_in_input_order() -> None:
+    """Verify similarity scores batches candidates in input order."""
     service = CategorySuggestionService.__new__(CategorySuggestionService)
     service._preprocess_description = lambda text: text
 
@@ -23,7 +27,10 @@ def test_similarity_scores_batches_candidates_in_input_order():
         "other merchant": np.array([0.0, 1.0]),
     }
 
-    def fake_encode(texts, show_progress_bar=False):
+    def fake_encode(
+        texts: Sequence[str],
+        show_progress_bar: bool = False,
+    ) -> np.ndarray:
         encode_calls.append((list(texts), show_progress_bar))
         return np.array([vectors[text] for text in texts])
 
@@ -40,7 +47,8 @@ def test_similarity_scores_batches_candidates_in_input_order():
     assert scores == [1.0, 0.0]
 
 
-def test_similarity_scores_skips_empty_preprocessed_candidates():
+def test_similarity_scores_skips_empty_preprocessed_candidates() -> None:
+    """Verify similarity scores skips empty preprocessed candidates."""
     service = CategorySuggestionService.__new__(CategorySuggestionService)
     service._preprocess_description = lambda text: "" if text == "drop me" else text
 
@@ -50,7 +58,10 @@ def test_similarity_scores_skips_empty_preprocessed_candidates():
         "same merchant": np.array([1.0, 0.0]),
     }
 
-    def fake_encode(texts, show_progress_bar=False):
+    def fake_encode(
+        texts: Sequence[str],
+        show_progress_bar: bool = False,
+    ) -> np.ndarray:
         encode_calls.append((list(texts), show_progress_bar))
         return np.array([vectors[text] for text in texts])
 
@@ -65,11 +76,15 @@ def test_similarity_scores_skips_empty_preprocessed_candidates():
     assert scores == [1.0, 0.0]
 
 
-def test_similarity_scores_raises_when_encode_returns_too_few_embeddings():
+def test_similarity_scores_raises_when_encode_returns_too_few_embeddings() -> None:
+    """Verify similarity scores raises when encode returns too few embeddings."""
     service = CategorySuggestionService.__new__(CategorySuggestionService)
     service._preprocess_description = lambda text: text
 
-    def fake_encode(texts, show_progress_bar=False):
+    def fake_encode(
+        texts: Sequence[str],
+        show_progress_bar: bool = False,
+    ) -> np.ndarray:
         assert texts == ["seed merchant", "same merchant", "other merchant"]
         assert show_progress_bar is False
         return np.array(

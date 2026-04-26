@@ -44,3 +44,4 @@ PRD*.md
 /backend/config.local.yaml
 /backend/tests/.tmp/
 /bank_files/
+pyrepo-check-*.log

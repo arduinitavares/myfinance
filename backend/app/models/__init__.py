@@ -1,15 +1,26 @@
+"""Module for backend app models __init__."""
+
 from ..database import Base
+from .anomaly import (
+    AnomalyPattern,
+    AnomalyRule,
+    AnomalySeverity,
+    AnomalyStatus,
+    AnomalyType,
+    TransactionAnomaly,
+)
 from .classification import (
     ClassificationSession,
     ClassificationSessionStatus,
     ClassificationTurn,
     RecurrencePattern,
 )
-from .transaction import Transaction, TransactionType, ExpenseCategory, IncomeCategory, TransferCategory
-from .statistics import FinancialStatistics, CategoryStatistics, StatisticsPeriod
 from .financial_health import FinancialHealth, FinancialRecommendation
-from .financial_projection import ProjectionScenario, ProjectionParameter, ProjectionResult
-from .anomaly import TransactionAnomaly, AnomalyPattern, AnomalyRule, AnomalyType, AnomalySeverity, AnomalyStatus
+from .financial_projection import (
+    ProjectionParameter,
+    ProjectionResult,
+    ProjectionScenario,
+)
 from .fx import FXDailyReferenceRate
 from .imports import (
     ImportBatchItem,
@@ -19,38 +30,46 @@ from .imports import (
     ImportStatementDraft,
     ImportTransactionDraft,
 )
+from .statistics import CategoryStatistics, FinancialStatistics, StatisticsPeriod
+from .transaction import (
+    ExpenseCategory,
+    IncomeCategory,
+    Transaction,
+    TransactionType,
+    TransferCategory,
+)
 
 # Export all models
 __all__ = [
-    'Base',
-    'FinancialStatistics',
-    'CategoryStatistics',
-    'StatisticsPeriod',
-    'ClassificationSession',
-    'ClassificationSessionStatus',
-    'ClassificationTurn',
-    'RecurrencePattern',
-    'Transaction',
-    'TransactionType',
-    'ExpenseCategory',
-    'IncomeCategory',
-    'TransferCategory',
-    'FinancialHealth',
-    'FinancialRecommendation',
-    'FXDailyReferenceRate',
-    'ProjectionScenario',
-    'ProjectionParameter',
-    'ProjectionResult',
-    'TransactionAnomaly',
-    'AnomalyPattern',
-    'AnomalyRule',
-    'AnomalyType',
-    'AnomalySeverity',
-    'AnomalyStatus',
-    'ImportBatchItem',
-    'ImportBatchRun',
-    'ImportIssue',
-    'ImportSession',
-    'ImportStatementDraft',
-    'ImportTransactionDraft',
+    "AnomalyPattern",
+    "AnomalyRule",
+    "AnomalySeverity",
+    "AnomalyStatus",
+    "AnomalyType",
+    "Base",
+    "CategoryStatistics",
+    "ClassificationSession",
+    "ClassificationSessionStatus",
+    "ClassificationTurn",
+    "ExpenseCategory",
+    "FXDailyReferenceRate",
+    "FinancialHealth",
+    "FinancialRecommendation",
+    "FinancialStatistics",
+    "ImportBatchItem",
+    "ImportBatchRun",
+    "ImportIssue",
+    "ImportSession",
+    "ImportStatementDraft",
+    "ImportTransactionDraft",
+    "IncomeCategory",
+    "ProjectionParameter",
+    "ProjectionResult",
+    "ProjectionScenario",
+    "RecurrencePattern",
+    "StatisticsPeriod",
+    "Transaction",
+    "TransactionAnomaly",
+    "TransactionType",
+    "TransferCategory",
 ]

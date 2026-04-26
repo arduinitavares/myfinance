@@ -1,14 +1,18 @@
+"""Module for backend app config."""
+
+import os
 from dataclasses import dataclass
 from pathlib import Path
-import os
+from typing import Any
 
-
-APP_DIR = Path(__file__).resolve().parent
-BACKEND_DIR = APP_DIR.parent
+APP_DIR: Any = Path(__file__).resolve().parent
+BACKEND_DIR: Any = APP_DIR.parent
 
 
 @dataclass(frozen=True)
 class Settings:
+    """Represent settings."""
+
     data_dir: Path
     database_path: Path
     imports_dir: Path
@@ -24,22 +28,29 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    """Load settings."""
     data_dir = Path(os.environ.get("MYFINANCE_DATA_DIR", APP_DIR / "data")).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
 
     imports_dir = data_dir / "imports"
     imports_dir.mkdir(parents=True, exist_ok=True)
 
-    batch_import_dir = Path(os.environ.get("MYFINANCE_BATCH_IMPORT_DIR", "/bank_files")).resolve()
+    batch_import_dir = Path(
+        os.environ.get("MYFINANCE_BATCH_IMPORT_DIR", "/bank_files")
+    ).resolve()
 
-    database_path = Path(os.environ.get("MYFINANCE_DB_PATH", data_dir / "myfinance.db")).resolve()
+    database_path = Path(
+        os.environ.get("MYFINANCE_DB_PATH", data_dir / "myfinance.db")
+    ).resolve()
     database_path.parent.mkdir(parents=True, exist_ok=True)
     provider_config_path = Path(
         os.environ.get("MYFINANCE_PROVIDER_CONFIG", BACKEND_DIR / "config.local.yaml")
     ).resolve()
     provider_example_path = (BACKEND_DIR / "config.example.yaml").resolve()
     fx_seed_years = int(os.environ.get("MYFINANCE_FX_SEED_YEARS", "5"))
-    fx_startup_catchup_days = int(os.environ.get("MYFINANCE_FX_STARTUP_CATCHUP_DAYS", "45"))
+    fx_startup_catchup_days = int(
+        os.environ.get("MYFINANCE_FX_STARTUP_CATCHUP_DAYS", "45")
+    )
     fx_refresh_hour_utc = int(os.environ.get("MYFINANCE_FX_REFRESH_HOUR_UTC", "2"))
     fx_refresh_minute_utc = int(os.environ.get("MYFINANCE_FX_REFRESH_MINUTE_UTC", "0"))
     ecb_history_url = os.environ.get(
@@ -67,4 +78,4 @@ def load_settings() -> Settings:
     )
 
 
-settings = load_settings()
+settings: Any = load_settings()

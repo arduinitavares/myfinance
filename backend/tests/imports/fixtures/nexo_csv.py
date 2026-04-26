@@ -1,8 +1,10 @@
+"""Module for backend tests imports fixtures nexo_csv."""
+
 import csv
 import io
+from typing import Any
 
-
-NEXO_CSV_HEADER = [
+NEXO_CSV_HEADER: Any = [
     "Transaction",
     "Type",
     "Input Currency",
@@ -16,6 +18,7 @@ NEXO_CSV_HEADER = [
     "Date / Time (UTC)",
     "normalizedDisplayDetails",
 ]
+NEXO_ROW_TRAILING_FIELD_COUNT: int = 2
 
 
 def nexo_row(
@@ -23,9 +26,13 @@ def nexo_row(
     row_type: str,
     input_currency: str,
     input_amount: str,
-    details: str,
-    occurred_at: str,
+    *details_and_occurred_at: str,
 ) -> list[str]:
+    """Handle nexo row."""
+    if len(details_and_occurred_at) != NEXO_ROW_TRAILING_FIELD_COUNT:
+        msg = "Nexo rows require details and occurred_at"
+        raise ValueError(msg)
+    details, occurred_at = details_and_occurred_at
     return [
         transaction,
         row_type,
@@ -43,6 +50,7 @@ def nexo_row(
 
 
 def build_nexo_csv_bytes(*rows: list[str]) -> bytes:
+    """Build nexo csv bytes."""
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(NEXO_CSV_HEADER)

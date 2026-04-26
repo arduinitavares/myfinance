@@ -1,11 +1,16 @@
+"""Module for backend tests imports test_beobank_mastercard_pdf."""
+
 from copy import deepcopy
 
 from app.imports.beobank_mastercard_pdf import AMOUNT_RE, BeobankMastercardPdfExtractor
 from app.imports.pdf_text import lineize_pdf_pages
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 
+SPACE_GROUPED_PAYMENT_AMOUNT: float = 2677.24
 
-def test_parser_extracts_transactions_metadata_and_source_locators():
+
+def test_parser_extracts_transactions_metadata_and_source_locators() -> None:
+    """Verify parser extracts transactions metadata and source locators."""
     extractor = BeobankMastercardPdfExtractor()
 
     result = extractor.extract_from_pages(
@@ -35,7 +40,13 @@ def test_parser_extracts_transactions_metadata_and_source_locators():
         "pdf:p2:l10",
         "pdf:p3:l4",
     ]
-    assert [tx.signed_amount for tx in result.transactions] == [-18.19, -0.38, -21.5, 12.34, -1234.56]
+    assert [tx.signed_amount for tx in result.transactions] == [
+        -18.19,
+        -0.38,
+        -21.5,
+        12.34,
+        -1234.56,
+    ]
     assert [tx.debit_credit for tx in result.transactions] == [
         "debit",
         "debit",
@@ -44,12 +55,15 @@ def test_parser_extracts_transactions_metadata_and_source_locators():
         "debit",
     ]
     assert all(tx.currency == "EUR" for tx in result.transactions)
-    assert all(tx.edit_source == "deterministic_extracted" for tx in result.transactions)
+    assert all(
+        tx.edit_source == "deterministic_extracted" for tx in result.transactions
+    )
     assert result.issues == []
     assert all("Vorig saldo" not in tx.source_description for tx in result.transactions)
 
 
-def test_parser_blocks_multiple_distinct_card_headers():
+def test_parser_blocks_multiple_distinct_card_headers() -> None:
+    """Verify parser blocks multiple distinct card headers."""
     pages = lineize_pdf_pages(SANITIZED_BEOBANK_PAGE_TEXTS)
     pages[2]["lines"][0]["text"] = "Kaart xxxx xxxx xxxx 2222"
 
@@ -58,10 +72,14 @@ def test_parser_blocks_multiple_distinct_card_headers():
         raw_artifact_ref="imports/session-2/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "multi_card_not_supported" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "multi_card_not_supported" and issue.blocking
+        for issue in result.issues
+    )
 
 
-def test_parser_counts_distinct_card_headers_on_page_one_too():
+def test_parser_counts_distinct_card_headers_on_page_one_too() -> None:
+    """Verify parser counts distinct card headers on page one too."""
     pages = lineize_pdf_pages(SANITIZED_BEOBANK_PAGE_TEXTS)
     pages[0]["lines"].insert(0, {"line_number": 0, "text": "Kaart xxxx xxxx xxxx 9999"})
 
@@ -70,10 +88,14 @@ def test_parser_counts_distinct_card_headers_on_page_one_too():
         raw_artifact_ref="imports/session-2b/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "multi_card_not_supported" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "multi_card_not_supported" and issue.blocking
+        for issue in result.issues
+    )
 
 
-def test_parser_blocks_other_standalone_wisselkosten_shapes():
+def test_parser_blocks_other_standalone_wisselkosten_shapes() -> None:
+    """Verify parser blocks other standalone wisselkosten shapes."""
     page_texts = deepcopy(SANITIZED_BEOBANK_PAGE_TEXTS)
     page_texts[1] = (
         "Kaart xxxx xxxx xxxx 1111\n"
@@ -90,11 +112,15 @@ def test_parser_blocks_other_standalone_wisselkosten_shapes():
         raw_artifact_ref="imports/session-3/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert "WISSELKOSTEN" not in [tx.source_description for tx in result.transactions]
 
 
-def test_parser_accepts_betaling_rows_with_space_separated_thousands():
+def test_parser_accepts_betaling_rows_with_space_separated_thousands() -> None:
+    """Verify parser accepts betaling rows with space separated thousands."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -106,7 +132,8 @@ def test_parser_accepts_betaling_rows_with_space_separated_thousands():
             "Kaart xxxx xxxx xxxx 1111\n"
             "Uw transacties\n"
             "Datum Beschrijving Bedrag (in €)\n"
-            "12/02/2026 BETALING IBAN BE11950212984548 Mr ALEXANDRE ARDUINI TAVARES -2 677,24\n"
+            "12/02/2026 BETALING IBAN BE11950212984548 "
+            "Mr ALEXANDRE ARDUINI TAVARES -2 677,24\n"
             "Uw miles\n"
         ),
     ]
@@ -121,11 +148,12 @@ def test_parser_accepts_betaling_rows_with_space_separated_thousands():
     assert result.transactions[0].source_description == (
         "BETALING IBAN BE11950212984548 Mr ALEXANDRE ARDUINI TAVARES"
     )
-    assert result.transactions[0].signed_amount == 2677.24
+    assert result.transactions[0].signed_amount == SPACE_GROUPED_PAYMENT_AMOUNT
     assert result.transactions[0].debit_credit == "credit"
 
 
-def test_parser_accepts_space_grouped_amounts_in_fx_helper_rows():
+def test_parser_accepts_space_grouped_amounts_in_fx_helper_rows() -> None:
+    """Verify parser accepts space grouped amounts in fx helper rows."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -149,11 +177,14 @@ def test_parser_accepts_space_grouped_amounts_in_fx_helper_rows():
     )
 
     assert result.issues == []
-    assert [tx.source_description for tx in result.transactions] == ["EBN *ADOBE CURITIBA BR"]
+    assert [tx.source_description for tx in result.transactions] == [
+        "EBN *ADOBE CURITIBA BR"
+    ]
     assert [tx.signed_amount for tx in result.transactions] == [-1.49]
 
 
-def test_parser_accepts_space_grouped_amounts_in_inline_wisselkosten_rows():
+def test_parser_accepts_space_grouped_amounts_in_inline_wisselkosten_rows() -> None:
+    """Verify parser accepts space grouped amounts in inline wisselkosten rows."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -186,7 +217,8 @@ def test_parser_accepts_space_grouped_amounts_in_inline_wisselkosten_rows():
     assert [tx.debit_credit for tx in result.transactions] == ["debit", "debit"]
 
 
-def test_parser_accepts_space_grouped_amounts_in_standalone_wisselkosten_rows():
+def test_parser_accepts_space_grouped_amounts_in_standalone_wisselkosten_rows() -> None:
+    """Verify parser accepts space grouped amounts in standalone wisselkosten rows."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -220,7 +252,8 @@ def test_parser_accepts_space_grouped_amounts_in_standalone_wisselkosten_rows():
     assert [tx.debit_credit for tx in result.transactions] == ["debit", "debit"]
 
 
-def test_parser_blocks_malformed_mixed_separator_row():
+def test_parser_blocks_malformed_mixed_separator_row() -> None:
+    """Verify parser blocks malformed mixed separator row."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -242,11 +275,15 @@ def test_parser_blocks_malformed_mixed_separator_row():
         raw_artifact_ref="imports/session-4f/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert result.transactions == []
 
 
-def test_parser_blocks_malformed_mixed_separator_row_after_active_row():
+def test_parser_blocks_malformed_mixed_separator_row_after_active_row() -> None:
+    """Verify parser blocks malformed mixed separator row after active row."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -269,12 +306,16 @@ def test_parser_blocks_malformed_mixed_separator_row_after_active_row():
         raw_artifact_ref="imports/session-4g/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert [tx.source_description for tx in result.transactions] == ["SHOP"]
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
-def test_parser_blocks_signed_malformed_mixed_separator_row():
+def test_parser_blocks_signed_malformed_mixed_separator_row() -> None:
+    """Verify parser blocks signed malformed mixed separator row."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -296,11 +337,15 @@ def test_parser_blocks_signed_malformed_mixed_separator_row():
         raw_artifact_ref="imports/session-4h/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert result.transactions == []
 
 
-def test_parser_blocks_malformed_fx_helper_line_after_active_row():
+def test_parser_blocks_malformed_fx_helper_line_after_active_row() -> None:
+    """Verify parser blocks malformed fx helper line after active row."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -323,12 +368,16 @@ def test_parser_blocks_malformed_fx_helper_line_after_active_row():
         raw_artifact_ref="imports/session-4j/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert [tx.source_description for tx in result.transactions] == ["SHOP"]
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
-def test_parser_blocks_malformed_fx_helper_line_on_continuation_page():
+def test_parser_blocks_malformed_fx_helper_line_on_continuation_page() -> None:
+    """Verify parser blocks malformed fx helper line on continuation page."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -356,12 +405,16 @@ def test_parser_blocks_malformed_fx_helper_line_on_continuation_page():
         raw_artifact_ref="imports/session-4k/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert [tx.source_description for tx in result.transactions] == ["SHOP"]
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
-def test_parser_blocks_malformed_standalone_wisselkosten_on_continuation_page():
+def test_parser_blocks_malformed_standalone_wisselkosten_on_continuation_page() -> None:
+    """Verify parser blocks malformed standalone wisselkosten on continuation page."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -389,12 +442,16 @@ def test_parser_blocks_malformed_standalone_wisselkosten_on_continuation_page():
         raw_artifact_ref="imports/session-4l/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert [tx.source_description for tx in result.transactions] == ["SHOP"]
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
-def test_parser_blocks_malformed_standalone_wisselkosten_on_same_page_without_polluting_row():
+def test_parser_blocks_malformed_wisselkosten_without_polluting_row() -> None:
+    """Verify malformed standalone wisselkosten does not pollute rows."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -419,12 +476,16 @@ def test_parser_blocks_malformed_standalone_wisselkosten_on_same_page_without_po
         raw_artifact_ref="imports/session-4m/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert [tx.source_description for tx in result.transactions] == ["SHOP"]
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
-def test_parser_blocks_signed_malformed_mixed_separator_row_after_active_row():
+def test_parser_blocks_signed_malformed_mixed_separator_row_after_active_row() -> None:
+    """Verify parser blocks signed malformed mixed separator row after active row."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -447,21 +508,27 @@ def test_parser_blocks_signed_malformed_mixed_separator_row_after_active_row():
         raw_artifact_ref="imports/session-4i/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
     assert [tx.source_description for tx in result.transactions] == ["SHOP"]
     assert [tx.signed_amount for tx in result.transactions] == [-18.19]
 
 
-def test_amount_rejects_mixed_grouping_separators():
+def test_amount_rejects_mixed_grouping_separators() -> None:
+    """Verify amount rejects mixed grouping separators."""
     assert not AMOUNT_RE.match("1.234 567,89")
     assert not AMOUNT_RE.match("1 234.567,89")
 
 
-def test_parser_blocks_pages_with_row_candidates_but_without_transaction_marker():
+def test_parser_blocks_pages_with_row_candidates_but_without_transaction_marker() -> (
+    None
+):
+    """Verify parser blocks pages with row candidates but without transaction marker."""
     page_texts = deepcopy(SANITIZED_BEOBANK_PAGE_TEXTS)
     page_texts[2] = (
-        "Kaart xxxx xxxx xxxx 1111\n"
-        "21/12/2025 ONLINE SHOP BRUSSEL BE 1.234,56\n"
+        "Kaart xxxx xxxx xxxx 1111\n21/12/2025 ONLINE SHOP BRUSSEL BE 1.234,56\n"
     )
 
     result = BeobankMastercardPdfExtractor().extract_from_pages(
@@ -469,10 +536,16 @@ def test_parser_blocks_pages_with_row_candidates_but_without_transaction_marker(
         raw_artifact_ref="imports/session-4/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
 
 
-def test_parser_blocks_pages_with_marker_and_rows_but_without_required_headers():
+def test_parser_blocks_pages_with_marker_and_rows_but_without_required_headers() -> (
+    None
+):
+    """Verify parser blocks pages with marker and rows but without required headers."""
     page_texts = deepcopy(SANITIZED_BEOBANK_PAGE_TEXTS)
     page_texts[2] = (
         "Kaart xxxx xxxx xxxx 1111\n"
@@ -485,10 +558,16 @@ def test_parser_blocks_pages_with_marker_and_rows_but_without_required_headers()
         raw_artifact_ref="imports/session-5/attempts/1/evidence/raw.json",
     )
 
-    assert any(issue.code == "unclassifiable_table_line" and issue.blocking for issue in result.issues)
+    assert any(
+        issue.code == "unclassifiable_table_line" and issue.blocking
+        for issue in result.issues
+    )
 
 
-def test_parser_accepts_real_world_indented_card_headers_and_continuation_pages():
+def test_parser_accepts_real_world_indented_card_headers_and_continuation_pages() -> (
+    None
+):
+    """Verify parser accepts real world indented card headers and continuation pages."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -532,7 +611,8 @@ def test_parser_accepts_real_world_indented_card_headers_and_continuation_pages(
     ]
 
 
-def test_parser_carries_transaction_date_to_fee_only_continuation_page():
+def test_parser_carries_transaction_date_to_fee_only_continuation_page() -> None:
+    """Verify parser carries transaction date to fee only continuation page."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -574,7 +654,8 @@ def test_parser_carries_transaction_date_to_fee_only_continuation_page():
     ]
 
 
-def test_parser_splits_inline_wisselkosten_rows_from_real_world_layout():
+def test_parser_splits_inline_wisselkosten_rows_from_real_world_layout() -> None:
+    """Verify parser splits inline wisselkosten rows from real world layout."""
     page_texts = [
         (
             "BEOBANK\n"
@@ -608,7 +689,12 @@ def test_parser_splits_inline_wisselkosten_rows_from_real_world_layout():
         "CLUBE BANCORBRAS BRASILIA BR",
         "WISSELKOSTEN - CLUBE BANCORBRAS BRASILIA BR",
     ]
-    assert [tx.signed_amount for tx in result.transactions] == [-1.49, -0.03, -62.66, -1.32]
+    assert [tx.signed_amount for tx in result.transactions] == [
+        -1.49,
+        -0.03,
+        -62.66,
+        -1.32,
+    ]
     assert [tx.source_locator for tx in result.transactions] == [
         "pdf:p2:l4",
         "pdf:p2:l6",

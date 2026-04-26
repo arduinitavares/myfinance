@@ -1,13 +1,17 @@
+"""Module for backend app routers classification."""
+
+from typing import Annotated, Any
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..services.reporting_currency import get_reporting_currency
+from ..models.classification import ClassificationSession
 from ..schemas.classification import (
-    ApplyBatchRequest,
-    ApplyBatchResponse,
     AcceptClassificationRequest,
     AcceptClassificationResponse,
+    ApplyBatchRequest,
+    ApplyBatchResponse,
     ClassificationProposalResponse,
     ClassificationSessionResponse,
     CreateClassificationSessionRequest,
@@ -15,40 +19,57 @@ from ..schemas.classification import (
     SubmitFeedbackRequest,
 )
 from ..services.classification_session_service import ClassificationSessionService
+from ..services.reporting_currency import get_reporting_currency
 
-
-router = APIRouter(prefix="/classification", tags=["classification"])
+router: Any = APIRouter(prefix="/classification", tags=["classification"])
+type DbSession = Annotated[Session, Depends(get_db)]
+type ReportingCurrency = Annotated[str, Depends(get_reporting_currency)]
 
 
 @router.post("/sessions", response_model=ClassificationSessionResponse)
 def create_classification_session(
     request: CreateClassificationSessionRequest,
-    db: Session = Depends(get_db),
-):
-    return ClassificationSessionService.create_or_resume_session(db, request.transaction_id)
+    db: DbSession,
+) -> ClassificationSession:
+    """Create classification session."""
+    return ClassificationSessionService.create_or_resume_session(
+        db, request.transaction_id
+    )
 
 
-@router.post("/sessions/{session_id}/propose", response_model=ClassificationProposalResponse)
-def propose_classification(session_id: int, db: Session = Depends(get_db)):
+@router.post(
+    "/sessions/{session_id}/propose", response_model=ClassificationProposalResponse
+)
+def propose_classification(
+    session_id: int,
+    db: DbSession,
+) -> ClassificationProposalResponse:
+    """Handle propose classification."""
     return ClassificationSessionService.propose(db, session_id)
 
 
-@router.post("/sessions/{session_id}/feedback", response_model=ClassificationProposalResponse)
+@router.post(
+    "/sessions/{session_id}/feedback", response_model=ClassificationProposalResponse
+)
 def submit_feedback(
     session_id: int,
     request: SubmitFeedbackRequest,
-    db: Session = Depends(get_db),
-):
+    db: DbSession,
+) -> ClassificationProposalResponse:
+    """Handle submit feedback."""
     return ClassificationSessionService.record_feedback(db, session_id, request)
 
 
-@router.post("/sessions/{session_id}/accept", response_model=AcceptClassificationResponse)
+@router.post(
+    "/sessions/{session_id}/accept", response_model=AcceptClassificationResponse
+)
 def accept_classification(
     session_id: int,
     request: AcceptClassificationRequest,
-    db: Session = Depends(get_db),
-    reporting_currency: str = Depends(get_reporting_currency),
-):
+    db: DbSession,
+    reporting_currency: ReportingCurrency,
+) -> AcceptClassificationResponse:
+    """Handle accept classification."""
     return ClassificationSessionService.accept(
         db,
         session_id,
@@ -57,8 +78,14 @@ def accept_classification(
     )
 
 
-@router.post("/sessions/{session_id}/similar-preview", response_model=SimilarPreviewResponse)
-def preview_similar_transactions(session_id: int, db: Session = Depends(get_db)):
+@router.post(
+    "/sessions/{session_id}/similar-preview", response_model=SimilarPreviewResponse
+)
+def preview_similar_transactions(
+    session_id: int,
+    db: DbSession,
+) -> SimilarPreviewResponse:
+    """Handle preview similar transactions."""
     return ClassificationSessionService.preview_similar(db, session_id)
 
 
@@ -66,6 +93,7 @@ def preview_similar_transactions(session_id: int, db: Session = Depends(get_db))
 def apply_batch_classification(
     session_id: int,
     request: ApplyBatchRequest,
-    db: Session = Depends(get_db),
-):
+    db: DbSession,
+) -> ApplyBatchResponse:
+    """Handle apply batch classification."""
     return ClassificationSessionService.apply_batch(db, session_id, request)

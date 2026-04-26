@@ -1,23 +1,31 @@
-import pytest
-from pydantic import ValidationError
+"""Module for backend tests imports test_contracts."""
 
+import pytest
 from app.imports import ProviderDescription
 from app.imports.contracts import (
     DetectionResult,
-    ExtractionResult,
     ExtractedTransaction,
+    ExtractionResult,
     ImportIssue,
     ImportStrategyKey,
     RawEvidence,
 )
 from app.models.transaction import ExpenseCategory, TransactionType
+from pydantic import ValidationError
+
+RAW_EVIDENCE_PAGE_NUMBER: int = 2
 
 
-def test_extraction_result_serializes_blocking_issues_and_nullable_fields():
+def test_extraction_result_serializes_blocking_issues_and_nullable_fields() -> None:
+    """Verify extraction result serializes blocking issues and nullable fields."""
     result = ExtractionResult(
         extractor_id="csv.stub",
         raw_artifact_ref="imports/session-1/attempts/1/evidence/raw.json",
-        source_metadata={"provider_hint": "belfius", "file_type": "csv", "language": "nl"},
+        source_metadata={
+            "provider_hint": "belfius",
+            "file_type": "csv",
+            "language": "nl",
+        },
         statement_metadata={"currency": "EUR"},
         transactions=[
             ExtractedTransaction(
@@ -56,7 +64,8 @@ def test_extraction_result_serializes_blocking_issues_and_nullable_fields():
     assert dumped["transactions"][0]["proposed_transfer_category"] is None
 
 
-def test_raw_evidence_is_json_serializable():
+def test_raw_evidence_is_json_serializable() -> None:
+    """Verify raw evidence is json serializable."""
     evidence = RawEvidence(
         text_blocks=[{"page": 1, "text": "Statement header"}],
         ocr_blocks=[],
@@ -65,7 +74,8 @@ def test_raw_evidence_is_json_serializable():
     assert evidence.model_dump()["snippets"][0]["text"] == "Bancontact betaling"
 
 
-def test_detection_result_exposes_strategy_enum():
+def test_detection_result_exposes_strategy_enum() -> None:
+    """Verify detection result exposes strategy enum."""
     detected = DetectionResult(
         strategy_key=ImportStrategyKey.PDF_STATEMENT,
         provider_hint="beobank",
@@ -79,11 +89,13 @@ def test_detection_result_exposes_strategy_enum():
     assert detected.strategy_key == ImportStrategyKey.PDF_STATEMENT
 
 
-def test_import_strategy_key_includes_nexo_csv():
+def test_import_strategy_key_includes_nexo_csv() -> None:
+    """Verify import strategy key includes nexo csv."""
     assert ImportStrategyKey.NEXO_CSV.value == "nexo_csv"
 
 
-def test_extracted_transaction_serializes_proposal_fields():
+def test_extracted_transaction_serializes_proposal_fields() -> None:
+    """Verify extracted transaction serializes proposal fields."""
     tx = ExtractedTransaction(
         transaction_date="2026-04-11",
         source_description="Nexo Card Transaction Fee",
@@ -103,12 +115,14 @@ def test_extracted_transaction_serializes_proposal_fields():
     assert dumped["proposal_source"] == "deterministic_extracted"
 
 
-def test_raw_evidence_rejects_non_json_safe_content():
+def test_raw_evidence_rejects_non_json_safe_content() -> None:
+    """Verify raw evidence rejects non json safe content."""
     with pytest.raises(ValidationError):
         RawEvidence(text_blocks=[{"page": 1, "text": object()}])
 
 
-def test_extracted_transaction_limits_edit_source_values():
+def test_extracted_transaction_limits_edit_source_values() -> None:
+    """Verify extracted transaction limits edit source values."""
     valid = ExtractedTransaction(
         transaction_date="2026-04-11",
         source_description="Bancontact betaling",
@@ -132,27 +146,30 @@ def test_extracted_transaction_limits_edit_source_values():
     assert valid.proposed_expense_category == ExpenseCategory.GROCERIES
 
     with pytest.raises(ValidationError):
-        ExtractedTransaction(
-            transaction_date="2026-04-11",
-            source_description="Bancontact betaling",
-            canonical_description_en=None,
-            signed_amount=-10.0,
-            currency="EUR",
-            debit_credit="debit",
-            inferred_category=None,
-            category_source=None,
-            proposed_transaction_type=None,
-            proposed_expense_category=None,
-            proposed_income_category=None,
-            proposed_transfer_category=None,
-            proposal_source="manual",
-            confidence={},
-            source_locator="csv:row:2",
-            edit_source="user_edited",
+        ExtractedTransaction.model_validate(
+            {
+                "transaction_date": "2026-04-11",
+                "source_description": "Bancontact betaling",
+                "canonical_description_en": None,
+                "signed_amount": -10.0,
+                "currency": "EUR",
+                "debit_credit": "debit",
+                "inferred_category": None,
+                "category_source": None,
+                "proposed_transaction_type": None,
+                "proposed_expense_category": None,
+                "proposed_income_category": None,
+                "proposed_transfer_category": None,
+                "proposal_source": "manual",
+                "confidence": {},
+                "source_locator": "csv:row:2",
+                "edit_source": "user_edited",
+            }
         )
 
 
-def test_extracted_transaction_accepts_deterministic_edit_source():
+def test_extracted_transaction_accepts_deterministic_edit_source() -> None:
+    """Verify extracted transaction accepts deterministic edit source."""
     tx = ExtractedTransaction(
         transaction_date="2026-04-11",
         source_description="WISSELKOSTEN",
@@ -166,20 +183,25 @@ def test_extracted_transaction_accepts_deterministic_edit_source():
     assert tx.edit_source == "deterministic_extracted"
 
 
-def test_raw_evidence_accepts_page_line_payloads():
+def test_raw_evidence_accepts_page_line_payloads() -> None:
+    """Verify raw evidence accepts page line payloads."""
     evidence = RawEvidence(
         text_blocks=[
             {
-                "page_number": 2,
+                "page_number": RAW_EVIDENCE_PAGE_NUMBER,
                 "raw_text": "Uw transacties\n15/12/2025 Merchant 14,20",
                 "lines": ["Uw transacties", "15/12/2025 Merchant 14,20"],
             }
         ]
     )
-    assert evidence.model_dump()["text_blocks"][0]["page_number"] == 2
+    assert (
+        evidence.model_dump()["text_blocks"][0]["page_number"]
+        == RAW_EVIDENCE_PAGE_NUMBER
+    )
 
 
-def test_provider_description_is_exported_from_package_surface():
+def test_provider_description_is_exported_from_package_surface() -> None:
+    """Verify provider description is exported from package surface."""
     provider = ProviderDescription(
         provider_name="belfius",
         model_name="gpt-4.1-mini",

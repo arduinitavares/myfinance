@@ -1,14 +1,20 @@
+"""Module for backend app services reporting_currency."""
+
+from typing import Any
+
 from fastapi import Header, HTTPException
 
-
-ALLOWED_REPORTING_CURRENCIES = ["EUR", "USD", "BRL"]
-REPORTING_CURRENCY_HEADER = "X-Reporting-Currency"
-DEFAULT_REPORTING_CURRENCY = "EUR"
+ALLOWED_REPORTING_CURRENCIES: Any = ["EUR", "USD", "BRL"]
+REPORTING_CURRENCY_HEADER: Any = "X-Reporting-Currency"
+DEFAULT_REPORTING_CURRENCY: Any = "EUR"
 
 
 def get_reporting_currency(
-    x_reporting_currency: str | None = Header(default=None, alias=REPORTING_CURRENCY_HEADER),
+    x_reporting_currency: str | None = Header(
+        default=None, alias=REPORTING_CURRENCY_HEADER
+    ),
 ) -> str:
+    """Return reporting currency."""
     if x_reporting_currency is None:
         return DEFAULT_REPORTING_CURRENCY
 

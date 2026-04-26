@@ -1,3 +1,5 @@
+"""Module for backend app utils __init__."""
+
 from .text_normalization import (
     CARD_NUMBER_PATTERNS,
     IBAN_BIC_PATTERNS,

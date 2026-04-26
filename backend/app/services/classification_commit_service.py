@@ -1,5 +1,9 @@
-import logging
+"""Module for backend app services classification_commit_service."""
 
+import logging
+from dataclasses import dataclass
+
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from sqlalchemy.orm import Session
 
 from ..models.classification import RecurrencePattern
@@ -13,16 +17,32 @@ from ..models.transaction import (
 from ..routers.suggestions import category_suggestion_service
 from .statistics_service import StatisticsService
 
+logger: logging.Logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+SUGGESTION_INDEX_ERRORS: tuple[type[Exception], ...] = (
+    ResponseHandlingException,
+    UnexpectedResponse,
+    RuntimeError,
+    ValueError,
+)
+
+
+@dataclass(frozen=True)
+class CategoryChangeRequest:
+    """Represent a requested transaction category change."""
+
+    transaction_type: TransactionType
+    category: str
+    classification_source: str | None
+    recurrence_pattern_id: int | None
 
 
 def normalized_category_for(
     *,
     transaction_type: TransactionType,
     category: str,
-    amount: float,
 ) -> str:
+    """Handle normalized category for."""
     if transaction_type == TransactionType.TRANSFER:
         return TransferCategory(category).value
     return category
@@ -32,45 +52,46 @@ def commit_category_change(
     *,
     db: Session,
     transaction: Transaction,
-    transaction_type: TransactionType,
-    category: str,
-    classification_source: str | None,
-    recurrence_pattern_id: int | None,
+    change: CategoryChangeRequest,
     commit: bool = True,
 ) -> Transaction:
+    """Handle commit category change."""
     normalized_category = normalized_category_for(
-        transaction_type=transaction_type,
-        category=category,
-        amount=transaction.amount,
+        transaction_type=change.transaction_type,
+        category=change.category,
     )
 
     if (
-        classification_source == "manual"
-        and recurrence_pattern_id is not None
-        and transaction.recurrence_pattern_id == recurrence_pattern_id
+        change.classification_source == "manual"
+        and change.recurrence_pattern_id is not None
+        and transaction.recurrence_pattern_id == change.recurrence_pattern_id
     ):
         recurrence_pattern = (
             db.query(RecurrencePattern)
-            .filter(RecurrencePattern.id == recurrence_pattern_id, RecurrencePattern.active.is_(True))
+            .filter(
+                RecurrencePattern.id == change.recurrence_pattern_id,
+                RecurrencePattern.active.is_(True),
+            )
             .first()
         )
         if recurrence_pattern and recurrence_pattern.category != normalized_category:
             logger.warning(
-                "Manual category %s contradicts active recurrence pattern %s for transaction %s; keeping pattern active",
+                "Manual category %s contradicts active recurrence pattern %s for "
+                "transaction %s; keeping pattern active",
                 normalized_category,
-                recurrence_pattern_id,
+                change.recurrence_pattern_id,
                 transaction.id,
             )
 
-    transaction.transaction_type = transaction_type
-    transaction.classification_source = classification_source
-    transaction.recurrence_pattern_id = recurrence_pattern_id
+    transaction.transaction_type = change.transaction_type
+    transaction.classification_source = change.classification_source
+    transaction.recurrence_pattern_id = change.recurrence_pattern_id
 
-    if transaction_type == TransactionType.EXPENSE:
+    if change.transaction_type == TransactionType.EXPENSE:
         transaction.expense_category = ExpenseCategory(normalized_category)
         transaction.income_category = None
         transaction.transfer_category = None
-    elif transaction_type == TransactionType.INCOME:
+    elif change.transaction_type == TransactionType.INCOME:
         transaction.income_category = IncomeCategory(normalized_category)
         transaction.expense_category = None
         transaction.transfer_category = None
@@ -88,7 +109,7 @@ def commit_category_change(
 
         try:
             category_suggestion_service.sync_transaction(transaction)
-        except Exception as exc:
+        except SUGGESTION_INDEX_ERRORS as exc:
             logger.warning(
                 "Failed to update suggestion index for transaction %s: %s",
                 transaction.id,

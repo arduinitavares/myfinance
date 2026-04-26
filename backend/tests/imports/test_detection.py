@@ -1,27 +1,37 @@
+"""Module for backend tests imports test_detection."""
+
+import pytest
+from app.config import settings
 from app.imports.contracts import ImportStrategyKey
 from app.imports.detection import ImportDetector
-from app.config import settings
-from tests.imports.fixtures.nexo_csv import NEXO_CSV_HEADER, build_nexo_csv_bytes, nexo_row
+from tests.imports.fixtures.nexo_csv import (
+    NEXO_CSV_HEADER,
+    build_nexo_csv_bytes,
+    nexo_row,
+)
 
 
-def test_detector_flags_belfius_csv_with_metadata_preface():
+def test_detector_flags_belfius_csv_with_metadata_preface() -> None:
+    """Verify detector flags belfius csv with metadata preface."""
     sample = (
-        "Boekingsdatum vanaf;01/02/2026\n"
-        "Boekingsdatum tot en met;13/04/2026\n"
-        "Bedrag vanaf;\n"
-        "Bedrag tot en met;\n"
-        "Rekeninguittrekselnummer vanaf;\n"
-        "Rekeninguittrekselnummer tot en met;\n"
-        "Mededeling;\n"
-        "Naam tegenpartij bevat;\n"
-        "Rekening tegenpartij;\n"
-        "Laatste saldo;-140,40 EUR\n"
-        "Datum/uur van het laatste saldo;11/04/2026 13:14:53\n"
-        ";\n"
-        "Rekening;Boekingsdatum;Rekeninguittrekselnummer;Transactienummer;Rekening tegenpartij;"
-        "Naam tegenpartij bevat;Straat en nummer;Postcode en plaats;Transactie;Valutadatum;Bedrag;"
-        "Devies;BIC;Landcode;Mededelingen\n"
-    ).encode("utf-8")
+        b"Boekingsdatum vanaf;01/02/2026\n"
+        b"Boekingsdatum tot en met;13/04/2026\n"
+        b"Bedrag vanaf;\n"
+        b"Bedrag tot en met;\n"
+        b"Rekeninguittrekselnummer vanaf;\n"
+        b"Rekeninguittrekselnummer tot en met;\n"
+        b"Mededeling;\n"
+        b"Naam tegenpartij bevat;\n"
+        b"Rekening tegenpartij;\n"
+        b"Laatste saldo;-140,40 EUR\n"
+        b"Datum/uur van het laatste saldo;11/04/2026 13:14:53\n"
+        b";\n"
+        b"Rekening;Boekingsdatum;Rekeninguittrekselnummer;"
+        b"Transactienummer;Rekening tegenpartij;"
+        b"Naam tegenpartij bevat;Straat en nummer;Postcode en plaats;"
+        b"Transactie;Valutadatum;Bedrag;"
+        b"Devies;BIC;Landcode;Mededelingen\n"
+    )
 
     result = ImportDetector().detect(
         filename="belfius.csv",
@@ -33,11 +43,14 @@ def test_detector_flags_belfius_csv_with_metadata_preface():
     assert result.charset_hint == "utf-8"
 
 
-def test_detector_does_not_scan_belfius_header_past_first_twenty_lines():
+def test_detector_does_not_scan_belfius_header_past_first_twenty_lines() -> None:
+    """Verify detector does not scan belfius header past first twenty lines."""
     lines = [f"metadata-{idx};value" for idx in range(20)]
     lines.append(
-        "Rekening;Boekingsdatum;Rekeninguittrekselnummer;Transactienummer;Rekening tegenpartij;"
-        "Naam tegenpartij bevat;Straat en nummer;Postcode en plaats;Transactie;Valutadatum;Bedrag;"
+        "Rekening;Boekingsdatum;Rekeninguittrekselnummer;"
+        "Transactienummer;Rekening tegenpartij;"
+        "Naam tegenpartij bevat;Straat en nummer;Postcode en plaats;"
+        "Transactie;Valutadatum;Bedrag;"
         "Devies;BIC;Landcode;Mededelingen"
     )
     sample = ("\n".join(lines) + "\n").encode("utf-8")
@@ -51,7 +64,8 @@ def test_detector_does_not_scan_belfius_header_past_first_twenty_lines():
     assert result.strategy_key == ImportStrategyKey.UNKNOWN
 
 
-def test_detector_flags_beobank_compact_csv():
+def test_detector_flags_beobank_compact_csv() -> None:
+    """Verify detector flags beobank compact csv."""
     sample = "Datum;Waardedatum;Debet;Krediet;Omschrijving;Saldo\n".encode("latin-1")
 
     result = ImportDetector().detect(
@@ -64,8 +78,9 @@ def test_detector_flags_beobank_compact_csv():
     assert result.charset_hint == "utf-8"
 
 
-def test_detector_flags_beobank_debit_credit_csv():
-    sample = "Date;Debit;Credit;Message;Balance\n".encode("utf-8")
+def test_detector_flags_beobank_debit_credit_csv() -> None:
+    """Verify detector flags beobank debit credit csv."""
+    sample = b"Date;Debit;Credit;Message;Balance\n"
 
     result = ImportDetector().detect(
         filename="beobank.csv",
@@ -76,11 +91,13 @@ def test_detector_flags_beobank_debit_credit_csv():
     assert result.strategy_key == ImportStrategyKey.BEOBANK_CSV
 
 
-def test_detector_flags_nexo_csv_on_exact_header_match():
+def test_detector_flags_nexo_csv_on_exact_header_match() -> None:
+    """Verify detector flags nexo csv on exact header match."""
     sample = (
-        "Transaction,Type,Input Currency,Input Amount,Output Currency,Output Amount,USD Equivalent,"
-        "Fee,Fee Currency,Details,Date / Time (UTC),normalizedDisplayDetails\n"
-    ).encode("utf-8")
+        b"Transaction,Type,Input Currency,Input Amount,Output Currency,"
+        b"Output Amount,USD Equivalent,"
+        b"Fee,Fee Currency,Details,Date / Time (UTC),normalizedDisplayDetails\n"
+    )
 
     result = ImportDetector().detect(
         filename="nexo.csv",
@@ -92,7 +109,8 @@ def test_detector_flags_nexo_csv_on_exact_header_match():
     assert result.charset_hint == "utf-8"
 
 
-def test_detector_does_not_route_mislabeled_non_pdf_payload_as_pdf_statement():
+def test_detector_does_not_route_mislabeled_non_pdf_payload_as_pdf_statement() -> None:
+    """Verify detector does not route mislabeled non pdf payload as pdf statement."""
     result = ImportDetector().detect(
         filename="statement.pdf",
         content_type="application/pdf",
@@ -102,7 +120,8 @@ def test_detector_does_not_route_mislabeled_non_pdf_payload_as_pdf_statement():
     assert result.password_protected is False
 
 
-def test_detector_flags_pdf_statements():
+def test_detector_flags_pdf_statements() -> None:
+    """Verify detector flags pdf statements."""
     result = ImportDetector().detect(
         filename="statement.pdf",
         content_type="application/pdf",
@@ -112,7 +131,8 @@ def test_detector_flags_pdf_statements():
     assert result.password_protected is False
 
 
-def test_detector_sniffs_pdf_header_with_misleading_metadata():
+def test_detector_sniffs_pdf_header_with_misleading_metadata() -> None:
+    """Verify detector sniffs pdf header with misleading metadata."""
     result = ImportDetector().detect(
         filename="statement.txt",
         content_type="text/plain",
@@ -122,7 +142,8 @@ def test_detector_sniffs_pdf_header_with_misleading_metadata():
     assert result.password_protected is False
 
 
-def test_detector_sets_latin1_charset_for_unknown_csv():
+def test_detector_sets_latin1_charset_for_unknown_csv() -> None:
+    """Verify detector sets latin1 charset for unknown csv."""
     sample = "Datum;Omschrijving\n01/01/2026;Café betaling\n".encode("latin-1")
     result = ImportDetector().detect(
         filename="statement.csv",
@@ -133,8 +154,9 @@ def test_detector_sets_latin1_charset_for_unknown_csv():
     assert result.charset_hint == "latin-1"
 
 
-def test_detector_keeps_utf8_charset_for_utf8_unknown_csv():
-    sample = "Datum;Debet\n01/01/2026;-10.00\n".encode("utf-8")
+def test_detector_keeps_utf8_charset_for_utf8_unknown_csv() -> None:
+    """Verify detector keeps utf8 charset for utf8 unknown csv."""
+    sample = b"Datum;Debet\n01/01/2026;-10.00\n"
     result = ImportDetector().detect(
         filename="statement.csv",
         content_type="text/csv",
@@ -144,7 +166,8 @@ def test_detector_keeps_utf8_charset_for_utf8_unknown_csv():
     assert result.charset_hint == "utf-8"
 
 
-def test_detector_flags_exact_nexo_csv_header_shape():
+def test_detector_flags_exact_nexo_csv_header_shape() -> None:
+    """Verify detector flags exact nexo csv header shape."""
     sample = build_nexo_csv_bytes(
         nexo_row(
             "NXT_PURCHASE_1",
@@ -165,19 +188,25 @@ def test_detector_flags_exact_nexo_csv_header_shape():
     assert result.charset_hint == "utf-8"
 
 
-def test_detector_does_not_match_nearly_identical_nexo_header():
+def test_detector_does_not_match_nearly_identical_nexo_header() -> None:
+    """Verify detector does not match nearly identical nexo header."""
     malformed_header = list(NEXO_CSV_HEADER)
     malformed_header[10] = "Date / Time"
-    sample = build_nexo_csv_bytes(
-        nexo_row(
-            "NXT_PURCHASE_1",
-            "Nexo Card Purchase",
-            "xUSD",
-            "-6.24",
-            "approved / Albert Heijn 3143 | Gent | BEL",
-            "2026-03-25 17:19:21",
+    sample = (
+        build_nexo_csv_bytes(
+            nexo_row(
+                "NXT_PURCHASE_1",
+                "Nexo Card Purchase",
+                "xUSD",
+                "-6.24",
+                "approved / Albert Heijn 3143 | Gent | BEL",
+                "2026-03-25 17:19:21",
+            )
         )
-    ).decode("utf-8").replace(",".join(NEXO_CSV_HEADER), ",".join(malformed_header), 1).encode("utf-8")
+        .decode("utf-8")
+        .replace(",".join(NEXO_CSV_HEADER), ",".join(malformed_header), 1)
+        .encode("utf-8")
+    )
     result = ImportDetector().detect(
         filename="nexo_transactions.csv",
         content_type="text/csv",
@@ -187,7 +216,10 @@ def test_detector_does_not_match_nearly_identical_nexo_header():
     assert result.charset_hint == "utf-8"
 
 
-def test_db_session_fixture_cleans_import_artifacts_before_reuse(request):
+def test_db_session_fixture_cleans_import_artifacts_before_reuse(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Verify db session fixture cleans import artifacts before reuse."""
     stale_session_dir = settings.imports_dir / "session-1"
     stale_session_dir.mkdir(parents=True, exist_ok=True)
     (stale_session_dir / "meta.json").write_text("stale", encoding="utf-8")

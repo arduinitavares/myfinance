@@ -1,11 +1,11 @@
+"""Module for backend tests test_upload_trust_order."""
+
 import csv
 import io
 from dataclasses import replace
+from typing import Any, Never
 
 import pytest
-from fastapi.testclient import TestClient
-from qdrant_client.http import models
-
 from app.config import settings as app_settings
 from app.database import SessionLocal
 from app.imports import enrichment as import_enrichment
@@ -16,13 +16,17 @@ from app.models.transaction import Transaction
 from app.routers import imports as imports_router
 from app.routers.suggestions import category_suggestion_service
 from app.services import classification_session_service
+from fastapi.testclient import TestClient
+from qdrant_client.http import models
 
-
-client = TestClient(app)
+client: Any = TestClient(app)
+HTTP_OK: int = 200
+DEFAULT_TRANSACTION_AMOUNT: float = -45.99
+SUGGESTION_CONFIDENCE: float = 0.91
 
 
 @pytest.fixture(autouse=True)
-def _enable_runtime_stub_provider(monkeypatch):
+def _enable_runtime_stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         classification_session_service,
         "settings",
@@ -30,19 +34,19 @@ def _enable_runtime_stub_provider(monkeypatch):
     )
 
 
-def _reset_rate_limiter():
+def _reset_rate_limiter() -> None:
     try:
-        imports_router._upload_attempts.clear()  # type: ignore[attr-defined]
-    except Exception:
-        pass
+        imports_router._upload_attempts.clear()
+    except AttributeError:
+        return
 
 
-def _reset_database():
+def _reset_database() -> None:
     response = client.post("/debug/reset-database")
-    assert response.status_code == 200
+    assert response.status_code == HTTP_OK
 
 
-def _clear_vector_collections():
+def _clear_vector_collections() -> None:
     category_suggestion_service.client.recreate_collection(
         collection_name="expense_embeddings",
         vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
@@ -54,14 +58,15 @@ def _clear_vector_collections():
 
 
 def _restore_transaction(
-    *,
-    description: str,
-    tx_date: str,
-    amount: float = -45.99,
-    transaction_type: str = "Expense",
-    source_bank: str = "Belfius",
-    expense_category: str | None = None,
-):
+    **fields: object,
+) -> dict[str, Any]:
+    description = fields.pop("description")
+    tx_date = fields.pop("tx_date")
+    amount = fields.pop("amount", DEFAULT_TRANSACTION_AMOUNT)
+    transaction_type = fields.pop("transaction_type", "Expense")
+    source_bank = fields.pop("source_bank", "Belfius")
+    expense_category = fields.pop("expense_category", None)
+    assert fields == {}
     payload = {
         "account_number": "BE46000000000001",
         "transaction_date": tx_date,
@@ -77,7 +82,7 @@ def _restore_transaction(
         payload["expense_category"] = expense_category
 
     response = client.post("/transactions/restore", json=payload)
-    assert response.status_code == 200
+    assert response.status_code == HTTP_OK
     return response.json()
 
 
@@ -86,12 +91,14 @@ def _accept_session(
     *,
     transaction_type: str,
     category: str,
-    recurrence: dict | None = None,
+    recurrence: dict[str, object] | None = None,
     confirm_type_change: bool = False,
-):
-    session = client.post("/classification/sessions", json={"transaction_id": transaction_id}).json()
+) -> dict[str, Any]:
+    session = client.post(
+        "/classification/sessions", json={"transaction_id": transaction_id}
+    ).json()
     propose_response = client.post(f"/classification/sessions/{session['id']}/propose")
-    assert propose_response.status_code == 200
+    assert propose_response.status_code == HTTP_OK
 
     accept_response = client.post(
         f"/classification/sessions/{session['id']}/accept",
@@ -103,11 +110,11 @@ def _accept_session(
             "recurrence": recurrence or {"is_recurrent": False},
         },
     )
-    assert accept_response.status_code == 200
+    assert accept_response.status_code == HTTP_OK
     return accept_response.json()
 
 
-def _accept_utilities_session(transaction_id: int):
+def _accept_utilities_session(transaction_id: int) -> dict[str, Any]:
     return _accept_session(
         transaction_id,
         transaction_type="Expense",
@@ -203,18 +210,18 @@ def _make_minimal_beobank_compact_csv(*, booking_date: str, description: str) ->
     return output.getvalue().encode("latin-1")
 
 
-def _upload_csv_for_review(*, filename: str, payload: bytes) -> dict:
+def _upload_csv_for_review(*, filename: str, payload: bytes) -> dict[str, Any]:
     response = client.post(
         "/imports/upload",
         files={"file": (filename, payload, "text/csv")},
     )
-    assert response.status_code == 200
+    assert response.status_code == HTTP_OK
     return response.json()
 
 
-def _approve_import_session(session_id: int) -> dict:
+def _approve_import_session(session_id: int) -> dict[str, Any]:
     response = client.post(f"/imports/{session_id}/approve")
-    assert response.status_code == 200
+    assert response.status_code == HTTP_OK
     return response.json()
 
 
@@ -226,13 +233,20 @@ def _latest_transaction() -> Transaction | None:
         db.close()
 
 
-def test_similar_preview_only_returns_uncategorized_rows(monkeypatch):
+def test_similar_preview_only_returns_uncategorized_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify similar preview only returns uncategorized rows."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
 
-    seed = _restore_transaction(description="SEPA PROXIMUS telecom invoice", tx_date="2026-04-10")
-    expected_match = _restore_transaction(description="SEPA PROXIMUS telecom invoice april", tx_date="2026-04-11")
+    seed = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice", tx_date="2026-04-10"
+    )
+    expected_match = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice april", tx_date="2026-04-11"
+    )
     _restore_transaction(
         description="SEPA PROXIMUS telecom invoice may",
         tx_date="2026-04-12",
@@ -247,32 +261,49 @@ def test_similar_preview_only_returns_uncategorized_rows(monkeypatch):
 
     accepted = _accept_utilities_session(seed["id"])
 
-    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+    def fake_similarity_scores(
+        source_text: str, candidate_texts: list[str]
+    ) -> list[float]:
         return [
-            0.91 if "proximus" in source_text and "proximus" in candidate_text else 0.12
+            SUGGESTION_CONFIDENCE
+            if "proximus" in source_text and "proximus" in candidate_text
+            else 0.12
             for candidate_text in candidate_texts
         ]
 
-    monkeypatch.setattr(category_suggestion_service, "similarity_scores", fake_similarity_scores)
+    monkeypatch.setattr(
+        category_suggestion_service, "similarity_scores", fake_similarity_scores
+    )
 
     preview = client.post(
         f"/classification/sessions/{accepted['session']['id']}/similar-preview"
     )
 
-    assert preview.status_code == 200
+    assert preview.status_code == HTTP_OK
     payload = preview.json()
-    assert [match["transaction_id"] for match in payload["matches"]] == [expected_match["id"]]
-    assert transfer_candidate["id"] not in [match["transaction_id"] for match in payload["matches"]]
+    assert [match["transaction_id"] for match in payload["matches"]] == [
+        expected_match["id"]
+    ]
+    assert transfer_candidate["id"] not in [
+        match["transaction_id"] for match in payload["matches"]
+    ]
 
 
-def test_apply_batch_skips_rows_that_are_already_categorized():
+def test_apply_batch_skips_rows_that_are_already_categorized() -> None:
+    """Verify apply batch skips rows that are already categorized."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
 
-    seed = _restore_transaction(description="SEPA PROXIMUS telecom invoice", tx_date="2026-04-10")
-    match_one = _restore_transaction(description="SEPA PROXIMUS telecom invoice april", tx_date="2026-04-11")
-    match_two = _restore_transaction(description="SEPA PROXIMUS telecom invoice may", tx_date="2026-04-12")
+    seed = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice", tx_date="2026-04-10"
+    )
+    match_one = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice april", tx_date="2026-04-11"
+    )
+    match_two = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice may", tx_date="2026-04-12"
+    )
 
     accepted = _accept_utilities_session(seed["id"])
 
@@ -280,63 +311,86 @@ def test_apply_batch_skips_rows_that_are_already_categorized():
         f"/transactions/{match_two['id']}/category",
         params={"category": "Utilities", "transaction_type": "Expense"},
     )
-    assert patch_response.status_code == 200
+    assert patch_response.status_code == HTTP_OK
 
     response = client.post(
         f"/classification/sessions/{accepted['session']['id']}/apply-batch",
         json={"transaction_ids": [match_one["id"], match_two["id"]]},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == HTTP_OK
     payload = response.json()
     assert payload["applied_transaction_ids"] == [match_one["id"]]
     assert payload["skipped_transaction_ids"] == [match_two["id"]]
 
     db = SessionLocal()
     try:
-        updated_match_one = db.query(Transaction).filter(Transaction.id == match_one["id"]).first()
-        updated_match_two = db.query(Transaction).filter(Transaction.id == match_two["id"]).first()
+        updated_match_one = (
+            db.query(Transaction).filter(Transaction.id == match_one["id"]).first()
+        )
+        updated_match_two = (
+            db.query(Transaction).filter(Transaction.id == match_two["id"]).first()
+        )
     finally:
         db.close()
 
     assert updated_match_one is not None
+    assert updated_match_one.expense_category is not None
     assert updated_match_one.expense_category.value == "Utilities"
     assert updated_match_one.classification_source == "assistant_batch"
     assert updated_match_two is not None
     assert updated_match_two.classification_source == "manual"
 
 
-def test_apply_batch_skips_uncategorized_rows_that_are_not_preview_matches(monkeypatch):
+def test_apply_batch_skips_uncategorized_rows_that_are_not_preview_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify apply batch skips uncategorized rows that are not preview matches."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
 
-    seed = _restore_transaction(description="SEPA PROXIMUS telecom invoice", tx_date="2026-04-10")
-    match_one = _restore_transaction(description="SEPA PROXIMUS telecom invoice april", tx_date="2026-04-11")
-    unrelated = _restore_transaction(description="LOCAL bakery card purchase", tx_date="2026-04-12")
+    seed = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice", tx_date="2026-04-10"
+    )
+    match_one = _restore_transaction(
+        description="SEPA PROXIMUS telecom invoice april", tx_date="2026-04-11"
+    )
+    unrelated = _restore_transaction(
+        description="LOCAL bakery card purchase", tx_date="2026-04-12"
+    )
 
     accepted = _accept_utilities_session(seed["id"])
 
-    def fake_similarity_scores(source_text: str, candidate_texts: list[str]) -> list[float]:
+    def fake_similarity_scores(
+        source_text: str, candidate_texts: list[str]
+    ) -> list[float]:
         return [
-            0.91 if "proximus" in source_text and "proximus" in candidate_text else 0.12
+            SUGGESTION_CONFIDENCE
+            if "proximus" in source_text and "proximus" in candidate_text
+            else 0.12
             for candidate_text in candidate_texts
         ]
 
-    monkeypatch.setattr(category_suggestion_service, "similarity_scores", fake_similarity_scores)
+    monkeypatch.setattr(
+        category_suggestion_service, "similarity_scores", fake_similarity_scores
+    )
 
     response = client.post(
         f"/classification/sessions/{accepted['session']['id']}/apply-batch",
         json={"transaction_ids": [match_one["id"], unrelated["id"]]},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == HTTP_OK
     payload = response.json()
     assert payload["applied_transaction_ids"] == [match_one["id"]]
     assert payload["skipped_transaction_ids"] == [unrelated["id"]]
 
 
-def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_keeps_pattern_active(monkeypatch):
+def test_recurrence_pattern_wins_before_upload_suggester(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify recurrence pattern wins before upload suggester."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
@@ -352,9 +406,11 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
     _approve_import_session(first_upload["id"])
     seed_transaction = _latest_transaction()
     assert seed_transaction is not None
-    session = client.post("/classification/sessions", json={"transaction_id": seed_transaction.id}).json()
+    session = client.post(
+        "/classification/sessions", json={"transaction_id": seed_transaction.id}
+    ).json()
     propose_response = client.post(f"/classification/sessions/{session['id']}/propose")
-    assert propose_response.status_code == 200
+    assert propose_response.status_code == HTTP_OK
 
     accept_response = client.post(
         f"/classification/sessions/{session['id']}/accept",
@@ -366,13 +422,18 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
             "recurrence": {"is_recurrent": True, "frequency": "monthly"},
         },
     )
-    assert accept_response.status_code == 200
+    assert accept_response.status_code == HTTP_OK
     pattern_id = accept_response.json()["recurrence_pattern_id"]
 
-    def _unexpected_suggester(*args, **kwargs):
-        raise AssertionError("upload suggester should not run when a recurrence pattern matches")
+    def _unexpected_suggester(*_args: object, **_kwargs: object) -> Never:
+        msg = "upload suggester should not run when a recurrence pattern matches"
+        raise AssertionError(msg)
 
-    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", _unexpected_suggester)
+    monkeypatch.setattr(
+        import_enrichment.category_suggestion_service,
+        "suggest_category",
+        _unexpected_suggester,
+    )
 
     second_upload = _upload_csv_for_review(
         filename="BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
@@ -385,6 +446,7 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
     _approve_import_session(second_upload["id"])
     imported_transaction = _latest_transaction()
     assert imported_transaction is not None
+    assert imported_transaction.expense_category is not None
     assert imported_transaction.expense_category.value == "Utilities"
     assert imported_transaction.classification_source == "recurrence_pattern"
     assert imported_transaction.recurrence_pattern_id == pattern_id
@@ -393,13 +455,17 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
         f"/transactions/{imported_transaction.id}/category",
         params={"category": "Entertainment", "transaction_type": "Expense"},
     )
-    assert manual_override.status_code == 200
+    assert manual_override.status_code == HTTP_OK
     assert manual_override.json()["expense_category"] == "Entertainment"
     assert manual_override.json()["classification_source"] == "manual"
 
     db = SessionLocal()
     try:
-        stored_pattern = db.query(RecurrencePattern).filter(RecurrencePattern.id == pattern_id).first()
+        stored_pattern = (
+            db.query(RecurrencePattern)
+            .filter(RecurrencePattern.id == pattern_id)
+            .first()
+        )
     finally:
         db.close()
 
@@ -407,7 +473,10 @@ def test_recurrence_pattern_wins_before_upload_suggester_and_manual_override_kee
     assert stored_pattern.active is True
 
 
-def test_transfer_recurrence_pattern_overrides_seeded_sign_based_type_for_reviewed_csv_upload(monkeypatch):
+def test_transfer_recurrence_overrides_seeded_type_for_reviewed_csv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify transfer recurrence overrides seeded type for reviewed CSV."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
@@ -425,10 +494,17 @@ def test_transfer_recurrence_pattern_overrides_seeded_sign_based_type_for_review
     )
     pattern_id = accepted["recurrence_pattern_id"]
 
-    def _unexpected_suggester(*args, **kwargs):
-        raise AssertionError("upload suggester should not run when a transfer recurrence pattern matches")
+    def _unexpected_suggester(*_args: object, **_kwargs: object) -> Never:
+        msg = (
+            "upload suggester should not run when a transfer recurrence pattern matches"
+        )
+        raise AssertionError(msg)
 
-    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", _unexpected_suggester)
+    monkeypatch.setattr(
+        import_enrichment.category_suggestion_service,
+        "suggest_category",
+        _unexpected_suggester,
+    )
 
     review_session = _upload_csv_for_review(
         filename="BE46 0636 5194 6836 2026-05-11 13-17-27 1.csv",
@@ -440,18 +516,22 @@ def test_transfer_recurrence_pattern_overrides_seeded_sign_based_type_for_review
     assert review_session["status"] == "awaiting_review"
 
     approve_response = client.post(f"/imports/{review_session['id']}/approve")
-    assert approve_response.status_code == 200
+    assert approve_response.status_code == HTTP_OK
 
     imported_transaction = _latest_transaction()
     assert imported_transaction is not None
     assert imported_transaction.transaction_type.value == "Transfer"
+    assert imported_transaction.transfer_category is not None
     assert imported_transaction.transfer_category.value == "Internal Transfer"
     assert imported_transaction.expense_category is None
     assert imported_transaction.classification_source == "recurrence_pattern"
     assert imported_transaction.recurrence_pattern_id == pattern_id
 
 
-def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_missing(monkeypatch):
+def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify recurrence pattern applies across banks without exact bank match."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
@@ -469,10 +549,18 @@ def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_miss
     )
     pattern_id = accepted["recurrence_pattern_id"]
 
-    def _unexpected_suggester(*args, **kwargs):
-        raise AssertionError("upload suggester should not run when a compatible recurrence pattern exists")
+    def _unexpected_suggester(*_args: object, **_kwargs: object) -> Never:
+        msg = (
+            "upload suggester should not run when a compatible recurrence pattern "
+            "exists"
+        )
+        raise AssertionError(msg)
 
-    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", _unexpected_suggester)
+    monkeypatch.setattr(
+        import_enrichment.category_suggestion_service,
+        "suggest_category",
+        _unexpected_suggester,
+    )
 
     second_upload = _upload_csv_for_review(
         filename="50212984548.csv",
@@ -487,26 +575,38 @@ def test_recurrence_pattern_can_apply_across_banks_when_exact_bank_match_is_miss
     imported_transaction = _latest_transaction()
     assert imported_transaction is not None
     assert imported_transaction.source_bank == "Beobank"
+    assert imported_transaction.expense_category is not None
     assert imported_transaction.expense_category.value == "Utilities"
     assert imported_transaction.classification_source == "recurrence_pattern"
     assert imported_transaction.recurrence_pattern_id == pattern_id
 
 
-def test_upload_csv_is_atomic_when_auto_classification_fails_mid_file(monkeypatch):
+def test_upload_csv_is_atomic_when_auto_classification_fails_mid_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify upload csv is atomic when auto classification fails mid file."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
 
     calls = 0
 
-    def flaky_suggester(*args, **kwargs):
+    def flaky_suggester(
+        *_args: object,
+        **_kwargs: object,
+    ) -> list[tuple[str, float]]:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return [("Utilities", 0.91)]
-        raise RuntimeError("simulated suggester failure")
+            return [("Utilities", SUGGESTION_CONFIDENCE)]
+        msg = "simulated suggester failure"
+        raise RuntimeError(msg)
 
-    monkeypatch.setattr(import_enrichment.category_suggestion_service, "suggest_category", flaky_suggester)
+    monkeypatch.setattr(
+        import_enrichment.category_suggestion_service,
+        "suggest_category",
+        flaky_suggester,
+    )
 
     response = _upload_csv_for_review(
         filename="data.csv",
@@ -528,21 +628,35 @@ def test_upload_csv_is_atomic_when_auto_classification_fails_mid_file(monkeypatc
     assert transaction_count == 0
 
 
-def test_upload_csv_still_succeeds_when_post_commit_learning_update_fails(monkeypatch):
+def test_upload_csv_still_succeeds_when_post_commit_learning_update_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify upload csv still succeeds when post commit learning update fails."""
     _reset_rate_limiter()
     _reset_database()
     _clear_vector_collections()
 
+    def suggest_utilities(
+        *_args: object,
+        **_kwargs: object,
+    ) -> list[tuple[str, float]]:
+        return [("Utilities", SUGGESTION_CONFIDENCE)]
+
     monkeypatch.setattr(
         import_enrichment.category_suggestion_service,
         "suggest_category",
-        lambda *args, **kwargs: [("Utilities", 0.91)],
+        suggest_utilities,
     )
 
-    def broken_add_transaction(*args, **kwargs):
-        raise RuntimeError("simulated index update failure")
+    def broken_add_transaction(*_args: object, **_kwargs: object) -> Never:
+        msg = "simulated index update failure"
+        raise RuntimeError(msg)
 
-    monkeypatch.setattr(import_workflow.category_suggestion_service, "add_transaction", broken_add_transaction)
+    monkeypatch.setattr(
+        import_workflow.category_suggestion_service,
+        "add_transaction",
+        broken_add_transaction,
+    )
 
     session = _upload_csv_for_review(
         filename="data.csv",

@@ -1,30 +1,65 @@
-from contextlib import asynccontextmanager, contextmanager
+"""Module for backend app main."""
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 import logging
 import threading
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import SQLAlchemyError
 
 from .config import settings
 from .database import SessionLocal
-from .database_manager import init_database, reset_database
-from .services.ecb_exchange_rates import ECBExchangeRateService
-from .services.fx_refresh_lock import acquire_fx_refresh_lock
-from .services.fx_refresh_scheduler import build_fx_refresh_scheduler
+from .database_manager import (
+    init_database,
+    reset_database,
+)
+from .routers import (
+    anomalies,
+    financial_health,
+    imports,
+    projections,
+    statistics,
+    suggestions,
+    transactions,
+)
+from .routers.classification import (
+    router as classification_router,
+)
+from .services.ecb_exchange_rates import (
+    ECBExchangeRateService,
+)
+from .services.fx_refresh_lock import (
+    acquire_fx_refresh_lock,
+)
+from .services.fx_refresh_scheduler import (
+    build_fx_refresh_scheduler,
+)
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-fx_scheduler = None
+@dataclass
+class FxSchedulerState:
+    """Track the process-local FX refresh scheduler."""
+
+    scheduler: BackgroundScheduler | None = None
+
+
+fx_scheduler_state: FxSchedulerState = FxSchedulerState()
 
 
 @contextmanager
-def _fx_refresh_lock():
-    with acquire_fx_refresh_lock(settings.database_path, timeout_seconds=0.0) as acquired:
+def _fx_refresh_lock() -> Iterator[bool]:
+    with acquire_fx_refresh_lock(
+        settings.database_path, timeout_seconds=0.0
+    ) as acquired:
         yield acquired
 
 
@@ -32,7 +67,10 @@ def _run_fx_refresh(*, reason: str, allow_historical_seed: bool) -> None:
     try:
         with _fx_refresh_lock() as acquired:
             if not acquired:
-                logger.info("Skipping FX %s refresh because another process holds the lock", reason)
+                logger.info(
+                    "Skipping FX %s refresh because another process holds the lock",
+                    reason,
+                )
                 return
 
             with SessionLocal() as db:
@@ -50,7 +88,8 @@ def _run_fx_refresh(*, reason: str, allow_historical_seed: bool) -> None:
                     window_days=settings.fx_startup_catchup_days
                 )
                 logger.info(
-                    "FX %s catch-up completed for %s to %s: %s rows upserted, %s working-day gaps",
+                    "FX %s catch-up completed for %s to %s: %s rows "
+                    "upserted, %s working-day gaps",
                     reason,
                     result.start_date,
                     result.end_date,
@@ -80,33 +119,30 @@ def _start_background_fx_refresh() -> threading.Thread:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    global fx_scheduler
-
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Handle lifespan."""
     _start_background_fx_refresh()
-    fx_scheduler = build_fx_refresh_scheduler(
+    scheduler: BackgroundScheduler = build_fx_refresh_scheduler(
         _run_scheduled_fx_refresh,
         hour=settings.fx_refresh_hour_utc,
         minute=settings.fx_refresh_minute_utc,
     )
-    fx_scheduler.start()
+    fx_scheduler_state.scheduler = scheduler
+    scheduler.start()
 
     try:
         yield
     finally:
-        if fx_scheduler is not None and fx_scheduler.running:
-            fx_scheduler.shutdown(wait=False)
-        fx_scheduler = None
+        active_scheduler: BackgroundScheduler | None = fx_scheduler_state.scheduler
+        if active_scheduler is not None and active_scheduler.running:
+            active_scheduler.shutdown(wait=False)
+        fx_scheduler_state.scheduler = None
 
 
 # Initialize the database BEFORE importing routers to ensure tables exist
 init_database()
 
-# Import routers
-from .routers import transactions, statistics, suggestions, financial_health, projections, anomalies, imports
-from .routers.classification import router as classification_router
-
-app = FastAPI(title="MyFinance API", lifespan=lifespan)
+app: FastAPI = FastAPI(title="MyFinance API", lifespan=lifespan)
 
 # Configure CORS
 app.add_middleware(
@@ -128,12 +164,15 @@ app.include_router(anomalies.router)
 app.include_router(imports.router)
 app.include_router(classification_router)
 
+
 # Add a debug endpoint to reset the database
-# pass statistics or transactions to reset only statistics or transactions  
+# pass statistics or transactions to reset only statistics or transactions
 @app.post("/debug/reset-database")
-def debug_reset_database(reset_type: str = "all"):
+def debug_reset_database(reset_type: str = "all") -> dict[str, str]:
+    """Handle debug reset database."""
     try:
         reset_database(reset_type)
+    except (RuntimeError, SQLAlchemyError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
         return {"message": "Database reset successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

@@ -1,12 +1,17 @@
-from sqlalchemy import Column, Integer, Float, String, Date, ForeignKey, JSON, Boolean, Enum
-from sqlalchemy.orm import relationship
-from ..database import Base
+"""Module for backend app models financial_projection."""
+
 import enum
 from datetime import date
-from typing import Optional
+
+from sqlalchemy import Boolean, Date, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ..database import Base
 
 
-class ParamType(str, enum.Enum):
+class ParamType(enum.StrEnum):
+    """Represent param type."""
+
     PERCENTAGE = "percentage"
     AMOUNT = "amount"
     MONTHS = "months"
@@ -15,47 +20,67 @@ class ParamType(str, enum.Enum):
 
 
 class ProjectionScenario(Base):
+    """Represent projection scenario."""
+
     __tablename__ = "projection_scenarios"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(200), nullable=False)
-    description = Column(String(1000), nullable=False)
-    created_at = Column(Date, nullable=False, default=date.today)
-    is_default = Column(Boolean, default=False)
-    is_base_scenario = Column(Boolean, default=False)  # Identifies the base scenario for recomputation
-    user_id = Column(Integer, nullable=True)  # For future multi-user support
-    
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=True)
+    is_base_scenario: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=True
+    )
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Relationships
-    parameters = relationship("ProjectionParameter", back_populates="scenario", cascade="all, delete-orphan")
-    results = relationship("ProjectionResult", back_populates="scenario", cascade="all, delete-orphan")
+    parameters: Mapped[list["ProjectionParameter"]] = relationship(
+        "ProjectionParameter", back_populates="scenario", cascade="all, delete-orphan"
+    )
+    results: Mapped[list["ProjectionResult"]] = relationship(
+        "ProjectionResult", back_populates="scenario", cascade="all, delete-orphan"
+    )
 
 
 class ProjectionParameter(Base):
+    """Represent projection parameter."""
+
     __tablename__ = "projection_parameters"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scenario_id = Column(Integer, ForeignKey("projection_scenarios.id"), nullable=False)
-    param_name = Column(String(100), nullable=False)
-    param_value = Column(Float, nullable=False)
-    param_type = Column(Enum(ParamType), nullable=False)
-    
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    scenario_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projection_scenarios.id"), nullable=False
+    )
+    param_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    param_value: Mapped[float] = mapped_column(Float, nullable=False)
+    param_type: Mapped[ParamType] = mapped_column(Enum(ParamType), nullable=False)
+
     # Relationships
-    scenario = relationship("ProjectionScenario", back_populates="parameters")
+    scenario: Mapped["ProjectionScenario"] = relationship(
+        "ProjectionScenario", back_populates="parameters"
+    )
 
 
 class ProjectionResult(Base):
+    """Represent projection result."""
+
     __tablename__ = "projection_results"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scenario_id = Column(Integer, ForeignKey("projection_scenarios.id"), nullable=False)
-    month = Column(Integer, nullable=False)
-    year = Column(Integer, nullable=False)
-    projected_income = Column(Float, nullable=False)
-    projected_expenses = Column(Float, nullable=False)
-    projected_investments = Column(Float, nullable=False)
-    projected_savings = Column(Float, nullable=False)
-    projected_net_worth = Column(Float, nullable=False)
-    created_at = Column(Date, nullable=False, default=date.today)
-    
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    scenario_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projection_scenarios.id"), nullable=False
+    )
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    projected_income: Mapped[float] = mapped_column(Float, nullable=False)
+    projected_expenses: Mapped[float] = mapped_column(Float, nullable=False)
+    projected_investments: Mapped[float] = mapped_column(Float, nullable=False)
+    projected_savings: Mapped[float] = mapped_column(Float, nullable=False)
+    projected_net_worth: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
+
     # Relationships
-    scenario = relationship("ProjectionScenario", back_populates="results")
+    scenario: Mapped["ProjectionScenario"] = relationship(
+        "ProjectionScenario", back_populates="results"
+    )

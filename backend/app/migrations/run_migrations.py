@@ -1,3 +1,5 @@
+"""Module for backend app migrations run_migrations."""
+
 import logging
 
 from sqlalchemy.orm import Session
@@ -13,25 +15,22 @@ from app.migrations.migrate_europe_iban_reclassification import (
 from app.migrations.migrate_expense_type_values import migrate_expense_type_values
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def run_migrations():
+def run_migrations() -> None:
+    """Handle run migrations."""
     try:
         logger.info("Starting migrations...")
         ensure_runtime_schema_compatibility()
-        # migrate_categories()
-        # migrate_statistics_fields()
-        # migrate_statistics_periods()
-        # migrate_expense_type()
         migrate_classification_assistant()
         migrate_expense_type_values()
         with Session(engine) as db:
             summary = migrate_europe_iban_reclassification(db)
         logger.info("Europe IBAN cleanup migration summary: %s", summary)
         logger.info("All migrations completed successfully")
-    except Exception as e:
-        logger.error(f"Migration failed: {e!s}")
+    except Exception:
+        logger.exception("Migration failed")
         raise
 
 

@@ -1,56 +1,76 @@
-from sqlalchemy import Column, Integer, Float, String, Date, ForeignKey, JSON, Boolean
-from ..database import Base
-import enum
+"""Module for backend app models financial_health."""
+
 from datetime import date
+
+from sqlalchemy import JSON, Boolean, Date, Float, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ..database import Base
 
 
 class FinancialHealth(Base):
+    """Represent financial health."""
+
     __tablename__ = "financial_health"
 
-    id = Column(Integer, primary_key=True, index=True)
-    date = Column(Date, nullable=False, index=True)
-    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
     # Overall score (0-100)
-    overall_score = Column(Float, default=0)
-    
+    overall_score: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+
     # Component scores (0-100)
-    savings_rate_score = Column(Float, default=0)
-    expense_ratio_score = Column(Float, default=0)
-    budget_adherence_score = Column(Float, default=0)
-    debt_to_income_score = Column(Float, default=0)
-    emergency_fund_score = Column(Float, default=0)
-    spending_stability_score = Column(Float, default=0)
-    investment_rate_score = Column(Float, default=0)
-    
+    savings_rate_score: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    expense_ratio_score: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    budget_adherence_score: Mapped[float] = mapped_column(
+        Float, default=0, nullable=True
+    )
+    debt_to_income_score: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    emergency_fund_score: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    spending_stability_score: Mapped[float] = mapped_column(
+        Float, default=0, nullable=True
+    )
+    investment_rate_score: Mapped[float] = mapped_column(
+        Float, default=0, nullable=True
+    )
+
     # Raw metrics (for reference)
-    savings_rate = Column(Float, default=0)  # Percentage
-    expense_ratio = Column(Float, default=0)  # Ratio
-    budget_adherence = Column(Float, default=0)  # Percentage
-    debt_to_income = Column(Float, default=0)  # Ratio
-    emergency_fund_months = Column(Float, default=0)  # Number of months
-    spending_stability = Column(Float, default=0)  # Coefficient of variation
-    investment_rate = Column(Float, default=0)  # Percentage of income invested
-    
+    savings_rate: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    expense_ratio: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    budget_adherence: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    debt_to_income: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    emergency_fund_months: Mapped[float] = mapped_column(
+        Float, default=0, nullable=True
+    )
+    spending_stability: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+    investment_rate: Mapped[float] = mapped_column(Float, default=0, nullable=True)
+
     # Metadata
-    recommendations = Column(JSON, nullable=True)  # Store recommendations as JSON
+    recommendations: Mapped[list[dict[str, object]] | None] = mapped_column(
+        JSON, nullable=True
+    )
 
 
 class FinancialRecommendation(Base):
+    """Represent financial recommendation."""
+
     __tablename__ = "financial_recommendations"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    date_created = Column(Date, nullable=False, default=date.today)
-    
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date_created: Mapped[date] = mapped_column(Date, nullable=False, default=date.today)
+
     # Recommendation details
-    title = Column(String(200), nullable=False)
-    description = Column(String(1000), nullable=False)
-    category = Column(String(100), nullable=False)  # Which component this addresses
-    impact_area = Column(String(100), nullable=False)  # Which score this would improve
-    priority = Column(Integer, default=0)  # 1-5, with 5 being highest priority
-    
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(String(1000), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    impact_area: Mapped[str] = mapped_column(String(100), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=True)
+
     # Tracking
-    is_completed = Column(Boolean, default=False)
-    date_completed = Column(Date, nullable=True)
-    
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=True)
+    date_completed: Mapped[date | None] = mapped_column(Date, nullable=True)
+
     # Potential impact
-    estimated_score_improvement = Column(Float, default=0)  # Estimated points of improvement
+    estimated_score_improvement: Mapped[float] = mapped_column(
+        Float, default=0, nullable=True
+    )

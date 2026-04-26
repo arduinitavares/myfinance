@@ -1,4 +1,8 @@
-SANITIZED_BELFIUS_PAGE_TEXTS = [
+"""Module for backend tests imports fixtures belfius_account_pages."""
+
+from typing import Any
+
+SANITIZED_BELFIUS_PAGE_TEXTS: Any = [
     (
         "Belfius Bank NV\n"
         "Karel Rogierplein 11 - 1210 Brussel\n"

@@ -1,7 +1,17 @@
+"""Module for backend tests imports test_nexo_csv."""
+
 from pathlib import Path
 
 from app.imports.nexo_csv import NexoCsvExtractor
+from app.models.transaction import ExpenseCategory, TransactionType, TransferCategory
 from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
+
+EXPECTED_REVIEWABLE_TRANSACTION_COUNT: int = 3
+PURCHASE_AMOUNT: float = -12.34
+CARD_FEE_AMOUNT: float = -0.16
+TRANSFER_AMOUNT: float = -250.0
+
+type JsonObject = dict[str, object]
 
 
 def _write_csv(tmp_path: Path, content: bytes) -> Path:
@@ -10,7 +20,17 @@ def _write_csv(tmp_path: Path, content: bytes) -> Path:
     return file_path
 
 
-def test_nexo_csv_extractor_emits_expected_transactions_and_evidence(tmp_path):
+def _json_object(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        msg = f"Expected JSON object, got {type(value).__name__}"
+        raise TypeError(msg)
+    return {str(key): item for key, item in value.items()}
+
+
+def test_nexo_csv_extractor_emits_expected_transactions_and_evidence(
+    tmp_path: Path,
+) -> None:
+    """Verify nexo csv extractor emits expected transactions and evidence."""
     file_path = _write_csv(
         tmp_path,
         build_nexo_csv_bytes(
@@ -89,15 +109,27 @@ def test_nexo_csv_extractor_emits_expected_transactions_and_evidence(tmp_path):
         ),
     )
 
-    evidence, result = NexoCsvExtractor().extract(file_path=file_path, session_id="17", attempt_number=1)
+    evidence, result = NexoCsvExtractor().extract(
+        file_path=file_path, session_id="17", attempt_number=1
+    )
 
-    assert evidence.text_blocks[0]["page_number"] == 1
-    assert evidence.text_blocks[0]["raw_text"].startswith("Transaction,Type,Input Currency")
-    assert any(snippet["transaction_id"] == "NXT1001" for snippet in evidence.snippets)
+    first_text_block = _json_object(evidence.text_blocks[0])
+    assert first_text_block["page_number"] == 1
+    raw_text = first_text_block["raw_text"]
+    assert isinstance(raw_text, str)
+    assert raw_text.startswith("Transaction,Type,Input Currency")
+    assert any(
+        _json_object(snippet)["transaction_id"] == "NXT1001"
+        for snippet in evidence.snippets
+    )
 
     assert result.extractor_id == "nexo_csv_v1"
     assert result.raw_artifact_ref == "imports/17/attempts/1/evidence/raw.json"
-    assert result.source_metadata == {"provider_hint": "nexo", "file_type": "csv", "charset": "utf-8"}
+    assert result.source_metadata == {
+        "provider_hint": "nexo",
+        "file_type": "csv",
+        "charset": "utf-8",
+    }
     assert result.statement_metadata == {
         "account_number_hint": "NEXO",
         "card_number_hint": None,
@@ -107,15 +139,15 @@ def test_nexo_csv_extractor_emits_expected_transactions_and_evidence(tmp_path):
     }
     assert result.overall_confidence == 1.0
 
-    assert len(result.transactions) == 3
+    assert len(result.transactions) == EXPECTED_REVIEWABLE_TRANSACTION_COUNT
 
     purchase = result.transactions[0]
     assert purchase.transaction_date == "2026-04-10"
     assert purchase.source_description == "Coffee Shop"
-    assert purchase.signed_amount == -12.34
+    assert purchase.signed_amount == PURCHASE_AMOUNT
     assert purchase.currency == "xUSD"
     assert purchase.debit_credit == "debit"
-    assert purchase.proposed_transaction_type.value == "Expense"
+    assert purchase.proposed_transaction_type == TransactionType.EXPENSE
     assert purchase.proposed_expense_category is None
     assert purchase.proposed_transfer_category is None
     assert purchase.source_locator == "csv:r2:NXT1001"
@@ -124,17 +156,17 @@ def test_nexo_csv_extractor_emits_expected_transactions_and_evidence(tmp_path):
 
     fee = result.transactions[1]
     assert fee.source_description == "Card fee"
-    assert fee.signed_amount == -0.16
+    assert fee.signed_amount == CARD_FEE_AMOUNT
     assert fee.currency == "xUSD"
-    assert fee.proposed_transaction_type.value == "Expense"
-    assert fee.proposed_expense_category.value == "Financial Fees"
+    assert fee.proposed_transaction_type == TransactionType.EXPENSE
+    assert fee.proposed_expense_category == ExpenseCategory.FINANCIAL_FEES
 
     transfer = result.transactions[2]
     assert transfer.source_description == "Bank transfer to BE6800000000000000"
-    assert transfer.signed_amount == -250.0
+    assert transfer.signed_amount == TRANSFER_AMOUNT
     assert transfer.currency == "EUR"
-    assert transfer.proposed_transaction_type.value == "Transfer"
-    assert transfer.proposed_transfer_category.value == "Internal Transfer"
+    assert transfer.proposed_transaction_type == TransactionType.TRANSFER
+    assert transfer.proposed_transfer_category == TransferCategory.INTERNAL_TRANSFER
 
     assert len(result.issues) == 1
     assert result.issues[0].code == "nexo_ambiguous_transfer_out"
@@ -142,7 +174,10 @@ def test_nexo_csv_extractor_emits_expected_transactions_and_evidence(tmp_path):
     assert result.issues[0].transaction_ref == "csv:r10:NXT1009"
 
 
-def test_nexo_csv_extractor_blocks_when_no_reviewable_rows_remain(tmp_path):
+def test_nexo_csv_extractor_blocks_when_no_reviewable_rows_remain(
+    tmp_path: Path,
+) -> None:
+    """Verify nexo csv extractor blocks when no reviewable rows remain."""
     file_path = _write_csv(
         tmp_path,
         build_nexo_csv_bytes(
@@ -189,7 +224,9 @@ def test_nexo_csv_extractor_blocks_when_no_reviewable_rows_remain(tmp_path):
         ),
     )
 
-    _, result = NexoCsvExtractor().extract(file_path=file_path, session_id="18", attempt_number=1)
+    _, result = NexoCsvExtractor().extract(
+        file_path=file_path, session_id="18", attempt_number=1
+    )
 
     assert result.transactions == []
     assert [issue.code for issue in result.issues] == ["no_importable_nexo_rows"]

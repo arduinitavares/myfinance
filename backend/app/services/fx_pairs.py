@@ -1,3 +1,5 @@
+"""Module for backend app services fx_pairs."""
+
 from __future__ import annotations
 
 
@@ -7,6 +9,7 @@ def required_fx_quotes(
     reporting_currency: str,
     base_currency: str,
 ) -> tuple[str, ...]:
+    """Handle required fx quotes."""
     if raw_currency == reporting_currency:
         return ()
     if raw_currency == base_currency:

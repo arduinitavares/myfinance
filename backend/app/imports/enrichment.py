@@ -1,18 +1,41 @@
+"""Module for backend app imports enrichment."""
+
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-from sqlalchemy.orm import Session
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.models.classification import RecurrencePattern
-from app.models.imports import ImportTransactionDraft
 from app.models.transaction import TransactionType
 from app.routers.suggestions import category_suggestion_service
-from app.services.classification_session_service import recurrence_pattern_matches_transaction
+from app.services.classification_session_service import (
+    recurrence_pattern_matches_transaction,
+)
 from app.utils.text_normalization import normalize_for_matching
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from app.models.imports import (
+        ImportTransactionDraft,
+    )
+
+
+SUGGESTION_CONFIDENCE_THRESHOLD: float = 0.5
+
+
+@dataclass(frozen=True)
+class DraftTransactionStub:
+    """Fields needed to match a draft against a recurrence pattern."""
+
+    description: str
+    currency: str
+    amount: float
+    transaction_type: TransactionType
 
 
 def effective_transaction_type(draft: ImportTransactionDraft) -> TransactionType:
+    """Handle effective transaction type."""
     if draft.proposed_transaction_type:
         return TransactionType(draft.proposed_transaction_type)
     if draft.proposed_transfer_category:
@@ -21,7 +44,9 @@ def effective_transaction_type(draft: ImportTransactionDraft) -> TransactionType
         return TransactionType.EXPENSE
     if draft.proposed_income_category:
         return TransactionType.INCOME
-    return TransactionType.EXPENSE if draft.signed_amount < 0 else TransactionType.INCOME
+    return (
+        TransactionType.EXPENSE if draft.signed_amount < 0 else TransactionType.INCOME
+    )
 
 
 def find_matching_recurrence_pattern(
@@ -30,12 +55,12 @@ def find_matching_recurrence_pattern(
     draft: ImportTransactionDraft,
     source_bank: str,
 ) -> RecurrencePattern | None:
+    """Handle find matching recurrence pattern."""
     transaction_type = effective_transaction_type(draft)
-    transaction_stub = SimpleNamespace(
+    transaction_stub = DraftTransactionStub(
         description=draft.source_description,
         currency=draft.currency,
         amount=draft.signed_amount,
-        source_bank=source_bank,
         transaction_type=transaction_type,
     )
     normalized_description_key = normalize_for_matching(draft.source_description)
@@ -61,7 +86,9 @@ def find_matching_recurrence_pattern(
     return None
 
 
-def _apply_recurrence_pattern(draft: ImportTransactionDraft, pattern: RecurrencePattern) -> None:
+def _apply_recurrence_pattern(
+    draft: ImportTransactionDraft, pattern: RecurrencePattern
+) -> None:
     pattern_type = pattern.transaction_type
 
     if draft.proposed_transaction_type != pattern_type.value:
@@ -73,11 +100,20 @@ def _apply_recurrence_pattern(draft: ImportTransactionDraft, pattern: Recurrence
         if pattern_type != TransactionType.TRANSFER:
             draft.proposed_transfer_category = None
 
-    if pattern_type == TransactionType.EXPENSE and draft.proposed_expense_category is None:
+    if (
+        pattern_type == TransactionType.EXPENSE
+        and draft.proposed_expense_category is None
+    ):
         draft.proposed_expense_category = pattern.category
-    elif pattern_type == TransactionType.INCOME and draft.proposed_income_category is None:
+    elif (
+        pattern_type == TransactionType.INCOME
+        and draft.proposed_income_category is None
+    ):
         draft.proposed_income_category = pattern.category
-    elif pattern_type == TransactionType.TRANSFER and draft.proposed_transfer_category is None:
+    elif (
+        pattern_type == TransactionType.TRANSFER
+        and draft.proposed_transfer_category is None
+    ):
         draft.proposed_transfer_category = pattern.category
 
     if draft.classification_source is None:
@@ -103,16 +139,22 @@ def _apply_upload_suggestions(draft: ImportTransactionDraft) -> None:
         draft.signed_amount,
         transaction_type,
     )
-    if not suggestions or suggestions[0][1] <= 0.5:
+    if not suggestions or suggestions[0][1] <= SUGGESTION_CONFIDENCE_THRESHOLD:
         return
 
     category, _confidence = suggestions[0]
     if draft.proposed_transaction_type is None:
         draft.proposed_transaction_type = transaction_type.value
 
-    if transaction_type == TransactionType.EXPENSE and draft.proposed_expense_category is None:
+    if (
+        transaction_type == TransactionType.EXPENSE
+        and draft.proposed_expense_category is None
+    ):
         draft.proposed_expense_category = category
-    elif transaction_type == TransactionType.INCOME and draft.proposed_income_category is None:
+    elif (
+        transaction_type == TransactionType.INCOME
+        and draft.proposed_income_category is None
+    ):
         draft.proposed_income_category = category
     else:
         return
@@ -127,7 +169,10 @@ def enrich_draft_proposals(
     draft: ImportTransactionDraft,
     source_bank: str,
 ) -> None:
-    recurrence_pattern = find_matching_recurrence_pattern(db, draft=draft, source_bank=source_bank)
+    """Handle enrich draft proposals."""
+    recurrence_pattern = find_matching_recurrence_pattern(
+        db, draft=draft, source_bank=source_bank
+    )
     if recurrence_pattern is not None:
         _apply_recurrence_pattern(draft, recurrence_pattern)
     _apply_upload_suggestions(draft)

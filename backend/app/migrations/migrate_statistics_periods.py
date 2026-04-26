@@ -1,3 +1,5 @@
+"""Module for backend app migrations migrate_statistics_periods."""
+
 import logging
 
 from sqlalchemy import create_engine, inspect, text
@@ -7,19 +9,20 @@ from app.database import SQLALCHEMY_DATABASE_URL
 from app.services.statistics_service import StatisticsService
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def migrate_statistics_periods():
+def migrate_statistics_periods() -> None:
     """
-    Migration to update the statistics_period enum from (daily, monthly, all_time) to (monthly, yearly, all_time)
+    Update statistics_period enum values and rebuild statistics.
+
     - Remove daily stats
     - Add yearly stats
-    - Rebuild statistics for all transactions
+    - Rebuild statistics for all transactions.
     """
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
-    SessionLocal = sessionmaker(bind=engine)
-    db = SessionLocal()
+    session_factory = sessionmaker(bind=engine)
+    db = session_factory()
 
     try:
         # Step 1: Delete all daily statistics
@@ -36,21 +39,27 @@ def migrate_statistics_periods():
             column["name"] for column in inspector.get_columns("financial_statistics")
         }
 
-        yearly_column_definitions = {
-            "yearly_income": "NUMERIC(15,2) DEFAULT 0.00",
-            "yearly_expenses": "NUMERIC(15,2) DEFAULT 0.00",
-        }
-
         yearly_column_statements = [
-            f"ALTER TABLE financial_statistics ADD COLUMN {column_name} {column_definition}"
-            for column_name, column_definition in yearly_column_definitions.items()
+            statement
+            for column_name, statement in (
+                (
+                    "yearly_income",
+                    "ALTER TABLE financial_statistics ADD COLUMN "
+                    "yearly_income NUMERIC(15,2) DEFAULT 0.00",
+                ),
+                (
+                    "yearly_expenses",
+                    "ALTER TABLE financial_statistics ADD COLUMN "
+                    "yearly_expenses NUMERIC(15,2) DEFAULT 0.00",
+                ),
+            )
             if column_name not in existing_columns
         ]
 
         if yearly_column_statements:
             for statement in yearly_column_statements:
                 db.execute(text(statement))
-                logger.info(f"Executed: {statement}")
+                logger.info("Executed: %s", statement)
             db.commit()
             logger.info("Added missing yearly columns")
         else:
@@ -66,9 +75,9 @@ def migrate_statistics_periods():
 
         logger.info("Migration completed successfully")
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.error(f"Error during migration: {e!s}")
+        logger.exception("Error during migration")
         raise
     finally:
         db.close()

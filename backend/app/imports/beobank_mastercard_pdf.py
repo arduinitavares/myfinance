@@ -1,36 +1,66 @@
+"""Module for backend app imports beobank_mastercard_pdf."""
+
 import re
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
-from .contracts import ExtractionResult, ExtractedTransaction, ImportIssue
+from .contracts import ExtractedTransaction, ExtractionResult, ImportIssue
 
-AMOUNT_BODY = r"(?:\d{1,3}(?:\.\d{3})+|\d{1,3}(?: \d{3})+|\d+),\d{2}"
-SIGNED_AMOUNT_BODY = rf"-?{AMOUNT_BODY}"
-AMOUNT_RE = re.compile(rf"^{SIGNED_AMOUNT_BODY}$")
-ROW_RE = re.compile(
+AMOUNT_BODY: Any = r"(?:\d{1,3}(?:\.\d{3})+|\d{1,3}(?: \d{3})+|\d+),\d{2}"
+SIGNED_AMOUNT_BODY: Any = rf"-?{AMOUNT_BODY}"
+AMOUNT_RE: Any = re.compile(rf"^{SIGNED_AMOUNT_BODY}$")
+ROW_RE: Any = re.compile(
     rf"^(?P<date>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<description>.+?)\s+(?P<amount>{SIGNED_AMOUNT_BODY})$"
 )
-MALFORMED_ROW_RE = re.compile(
+MALFORMED_ROW_RE: Any = re.compile(
     r"^(?P<date>\d{2}/\d{2}/\d{4})\s+(?P<description>.+?)\s+"
     r"(?P<amount>-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})$"
 )
-FX_HELPER_RE = re.compile(
+FX_HELPER_RE: Any = re.compile(
     rf"^(?P<amount>{AMOUNT_BODY})\s+[A-Z]{{3}}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
     re.IGNORECASE,
 )
-INLINE_WISSELKOSTEN_RE = re.compile(
+INLINE_WISSELKOSTEN_RE: Any = re.compile(
     rf"^WISSELKOSTEN\s+(?P<amount>{SIGNED_AMOUNT_BODY})$",
     re.IGNORECASE,
 )
-MALFORMED_FX_HELPER_RE = re.compile(
-    r"^(?P<amount>-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})\s+[A-Z]{3}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
+MALFORMED_FX_HELPER_RE: Any = re.compile(
+    r"^(?P<amount>-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2})"
+    r"\s+[A-Z]{3}\s+WISSELKOERS\s+\d+(?:\.\d+)?$",
     re.IGNORECASE,
 )
-PAGE_FOOTER_RE = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
-CARD_HEADER_RE = re.compile(r"^Kaart\s+(?P<card>.+)$", re.IGNORECASE)
-DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
-PERIOD_RE = re.compile(
+PAGE_FOOTER_RE: Any = re.compile(r"^(?:Blz\s+\d+|KB\..+)$", re.IGNORECASE)
+CARD_HEADER_RE: Any = re.compile(r"^Kaart\s+(?P<card>.+)$", re.IGNORECASE)
+DATE_RE: Any = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+PERIOD_RE: Any = re.compile(
     r"(?P<start>\d{2}/\d{2}/\d{4})\s*[-\u2013]\s*(?P<end>\d{2}/\d{2}/\d{4})"
 )
+MIN_MARKERLESS_TRANSACTION_PAGE: int = 2
+IGNORED_LINE_CLASSES: set[str] = {
+    "card_header",
+    "table_header",
+    "fx_helper",
+    "page_footer_noise",
+}
+MALFORMED_LINE_CLASSES: set[str] = {
+    "malformed_fx_helper_candidate",
+    "malformed_row_candidate",
+}
+
+
+@dataclass
+class _ParseState:
+    current_row: dict | None
+    last_transaction_date: str | None
+    last_transaction_description: str | None
+
+
+@dataclass(frozen=True)
+class _LineContext:
+    page_number: int
+    body_lines: list[dict]
+    index: int
 
 
 def _collapse_token(text: str) -> str:
@@ -38,16 +68,20 @@ def _collapse_token(text: str) -> str:
 
 
 def _to_iso_date(value: str) -> str:
-    return datetime.strptime(value, "%d/%m/%Y").date().isoformat()
+    return datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=UTC).date().isoformat()
 
 
 def _parse_amount_text(amount_text: str) -> tuple[float, str]:
     if not AMOUNT_RE.match(amount_text):
-        raise ValueError(f"invalid amount: {amount_text}")
+        msg = f"invalid amount: {amount_text}"
+        raise ValueError(msg)
 
-    absolute_amount = float(amount_text.lstrip("-").replace(" ", "").replace(".", "").replace(",", "."))
+    absolute_amount = float(
+        amount_text.lstrip("-").replace(" ", "").replace(".", "").replace(",", ".")
+    )
     if absolute_amount == 0:
-        raise ValueError(f"zero amount not allowed: {amount_text}")
+        msg = f"zero amount not allowed: {amount_text}"
+        raise ValueError(msg)
 
     if amount_text.startswith("-"):
         return absolute_amount, "credit"
@@ -55,9 +89,14 @@ def _parse_amount_text(amount_text: str) -> tuple[float, str]:
 
 
 class BeobankMastercardPdfExtractor:
+    """Represent beobank mastercard pdf extractor."""
+
     extractor_id = "beobank_mastercard_pdf_v1"
 
-    def extract_from_pages(self, pages: list[dict], raw_artifact_ref: str) -> ExtractionResult:
+    def extract_from_pages(
+        self, pages: list[dict], raw_artifact_ref: str
+    ) -> ExtractionResult:
+        """Handle extract from pages."""
         issues: list[ImportIssue] = []
         transactions: list[ExtractedTransaction] = []
         statement_metadata = self._extract_statement_metadata(pages)
@@ -69,7 +108,10 @@ class BeobankMastercardPdfExtractor:
             issues.append(
                 ImportIssue(
                     code="multi_card_not_supported",
-                    message="More than one distinct card header was detected in the statement.",
+                    message=(
+                        "More than one distinct card header was detected in the "
+                        "statement."
+                    ),
                     blocking=True,
                 )
             )
@@ -77,18 +119,24 @@ class BeobankMastercardPdfExtractor:
         for page in pages:
             if page["page_number"] == 1:
                 continue
-            last_transaction_date, last_transaction_description = self._parse_transaction_page(
-                page,
-                transactions,
-                issues,
-                last_transaction_date,
-                last_transaction_description,
+            last_transaction_date, last_transaction_description = (
+                self._parse_transaction_page(
+                    page,
+                    transactions,
+                    issues,
+                    last_transaction_date,
+                    last_transaction_description,
+                )
             )
 
         return ExtractionResult(
             extractor_id=self.extractor_id,
             raw_artifact_ref=raw_artifact_ref,
-            source_metadata={"provider_hint": "beobank", "file_type": "pdf", "language": "nl"},
+            source_metadata={
+                "provider_hint": "beobank",
+                "file_type": "pdf",
+                "language": "nl",
+            },
             statement_metadata=statement_metadata,
             transactions=transactions,
             issues=issues,
@@ -104,13 +152,19 @@ class BeobankMastercardPdfExtractor:
                 if "statement_period_start" not in metadata:
                     period_match = PERIOD_RE.search(text)
                     if period_match:
-                        metadata["statement_period_start"] = _to_iso_date(period_match.group("start"))
-                        metadata["statement_period_end"] = _to_iso_date(period_match.group("end"))
+                        metadata["statement_period_start"] = _to_iso_date(
+                            period_match.group("start")
+                        )
+                        metadata["statement_period_end"] = _to_iso_date(
+                            period_match.group("end")
+                        )
 
                 if "card_number_hint" not in metadata:
                     card_match = CARD_HEADER_RE.match(text)
                     if card_match:
-                        metadata["card_number_hint"] = " ".join(card_match.group("card").split())
+                        metadata["card_number_hint"] = " ".join(
+                            card_match.group("card").split()
+                        )
 
         return metadata
 
@@ -135,154 +189,240 @@ class BeobankMastercardPdfExtractor:
         if not lines:
             return last_transaction_date, last_transaction_description
 
-        marker_index = self._find_line_index(lines, "Uw transacties")
-        body_start = 0
-
-        if marker_index is None:
-            first_content_index = self._find_first_table_content_index(lines, 0)
-            if first_content_index is None:
-                return last_transaction_date, last_transaction_description
-            if page["page_number"] <= 2 or not self._has_required_headers(lines, -1, first_content_index):
-                issues.append(
-                    ImportIssue(
-                        code="unclassifiable_table_line",
-                        message=f"Missing Dutch transaction marker before row-like content on page {page['page_number']}.",
-                        blocking=True,
-                    )
-                )
-                return last_transaction_date, last_transaction_description
-        else:
-            body_start = marker_index + 1
-            first_content_index = self._find_first_table_content_index(lines, body_start)
-            if first_content_index is None:
-                return last_transaction_date, last_transaction_description
-
-        if not self._has_required_headers(lines, body_start - 1, first_content_index):
-            issues.append(
-                ImportIssue(
-                    code="unclassifiable_table_line",
-                    message=f"Missing Dutch transaction table headers before first row on page {page['page_number']}.",
-                    blocking=True,
-                )
-            )
+        body_start = self._body_start_index(page, lines, issues)
+        if body_start is None:
             return last_transaction_date, last_transaction_description
 
-        current_row: dict | None = None
+        state = _ParseState(
+            current_row=None,
+            last_transaction_date=last_transaction_date,
+            last_transaction_description=last_transaction_description,
+        )
         body_lines = lines[body_start:]
         index = 0
         while index < len(body_lines):
-            line = body_lines[index]
-            line_number = line["line_number"]
-            text = line["text"]
-            collapsed = _collapse_token(text)
-            if collapsed == "uw miles":
-                if current_row is not None:
-                    transactions.append(self._build_transaction(page["page_number"], current_row))
-                    last_transaction_date = current_row["transaction_date"]
-                    last_transaction_description = self._joined_description(current_row)
-                    current_row = None
+            step = self._process_body_line(
+                _LineContext(page["page_number"], body_lines, index),
+                transactions,
+                issues,
+                state,
+            )
+            if step is None:
                 break
-            line_class = self._classify_line(text, current_row is not None)
+            index += step
 
-            if self._is_malformed_standalone_wisselkosten(body_lines, index):
-                issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                index += 2
-                continue
+        self._flush_current_row(page["page_number"], transactions, state)
+        return state.last_transaction_date, state.last_transaction_description
 
-            if self._is_standalone_wisselkosten(body_lines, index):
-                inherited_date = current_row["transaction_date"] if current_row is not None else last_transaction_date
-                if inherited_date is None:
-                    issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                    index += 1
-                    continue
+    def _body_start_index(
+        self, page: dict, lines: list[dict], issues: list[ImportIssue]
+    ) -> int | None:
+        marker_index = self._find_line_index(lines, "Uw transacties")
+        if marker_index is None:
+            return self._body_start_without_marker(page, lines, issues)
 
-                fee_context = self._fee_context_description(current_row, last_transaction_description)
-                if current_row is not None:
-                    transactions.append(self._build_transaction(page["page_number"], current_row))
-                    last_transaction_date = current_row["transaction_date"]
-                    last_transaction_description = self._joined_description(current_row)
-                    current_row = None
+        body_start = marker_index + 1
+        first_content_index = self._find_first_table_content_index(lines, body_start)
+        if first_content_index is None:
+            return None
+        if self._has_required_headers(lines, marker_index, first_content_index):
+            return body_start
 
-                fee_amount_line = body_lines[index + 1]
-                fee_row = self._build_standalone_wisselkosten_row(
-                    transaction_date=inherited_date,
-                    fee_context=fee_context,
-                    start_line=line_number,
-                    end_line=fee_amount_line["line_number"],
-                    amount_text=fee_amount_line["text"],
+        issues.append(
+            ImportIssue(
+                code="unclassifiable_table_line",
+                message=(
+                    "Missing Dutch transaction table headers before first "
+                    f"row on page {page['page_number']}."
+                ),
+                blocking=True,
+            )
+        )
+        return None
+
+    def _body_start_without_marker(
+        self, page: dict, lines: list[dict], issues: list[ImportIssue]
+    ) -> int | None:
+        first_content_index = self._find_first_table_content_index(lines, 0)
+        if first_content_index is None:
+            return None
+        if page["page_number"] > MIN_MARKERLESS_TRANSACTION_PAGE and (
+            self._has_required_headers(lines, -1, first_content_index)
+        ):
+            return 0
+
+        issues.append(
+            ImportIssue(
+                code="unclassifiable_table_line",
+                message=(
+                    "Missing Dutch transaction marker before row-like "
+                    f"content on page {page['page_number']}."
+                ),
+                blocking=True,
+            )
+        )
+        return None
+
+    def _flush_current_row(
+        self,
+        page_number: int,
+        transactions: list[ExtractedTransaction],
+        state: _ParseState,
+    ) -> None:
+        if state.current_row is None:
+            return
+        transactions.append(self._build_transaction(page_number, state.current_row))
+        state.last_transaction_date = state.current_row["transaction_date"]
+        state.last_transaction_description = self._joined_description(state.current_row)
+        state.current_row = None
+
+    def _process_body_line(
+        self,
+        context: _LineContext,
+        transactions: list[ExtractedTransaction],
+        issues: list[ImportIssue],
+        state: _ParseState,
+    ) -> int | None:
+        line = context.body_lines[context.index]
+        line_number = line["line_number"]
+        text = line["text"]
+        if _collapse_token(text) == "uw miles":
+            self._flush_current_row(context.page_number, transactions, state)
+            step = None
+        elif self._is_malformed_standalone_wisselkosten(
+            context.body_lines, context.index
+        ):
+            issues.append(
+                self._unclassifiable_issue(context.page_number, line_number, text)
+            )
+            step = 2
+        elif self._is_standalone_wisselkosten(context.body_lines, context.index):
+            step = self._handle_standalone_wisselkosten(
+                context, transactions, issues, state
+            )
+        elif self._is_inline_wisselkosten(text):
+            step = self._handle_inline_wisselkosten(
+                context, transactions, issues, state
+            )
+        else:
+            step = self._handle_classified_line(context, transactions, issues, state)
+        return step
+
+    def _handle_classified_line(
+        self,
+        context: _LineContext,
+        transactions: list[ExtractedTransaction],
+        issues: list[ImportIssue],
+        state: _ParseState,
+    ) -> int:
+        line = context.body_lines[context.index]
+        line_number = line["line_number"]
+        text = line["text"]
+        line_class = self._classify_line(text, state.current_row is not None)
+        if line_class in IGNORED_LINE_CLASSES:
+            return 1
+        if line_class in MALFORMED_LINE_CLASSES:
+            issues.append(
+                self._unclassifiable_issue(context.page_number, line_number, text)
+            )
+            return 1
+        if line_class == "row_start":
+            self._flush_current_row(context.page_number, transactions, state)
+            state.current_row = self._build_row_candidate(line_number, text)
+            return 1
+        if line_class == "continuation":
+            return self._handle_continuation(context, issues, state)
+        issues.append(
+            self._unclassifiable_issue(context.page_number, line_number, text)
+        )
+        return 1
+
+    def _inherited_fee_date(self, state: _ParseState) -> str | None:
+        if state.current_row is not None:
+            return state.current_row["transaction_date"]
+        return state.last_transaction_date
+
+    def _handle_standalone_wisselkosten(
+        self,
+        context: _LineContext,
+        transactions: list[ExtractedTransaction],
+        issues: list[ImportIssue],
+        state: _ParseState,
+    ) -> int:
+        line = context.body_lines[context.index]
+        inherited_date = self._inherited_fee_date(state)
+        if inherited_date is None:
+            issues.append(
+                self._unclassifiable_issue(
+                    context.page_number, line["line_number"], line["text"]
                 )
-                transactions.append(self._build_transaction(page["page_number"], fee_row))
-                last_transaction_date = inherited_date
-                index += 2
-                continue
+            )
+            return 1
 
-            if self._is_inline_wisselkosten(text):
-                inherited_date = current_row["transaction_date"] if current_row is not None else last_transaction_date
-                if inherited_date is None:
-                    issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                    index += 1
-                    continue
+        fee_context = self._fee_context_description(
+            state.current_row, state.last_transaction_description
+        )
+        self._flush_current_row(context.page_number, transactions, state)
+        fee_amount_line = context.body_lines[context.index + 1]
+        fee_row = self._build_standalone_wisselkosten_row(
+            transaction_date=inherited_date,
+            fee_context=fee_context,
+            start_line=line["line_number"],
+            end_line=fee_amount_line["line_number"],
+            amount_text=fee_amount_line["text"],
+        )
+        transactions.append(self._build_transaction(context.page_number, fee_row))
+        state.last_transaction_date = inherited_date
+        return 2
 
-                fee_context = self._fee_context_description(current_row, last_transaction_description)
-                if current_row is not None:
-                    transactions.append(self._build_transaction(page["page_number"], current_row))
-                    last_transaction_date = current_row["transaction_date"]
-                    last_transaction_description = self._joined_description(current_row)
-                    current_row = None
+    def _handle_inline_wisselkosten(
+        self,
+        context: _LineContext,
+        transactions: list[ExtractedTransaction],
+        issues: list[ImportIssue],
+        state: _ParseState,
+    ) -> int:
+        line = context.body_lines[context.index]
+        line_number = line["line_number"]
+        text = line["text"]
+        inherited_date = self._inherited_fee_date(state)
+        if inherited_date is None:
+            issues.append(
+                self._unclassifiable_issue(context.page_number, line_number, text)
+            )
+            return 1
 
-                fee_row = self._build_inline_wisselkosten_row(
-                    transaction_date=inherited_date,
-                    fee_context=fee_context,
-                    line_number=line_number,
-                    text=text,
-                )
-                transactions.append(self._build_transaction(page["page_number"], fee_row))
-                last_transaction_date = inherited_date
-                index += 1
-                continue
+        fee_context = self._fee_context_description(
+            state.current_row, state.last_transaction_description
+        )
+        self._flush_current_row(context.page_number, transactions, state)
+        fee_row = self._build_inline_wisselkosten_row(
+            transaction_date=inherited_date,
+            fee_context=fee_context,
+            line_number=line_number,
+            text=text,
+        )
+        transactions.append(self._build_transaction(context.page_number, fee_row))
+        state.last_transaction_date = inherited_date
+        return 1
 
-            if line_class in {"card_header", "table_header", "fx_helper", "page_footer_noise"}:
-                index += 1
-                continue
-
-            if line_class == "malformed_fx_helper_candidate":
-                issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                index += 1
-                continue
-
-            if line_class == "malformed_row_candidate":
-                issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                index += 1
-                continue
-
-            if line_class == "row_start":
-                if current_row is not None:
-                    transactions.append(self._build_transaction(page["page_number"], current_row))
-                    last_transaction_date = current_row["transaction_date"]
-                    last_transaction_description = self._joined_description(current_row)
-                current_row = self._build_row_candidate(line_number, text)
-                index += 1
-                continue
-
-            if line_class == "continuation":
-                if current_row is None:
-                    issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-                    index += 1
-                    continue
-                current_row["description_parts"].append(" ".join(text.split()))
-                current_row["end_line"] = line_number
-                index += 1
-                continue
-
-            issues.append(self._unclassifiable_issue(page["page_number"], line_number, text))
-            index += 1
-
-        if current_row is not None:
-            transactions.append(self._build_transaction(page["page_number"], current_row))
-            last_transaction_date = current_row["transaction_date"]
-            last_transaction_description = self._joined_description(current_row)
-
-        return last_transaction_date, last_transaction_description
+    def _handle_continuation(
+        self,
+        context: _LineContext,
+        issues: list[ImportIssue],
+        state: _ParseState,
+    ) -> int:
+        line = context.body_lines[context.index]
+        line_number = line["line_number"]
+        text = line["text"]
+        if state.current_row is None:
+            issues.append(
+                self._unclassifiable_issue(context.page_number, line_number, text)
+            )
+            return 1
+        state.current_row["description_parts"].append(" ".join(text.split()))
+        state.current_row["end_line"] = line_number
+        return 1
 
     def _find_line_index(self, lines: list[dict], token: str) -> int | None:
         needle = _collapse_token(token)
@@ -291,13 +431,21 @@ class BeobankMastercardPdfExtractor:
                 return index
         return None
 
-    def _find_first_table_content_index(self, lines: list[dict], start_index: int) -> int | None:
+    def _find_first_table_content_index(
+        self, lines: list[dict], start_index: int
+    ) -> int | None:
         for index, line in enumerate(lines[start_index:], start=start_index):
             if self._classify_line(line["text"], has_active_row=False) == "row_start":
                 return index
-            if self._classify_line(line["text"], has_active_row=False) == "malformed_fx_helper_candidate":
+            if (
+                self._classify_line(line["text"], has_active_row=False)
+                == "malformed_fx_helper_candidate"
+            ):
                 return index
-            if self._classify_line(line["text"], has_active_row=False) == "malformed_row_candidate":
+            if (
+                self._classify_line(line["text"], has_active_row=False)
+                == "malformed_row_candidate"
+            ):
                 return index
             if self._is_malformed_standalone_wisselkosten(lines, index):
                 return index
@@ -305,7 +453,9 @@ class BeobankMastercardPdfExtractor:
                 return index
         return None
 
-    def _has_required_headers(self, lines: list[dict], marker_index: int, first_row_index: int) -> bool:
+    def _has_required_headers(
+        self, lines: list[dict], marker_index: int, first_row_index: int
+    ) -> bool:
         header_tokens = {"datum": False, "beschrijving": False, "bedrag": False}
         for line in lines[marker_index + 1 : first_row_index]:
             collapsed = _collapse_token(line["text"])
@@ -318,22 +468,24 @@ class BeobankMastercardPdfExtractor:
         normalized = " ".join(text.split())
         collapsed = _collapse_token(normalized)
         if CARD_HEADER_RE.match(normalized):
-            return "card_header"
-        if all(token in collapsed for token in ("datum", "beschrijving", "bedrag")):
-            return "table_header"
-        if FX_HELPER_RE.match(normalized):
-            return "fx_helper"
-        if PAGE_FOOTER_RE.match(normalized):
-            return "page_footer_noise"
-        if self._is_malformed_fx_helper_candidate(normalized):
-            return "malformed_fx_helper_candidate"
-        if self._is_malformed_row_candidate(normalized):
-            return "malformed_row_candidate"
-        if self._is_row_start(normalized):
-            return "row_start"
-        if has_active_row and self._is_continuation(normalized):
-            return "continuation"
-        return None
+            line_class = "card_header"
+        elif all(token in collapsed for token in ("datum", "beschrijving", "bedrag")):
+            line_class = "table_header"
+        elif FX_HELPER_RE.match(normalized):
+            line_class = "fx_helper"
+        elif PAGE_FOOTER_RE.match(normalized):
+            line_class = "page_footer_noise"
+        elif self._is_malformed_fx_helper_candidate(normalized):
+            line_class = "malformed_fx_helper_candidate"
+        elif self._is_malformed_row_candidate(normalized):
+            line_class = "malformed_row_candidate"
+        elif self._is_row_start(normalized):
+            line_class = "row_start"
+        elif has_active_row and self._is_continuation(normalized):
+            line_class = "continuation"
+        else:
+            line_class = None
+        return line_class
 
     def _is_row_start(self, text: str) -> bool:
         match = ROW_RE.match(text)
@@ -351,7 +503,9 @@ class BeobankMastercardPdfExtractor:
     def _is_malformed_fx_helper_candidate(self, text: str) -> bool:
         return MALFORMED_FX_HELPER_RE.match(text) is not None
 
-    def _is_malformed_standalone_wisselkosten(self, body_lines: list[dict], index: int) -> bool:
+    def _is_malformed_standalone_wisselkosten(
+        self, body_lines: list[dict], index: int
+    ) -> bool:
         if body_lines[index]["text"].strip().casefold() != "wisselkosten":
             return False
         if index == 0 or index + 1 >= len(body_lines):
@@ -361,7 +515,10 @@ class BeobankMastercardPdfExtractor:
         next_line = " ".join(body_lines[index + 1]["text"].split())
         if AMOUNT_RE.match(next_line):
             return False
-        return re.match(r"^-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2}$", next_line) is not None
+        return (
+            re.match(r"^-?(?=[^,]*\.)(?=[^,]* )\d{1,3}(?:[. ]\d{3})+,\d{2}$", next_line)
+            is not None
+        )
 
     def _is_continuation(self, text: str) -> bool:
         stripped = " ".join(text.split())
@@ -371,15 +528,15 @@ class BeobankMastercardPdfExtractor:
             return False
         if DATE_RE.match(stripped):
             return False
-        if AMOUNT_RE.match(stripped):
-            return False
-        return True
+        return not AMOUNT_RE.match(stripped)
 
     def _is_inline_wisselkosten(self, text: str) -> bool:
         return INLINE_WISSELKOSTEN_RE.match(" ".join(text.split())) is not None
 
     @staticmethod
-    def _fee_context_description(current_row: dict | None, last_transaction_description: str | None) -> str | None:
+    def _fee_context_description(
+        current_row: dict | None, last_transaction_description: str | None
+    ) -> str | None:
         if current_row is None:
             return last_transaction_description
         description = BeobankMastercardPdfExtractor._joined_description(current_row)
@@ -404,7 +561,9 @@ class BeobankMastercardPdfExtractor:
 
     def _build_row_candidate(self, line_number: int, text: str) -> dict:
         match = ROW_RE.match(" ".join(text.split()))
-        assert match is not None
+        if match is None:
+            message = "text does not match a Beobank row"
+            raise ValueError(message)
         return {
             "transaction_date": _to_iso_date(match.group("date")),
             "description_parts": [" ".join(match.group("description").split())],
@@ -439,7 +598,9 @@ class BeobankMastercardPdfExtractor:
     ) -> dict:
         normalized = " ".join(text.split())
         match = INLINE_WISSELKOSTEN_RE.match(normalized)
-        assert match is not None
+        if match is None:
+            message = "text does not match an inline wisselkosten row"
+            raise ValueError(message)
         return {
             "transaction_date": transaction_date,
             "description_parts": [self._wisselkosten_description(fee_context)],
@@ -477,10 +638,15 @@ class BeobankMastercardPdfExtractor:
             edit_source="deterministic_extracted",
         )
 
-    def _unclassifiable_issue(self, page_number: int, line_number: int, text: str) -> ImportIssue:
+    def _unclassifiable_issue(
+        self, page_number: int, line_number: int, text: str
+    ) -> ImportIssue:
         return ImportIssue(
             code="unclassifiable_table_line",
-            message=f"Unclassifiable table line on page {page_number}, line {line_number}: {text}",
+            message=(
+                f"Unclassifiable table line on page {page_number}, "
+                f"line {line_number}: {text}"
+            ),
             blocking=True,
             transaction_ref=f"pdf:p{page_number}:l{line_number}",
         )

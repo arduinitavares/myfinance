@@ -1,24 +1,33 @@
+"""Module for backend tests test_classifier_provider."""
+
+import sqlite3
 import textwrap
 from datetime import date
-import sqlite3
+from pathlib import Path
 
-import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
-
-from app.database import SessionLocal, enable_sqlite_foreign_keys
 import app.database_manager as database_manager_module
+import pytest
+from app.database import SessionLocal, enable_sqlite_foreign_keys
 from app.database_manager import init_database, reset_database
 from app.imports.providers import ProviderRegistry
 from app.migrations import migrate_classification_assistant as migration_module
 from app.models.classification import ClassificationSession, ClassificationSessionStatus
 from app.models.transaction import Transaction, TransactionType
+from app.services.classification_session_service import ClassificationSessionService
+from app.services.classifier_providers import (
+    ProviderDescription,
+    StubClassifierProvider,
+)
 from app.services.projection_service import ProjectionService
-from app.services.classifier_providers import ProviderDescription, StubClassifierProvider
+from sqlalchemy import create_engine, event
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
+
+EXPECTED_STUB_CONFIDENCE: float = 0.91
 
 
-def test_stub_provider_returns_utilities_monthly_for_proximus():
+def test_stub_provider_returns_utilities_monthly_for_proximus() -> None:
+    """Verify stub provider returns utilities monthly for proximus."""
     provider = StubClassifierProvider(name="stub", model_name="stub-classifier-v1")
     transaction = Transaction(
         id=1,
@@ -41,12 +50,16 @@ def test_stub_provider_returns_utilities_monthly_for_proximus():
 
     assert proposal.transaction_type == "Expense"
     assert proposal.category == "Utilities"
-    assert proposal.confidence == 0.91
+    assert proposal.confidence == EXPECTED_STUB_CONFIDENCE
     assert proposal.recurrence_frequency == "monthly"
+    assert proposal.rationale is not None
     assert "Proximus" in proposal.rationale
 
 
-def test_provider_registry_accepts_classification_assistant_family_and_selects_stub(tmp_path):
+def test_provider_registry_accepts_classification_assistant_family_and_selects_stub(
+    tmp_path: Path,
+) -> None:
+    """Verify registry accepts classification assistant family."""
     config_path = tmp_path / "config.local.yaml"
     config_path.write_text(
         textwrap.dedent(
@@ -72,14 +85,20 @@ def test_provider_registry_accepts_classification_assistant_family_and_selects_s
     )
 
     registry = ProviderRegistry.from_path(config_path)
-    report = registry.validate()
+    report = registry.availability_report()
 
     assert report["classification_assistant"]["stub"]["available"] is True
     assert report["classification_assistant"]["__family__"]["chain_available"] is True
-    assert report["classification_assistant"]["__family__"]["selected_provider"] == "stub"
+    assert (
+        report["classification_assistant"]["__family__"]["selected_provider"] == "stub"
+    )
 
 
-def test_provider_registry_accepts_openai_and_openrouter_for_classification_assistant(tmp_path, monkeypatch):
+def test_provider_registry_accepts_openai_and_openrouter_for_classification_assistant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify registry accepts OpenAI-compatible assistant providers."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
@@ -113,17 +132,20 @@ def test_provider_registry_accepts_openai_and_openrouter_for_classification_assi
     )
 
     registry = ProviderRegistry.from_path(config_path)
-    report = registry.validate()
+    report = registry.availability_report()
 
     assert report["classification_assistant"]["openai"]["available"] is False
     assert report["classification_assistant"]["openai"]["reason"] == "missing_env"
     assert report["classification_assistant"]["openrouter"]["available"] is False
     assert report["classification_assistant"]["openrouter"]["reason"] == "missing_env"
     assert report["classification_assistant"]["stub"]["available"] is True
-    assert report["classification_assistant"]["__family__"]["selected_provider"] == "stub"
+    assert (
+        report["classification_assistant"]["__family__"]["selected_provider"] == "stub"
+    )
 
 
-def test_provider_description_includes_base_url_and_prompt_fingerprint():
+def test_provider_description_includes_base_url_and_prompt_fingerprint() -> None:
+    """Verify provider description includes base url and prompt fingerprint."""
     description = ProviderDescription(
         name="openai",
         model_name="gpt-4o-mini",
@@ -135,13 +157,21 @@ def test_provider_description_includes_base_url_and_prompt_fingerprint():
     assert description.prompt_fingerprint == "classification-v1"
 
 
-def test_transaction_model_declares_recurrence_pattern_foreign_key():
-    foreign_keys = {fk.target_fullname for fk in Transaction.__table__.c.recurrence_pattern_id.foreign_keys}
+def test_transaction_model_declares_recurrence_pattern_foreign_key() -> None:
+    """Verify transaction model declares recurrence pattern foreign key."""
+    foreign_keys = {
+        fk.target_fullname
+        for fk in Transaction.__table__.c.recurrence_pattern_id.foreign_keys
+    }
 
     assert foreign_keys == {"recurrence_patterns.id"}
 
 
-def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key(tmp_path, monkeypatch):
+def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify migration rebuilds transactions with foreign key."""
     db_path = tmp_path / "classification-migration.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -168,17 +198,23 @@ def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key
             """
             INSERT INTO transactions (
                 id, account_number, transaction_date, amount, currency, description,
-                counterparty_name, counterparty_account, transaction_type, expense_category,
+                counterparty_name, counterparty_account, transaction_type,
+                expense_category,
                 income_category, source_bank
-            ) VALUES (1, 'BE10000000000001', '2025-01-01', -42.5, 'EUR', 'PROXIMUS telecom invoice',
-                      'Counterparty', 'BE20000000000002', 'EXPENSE', 'UTILITIES', NULL, 'ing')
+            ) VALUES (
+                1, 'BE10000000000001', '2025-01-01', -42.5, 'EUR',
+                'PROXIMUS telecom invoice', 'Counterparty', 'BE20000000000002',
+                'EXPENSE', 'UTILITIES', NULL, 'ing'
+            )
             """
         )
         conn.commit()
     finally:
         conn.close()
 
-    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    temp_engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
     monkeypatch.setattr(migration_module, "engine", temp_engine)
 
     migration_module.migrate_classification_assistant()
@@ -190,9 +226,15 @@ def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key
             row[1]: row
             for row in verify_conn.execute("PRAGMA table_info(transactions)").fetchall()
         }
-        foreign_keys = verify_conn.execute("PRAGMA foreign_key_list(transactions)").fetchall()
+        foreign_keys = verify_conn.execute(
+            "PRAGMA foreign_key_list(transactions)"
+        ).fetchall()
         rows = verify_conn.execute(
-            "SELECT id, transfer_category, classification_source, recurrence_pattern_id, description FROM transactions"
+            """
+            SELECT id, transfer_category, classification_source,
+                   recurrence_pattern_id, description
+            FROM transactions
+            """
         ).fetchall()
     finally:
         verify_conn.close()
@@ -201,11 +243,20 @@ def test_migrate_classification_assistant_rebuilds_transactions_with_foreign_key
     assert "transfer_category" in columns
     assert "classification_source" in columns
     assert "recurrence_pattern_id" in columns
-    assert any(fk[3] == "recurrence_pattern_id" and fk[2] == "recurrence_patterns" and fk[4] == "id" for fk in foreign_keys)
+    assert any(
+        fk[3] == "recurrence_pattern_id"
+        and fk[2] == "recurrence_patterns"
+        and fk[4] == "id"
+        for fk in foreign_keys
+    )
     assert rows == [(1, None, None, None, "PROXIMUS telecom invoice")]
 
 
-def test_init_database_adds_transfer_category_column_to_legacy_transactions(tmp_path, monkeypatch):
+def test_init_database_adds_transfer_category_column_to_legacy_transactions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify init database adds transfer category column to legacy transactions."""
     db_path = tmp_path / "legacy-transactions.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -231,15 +282,27 @@ def test_init_database_adds_transfer_category_column_to_legacy_transactions(tmp_
     finally:
         conn.close()
 
-    temp_engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    temp_engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
     monkeypatch.setattr(database_manager_module, "engine", temp_engine)
-    monkeypatch.setattr(ProjectionService, "create_default_scenarios", staticmethod(lambda db: []))
+    def create_no_scenarios(_db: object) -> list[object]:
+        return []
+
+    monkeypatch.setattr(
+        ProjectionService,
+        "create_default_scenarios",
+        staticmethod(create_no_scenarios),
+    )
 
     database_manager_module.init_database()
 
     verify_conn = sqlite3.connect(db_path)
     try:
-        columns = {row[1] for row in verify_conn.execute("PRAGMA table_info(transactions)").fetchall()}
+        columns = {
+            row[1]
+            for row in verify_conn.execute("PRAGMA table_info(transactions)").fetchall()
+        }
     finally:
         verify_conn.close()
         temp_engine.dispose()
@@ -249,11 +312,12 @@ def test_init_database_adds_transfer_category_column_to_legacy_transactions(tmp_
     assert "recurrence_pattern_id" in columns
 
 
-def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
+def test_create_or_resume_session_recovers_from_integrity_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify create or resume session recovers from integrity error."""
     init_database()
     reset_database()
-
-    from app.services.classification_session_service import ClassificationSessionService
 
     db_session = SessionLocal()
     transaction = Transaction(
@@ -270,12 +334,19 @@ def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
     db_session.refresh(transaction)
 
     provider = StubClassifierProvider(name="stub", model_name="stub-classifier-v1")
-    monkeypatch.setattr(ClassificationSessionService, "_build_provider", classmethod(lambda cls: provider))
+    def build_provider(_cls: object) -> StubClassifierProvider:
+        return provider
+
+    monkeypatch.setattr(
+        ClassificationSessionService,
+        "_build_provider",
+        classmethod(build_provider),
+    )
 
     original_commit = db_session.commit
     state = {"raised": False}
 
-    def racing_commit():
+    def racing_commit() -> None:
         if state["raised"]:
             return original_commit()
 
@@ -292,11 +363,14 @@ def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
         finally:
             competing_db.close()
         state["raised"] = True
-        raise IntegrityError("insert", {}, Exception("duplicate open session"))
+        msg = "insert"
+        raise IntegrityError(msg, {}, Exception("duplicate open session"))
 
     monkeypatch.setattr(db_session, "commit", racing_commit)
 
-    session = ClassificationSessionService.create_or_resume_session(db_session, transaction.id)
+    session = ClassificationSessionService.create_or_resume_session(
+        db_session, transaction.id
+    )
 
     assert session.transaction_id == transaction.id
     assert session.status == ClassificationSessionStatus.OPEN
@@ -305,8 +379,11 @@ def test_create_or_resume_session_recovers_from_integrity_error(monkeypatch):
     db_session.close()
 
 
-def test_session_layer_enforces_recurrence_pattern_foreign_key():
-    temp_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+def test_session_layer_enforces_recurrence_pattern_foreign_key() -> None:
+    """Verify session layer enforces recurrence pattern foreign key."""
+    temp_engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     event.listen(temp_engine, "connect", enable_sqlite_foreign_keys)
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=temp_engine)
 

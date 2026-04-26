@@ -1,4 +1,7 @@
+"""Module for backend tests services test_reporting_currency_statistics."""
+
 from datetime import date
+from typing import cast
 
 from app.models.statistics import StatisticsPeriod
 from app.models.transaction import (
@@ -9,18 +12,26 @@ from app.models.transaction import (
     TransferCategory,
 )
 from app.services.statistics_service import StatisticsService
+from sqlalchemy.orm import Session
 
 
 def _create_transaction(
-    db_session,
-    *,
-    description: str,
-    amount: float,
-    transaction_type: TransactionType,
-    expense_category=None,
-    income_category=None,
-    transfer_category=None,
-):
+    db_session: Session,
+    **fields: object,
+) -> Transaction:
+    description = cast("str", fields.pop("description"))
+    amount = cast("float", fields.pop("amount"))
+    transaction_type = cast("TransactionType", fields.pop("transaction_type"))
+    expense_category = cast(
+        "ExpenseCategory | None",
+        fields.pop("expense_category", None),
+    )
+    income_category = cast("IncomeCategory | None", fields.pop("income_category", None))
+    transfer_category = cast(
+        "TransferCategory | None",
+        fields.pop("transfer_category", None),
+    )
+    assert fields == {}
     transaction = Transaction(
         account_number="BE55000000000001",
         transaction_date=date(2025, 1, 15),
@@ -40,7 +51,10 @@ def _create_transaction(
     return transaction
 
 
-def test_calculate_statistics_for_reporting_currency_preserves_counts_when_fx_is_missing(db_session):
+def test_reporting_currency_statistics_preserve_counts_without_fx(
+    db_session: Session,
+) -> None:
+    """Verify reporting currency stats preserve counts without FX."""
     _create_transaction(
         db_session,
         description="Salary",
@@ -70,7 +84,10 @@ def test_calculate_statistics_for_reporting_currency_preserves_counts_when_fx_is
     assert result["expense_count"] == 1
 
 
-def test_calculate_transfer_summary_preserves_counts_when_fx_is_missing(db_session):
+def test_transfer_summary_preserves_counts_without_fx(
+    db_session: Session,
+) -> None:
+    """Verify calculate transfer summary preserves counts when fx is missing."""
     _create_transaction(
         db_session,
         description="Missing FX transfer",

@@ -1,13 +1,13 @@
-import logging
-import os
-import sys
+"""Module for backend app migrations migrate_expense_type."""
 
-from sqlalchemy import text
+import logging
+import sys
+from pathlib import Path
+
+from sqlalchemy import inspect, text
 
 # Add the parent directory to sys.path
-sys.path.append(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from app.database import engine, get_db
 from app.models.statistics import CategoryStatistics
@@ -17,24 +17,21 @@ from app.models.transaction import ExpenseCategory
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def migrate_expense_type():
-    """
-    Add expense_type column to category_statistics table and populate it for existing records
-    """
+def migrate_expense_type() -> None:
+    """Add and populate the category statistics expense_type column."""
     logger.info("Starting expense type migration...")
 
     # Check if the column already exists
-    from sqlalchemy import inspect
-
     inspector = inspect(engine)
     columns = [col["name"] for col in inspector.get_columns("category_statistics")]
 
     if "expense_type" in columns:
         logger.info(
-            "expense_type column already exists in category_statistics table. Skipping column creation."
+            "expense_type column already exists in category_statistics table. "
+            "Skipping column creation."
         )
     else:
         # Add the column
@@ -42,7 +39,8 @@ def migrate_expense_type():
         with engine.begin() as conn:
             conn.execute(
                 text(
-                    "ALTER TABLE category_statistics ADD COLUMN expense_type VARCHAR(20)"
+                    "ALTER TABLE category_statistics ADD COLUMN "
+                    "expense_type VARCHAR(20)"
                 )
             )
         logger.info("expense_type column added successfully.")
@@ -59,7 +57,7 @@ def migrate_expense_type():
             .all()
         )
 
-        logger.info(f"Found {len(expense_stats)} expense category records to update.")
+        logger.info("Found %s expense category records to update.", len(expense_stats))
 
         # Update each record with the appropriate expense type
         for stat in expense_stats:
@@ -68,9 +66,11 @@ def migrate_expense_type():
                 category = ExpenseCategory(stat.category_name)
                 # Set the expense type
                 stat.expense_type = category.expense_type
-            except (ValueError, AttributeError) as e:
+            except (ValueError, AttributeError) as exc:
                 logger.warning(
-                    f"Could not update expense type for category {stat.category_name}: {e!s}"
+                    "Could not update expense type for category %s: %s",
+                    stat.category_name,
+                    exc,
                 )
                 continue
 
@@ -80,9 +80,9 @@ def migrate_expense_type():
             "Successfully updated expense types for existing category statistics."
         )
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.error(f"Error updating expense types: {e!s}")
+        logger.exception("Error updating expense types")
         raise
     finally:
         db.close()
