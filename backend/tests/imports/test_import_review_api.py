@@ -3,6 +3,7 @@ from decimal import Decimal
 import hashlib
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.config import settings
 from app.main import app
@@ -11,11 +12,22 @@ from app.models.imports import ImportIssue, ImportSession, ImportStatementDraft,
 from app.models.statistics import FinancialStatistics, StatisticsPeriod
 from app.models.transaction import ExpenseCategory, Transaction, TransactionType, TransferCategory
 from app.imports.state_machine import ImportSessionStatus
+from app.services.ecb_exchange_rates import FXConversionCoverageResult
+from app.services.ecb_exchange_rates import FXConversionCoverageStatus
 from tests.imports.fixtures.beobank_mastercard_pages import SANITIZED_BEOBANK_PAGE_TEXTS
 from tests.imports.fixtures.nexo_csv import build_nexo_csv_bytes, nexo_row
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_upload_rate_limit():
+    from app.routers import imports as imports_router
+
+    imports_router._upload_attempts.clear()
+    yield
+    imports_router._upload_attempts.clear()
 
 
 def _store_rate(
@@ -252,6 +264,23 @@ def test_get_review_payload_includes_display_fields_for_selected_reporting_curre
 
 
 def test_get_review_payload_keeps_unavailable_display_shape_when_rate_missing(db_session, monkeypatch):
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout=30.0):
+            self.db = db
+            self.timeout = timeout
+
+        def ensure_conversion_coverage(self, requests, *, lock_timeout_seconds, lock_poll_seconds):
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.FETCH_FAILED,
+                required_quotes=("USD",),
+                missing_dates=(date(2025, 12, 20),),
+                start_date=date(2025, 12, 10),
+                end_date=date(2025, 12, 20),
+                error="ECB unavailable",
+            )
+
+    monkeypatch.setattr("app.imports.workflow.ECBExchangeRateService", FakeECBExchangeRateService)
+
     session = _upload_pdf(monkeypatch, SANITIZED_BEOBANK_PAGE_TEXTS)
 
     response = client.get(
@@ -487,3 +516,99 @@ def test_retry_reextracts_same_session_and_increments_attempt_number(db_session,
     review_payload = review_response.json()
     assert review_payload["session"]["attempt_count"] == 2
     assert review_payload["statement"]["attempt_number"] == 2
+
+
+def test_get_review_payload_fetches_missing_supported_fx_before_display(db_session, monkeypatch):
+    coverage_calls = []
+
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout=30.0):
+            self.db = db
+            self.timeout = timeout
+
+        def ensure_conversion_coverage(self, requests, *, lock_timeout_seconds, lock_poll_seconds):
+            coverage_calls.append(
+                {
+                    "requests": requests,
+                    "timeout": self.timeout,
+                    "lock_timeout_seconds": lock_timeout_seconds,
+                    "lock_poll_seconds": lock_poll_seconds,
+                }
+            )
+            self.db.add(
+                FXDailyReferenceRate(
+                    rate_date=date(2026, 4, 10),
+                    base_currency="EUR",
+                    quoted_currency="USD",
+                    units_per_base=Decimal("1.2500"),
+                    source_name="ECB_EXR",
+                    fetched_at=datetime(2026, 4, 10, 8, 30, 0),
+                    updated_at=datetime(2026, 4, 10, 8, 30, 0),
+                )
+            )
+            self.db.commit()
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.FETCHED_AND_COVERED,
+                required_quotes=("USD",),
+                start_date=date(2026, 4, 1),
+                end_date=date(2026, 4, 10),
+            )
+
+    monkeypatch.setattr("app.imports.workflow.ECBExchangeRateService", FakeECBExchangeRateService)
+
+    session = _upload_nexo_csv()
+
+    response = client.get(
+        f"/imports/{session['id']}",
+        headers={"X-Reporting-Currency": "EUR"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_transaction = payload["transactions"][0]
+    assert first_transaction["currency"] == "xUSD"
+    assert first_transaction["display_amount"] == -9.87
+    assert first_transaction["display_currency"] == "EUR"
+    assert first_transaction["display_fx_rate"] == 0.8
+    assert first_transaction["display_rate_date"] == "2026-04-10"
+    assert first_transaction["display_is_available"] is True
+    assert first_transaction["display_unavailable_reason"] is None
+    assert len(coverage_calls) == 1
+    assert {request.raw_currency for request in coverage_calls[0]["requests"]} == {"xUSD", "EUR"}
+
+
+def test_get_review_payload_keeps_missing_rate_when_review_fx_coverage_fetch_fails(db_session, monkeypatch):
+    class FakeECBExchangeRateService:
+        def __init__(self, db, *, timeout=30.0):
+            self.db = db
+            self.timeout = timeout
+
+        def ensure_conversion_coverage(self, requests, *, lock_timeout_seconds, lock_poll_seconds):
+            return FXConversionCoverageResult(
+                status=FXConversionCoverageStatus.FETCH_FAILED,
+                required_quotes=("USD",),
+                missing_dates=(date(2026, 4, 10),),
+                start_date=date(2026, 4, 1),
+                end_date=date(2026, 4, 10),
+                error="ECB unavailable",
+            )
+
+    monkeypatch.setattr("app.imports.workflow.ECBExchangeRateService", FakeECBExchangeRateService)
+
+    session = _upload_nexo_csv()
+
+    response = client.get(
+        f"/imports/{session['id']}",
+        headers={"X-Reporting-Currency": "EUR"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_transaction = payload["transactions"][0]
+    assert first_transaction["currency"] == "xUSD"
+    assert first_transaction["display_amount"] is None
+    assert first_transaction["display_currency"] == "EUR"
+    assert first_transaction["display_fx_rate"] is None
+    assert first_transaction["display_rate_date"] is None
+    assert first_transaction["display_is_available"] is False
+    assert first_transaction["display_unavailable_reason"] == "missing_rate"
