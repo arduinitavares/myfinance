@@ -1,6 +1,8 @@
+"""Shared contracts for classifier provider implementations."""
+
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from ...models.classification import ClassificationTurn
 from ...models.transaction import Transaction
@@ -8,6 +10,8 @@ from ...models.transaction import Transaction
 
 @dataclass(frozen=True)
 class ClassificationProposal:
+    """Classification result proposed by a provider."""
+
     transaction_type: str
     category: str
     confidence: float
@@ -20,6 +24,8 @@ class ClassificationProposal:
 
 @dataclass(frozen=True)
 class ProviderDescription:
+    """Provider metadata exposed to application callers."""
+
     name: str
     model_name: str
     base_url: str | None = None
@@ -27,12 +33,16 @@ class ProviderDescription:
 
 
 class ClassifierProvider(ABC):
-    def __init__(self, name: str, model_name: str):
+    """Base class for transaction classifier providers."""
+
+    def __init__(self, name: str, model_name: str) -> None:
+        """Initialize provider identity metadata."""
         self.name = name
         self.model_name = model_name
 
     @property
     def description(self) -> ProviderDescription:
+        """Return provider identity metadata."""
         return ProviderDescription(name=self.name, model_name=self.model_name)
 
     @abstractmethod
@@ -45,4 +55,5 @@ class ClassifierProvider(ABC):
         feedback_tag: str | None,
         feedback_note: str | None,
     ) -> ClassificationProposal:
+        """Propose a classification for a transaction."""
         raise NotImplementedError

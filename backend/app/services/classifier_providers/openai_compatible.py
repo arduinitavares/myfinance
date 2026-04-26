@@ -1,19 +1,77 @@
+"""OpenAI-compatible classifier provider implementation."""
+
+from __future__ import annotations
+
 import json
 import logging
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Protocol, cast
 
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
-from ...models.classification import ClassificationTurn
-from ...models.transaction import Transaction
 from .base import ClassificationProposal, ClassifierProvider, ProviderDescription
 from .prompts import PROMPT_FINGERPRINT, SYSTEM_PROMPT, build_user_prompt
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from openai.types.chat import ChatCompletionMessageParam
+
+    from ...models.classification import ClassificationTurn
+    from ...models.transaction import Transaction
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+
+class _ChatCompletionMessage(Protocol):
+    content: str | None
+
+
+class _ChatCompletionChoice(Protocol):
+    message: _ChatCompletionMessage
+
+
+class _ChatCompletionUsage(Protocol):
+    prompt_tokens: int
+    completion_tokens: int
+
+
+class _ChatCompletionResponse(Protocol):
+    choices: Sequence[_ChatCompletionChoice]
+    usage: _ChatCompletionUsage | None
+
+
+class _ChatCompletions(Protocol):
+    def create(
+        self,
+        *,
+        model: str,
+        temperature: int,
+        response_format: Mapping[str, str],
+        messages: Sequence[ChatCompletionMessageParam],
+    ) -> _ChatCompletionResponse: ...
+
+
+class _ChatResource(Protocol):
+    completions: _ChatCompletions
+
+
+class _OpenAICompatibleClient(Protocol):
+    chat: _ChatResource
+
+
+def _allowed_options_payload(
+    allowed_options_by_type: Mapping[str, Sequence[str]],
+) -> dict[str, list[str]]:
+    return {
+        transaction_type: list(categories)
+        for transaction_type, categories in allowed_options_by_type.items()
+    }
 
 
 class ClassificationLLMResponse(BaseModel):
+    """Parsed classification response returned by the language model."""
+
     transaction_type: str
     category: str
     confidence: float | None = None
@@ -23,6 +81,8 @@ class ClassificationLLMResponse(BaseModel):
 
 
 class OpenAICompatibleClassifierProvider(ClassifierProvider):
+    """Classifier provider backed by an OpenAI-compatible chat API."""
+
     def __init__(
         self,
         *,
@@ -30,14 +90,19 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
         model_name: str,
         api_key: str,
         base_url: str,
-        client=None,
-    ):
+        client: _OpenAICompatibleClient | None = None,
+    ) -> None:
+        """Initialize the provider client and endpoint metadata."""
         super().__init__(name=name, model_name=model_name)
         self.base_url = base_url
-        self.client = client or OpenAI(api_key=api_key, base_url=base_url)
+        self.client: _OpenAICompatibleClient = cast(
+            "_OpenAICompatibleClient",
+            client or OpenAI(api_key=api_key, base_url=base_url),
+        )
 
     @property
     def description(self) -> ProviderDescription:
+        """Return provider metadata including endpoint and prompt version."""
         return ProviderDescription(
             name=self.name,
             model_name=self.model_name,
@@ -54,6 +119,7 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
         feedback_tag: str | None,
         feedback_note: str | None,
     ) -> ClassificationProposal:
+        """Propose a classification for a transaction via chat completion."""
         user_prompt = build_user_prompt(
             transaction=transaction,
             allowed_options_by_type=allowed_options_by_type,
@@ -61,7 +127,7 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
             feedback_tag=feedback_tag,
             feedback_note=feedback_note,
         )
-        messages = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
@@ -78,10 +144,9 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
                     "currency": transaction.currency,
                     "current_type": transaction.transaction_type.value,
                     "source_bank": transaction.source_bank,
-                    "allowed_options_by_type": {
-                        transaction_type: list(categories)
-                        for transaction_type, categories in allowed_options_by_type.items()
-                    },
+                    "allowed_options_by_type": _allowed_options_payload(
+                        allowed_options_by_type
+                    ),
                     "feedback_tag": feedback_tag,
                     "feedback_note": feedback_note,
                     "conversation_turns": len(conversation_history),
@@ -110,6 +175,10 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
                 ensure_ascii=False,
             ),
         )
+        if raw_content is None:
+            error_message = "invalid classification provider response"
+            raise RuntimeError(error_message)
+
         try:
             payload = json.loads(raw_content)
             parsed = ClassificationLLMResponse.model_validate(payload)
@@ -127,7 +196,8 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
                 ),
                 exc_info=exc,
             )
-            raise RuntimeError("invalid classification provider response") from exc
+            error_message = "invalid classification provider response"
+            raise RuntimeError(error_message) from exc
 
         allowed_transaction_types = set(allowed_options_by_type.keys())
         if parsed.transaction_type not in allowed_transaction_types:
@@ -138,17 +208,17 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
                         "transaction_id": transaction.id,
                         "description": transaction.description,
                         "amount": transaction.amount,
-                        "allowed_options_by_type": {
-                            transaction_type: list(categories)
-                            for transaction_type, categories in allowed_options_by_type.items()
-                        },
+                        "allowed_options_by_type": _allowed_options_payload(
+                            allowed_options_by_type
+                        ),
                         "proposed_type": parsed.transaction_type,
                         "proposed_category": parsed.category,
                     },
                     ensure_ascii=False,
                 ),
             )
-            raise RuntimeError("classification provider response outside allowed contract")
+            error_message = "classification provider response outside allowed contract"
+            raise RuntimeError(error_message)
 
         allowed_categories = set(allowed_options_by_type[parsed.transaction_type])
         if parsed.category not in allowed_categories:
@@ -159,17 +229,17 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
                         "transaction_id": transaction.id,
                         "description": transaction.description,
                         "amount": transaction.amount,
-                        "allowed_options_by_type": {
-                            transaction_type: list(categories)
-                            for transaction_type, categories in allowed_options_by_type.items()
-                        },
+                        "allowed_options_by_type": _allowed_options_payload(
+                            allowed_options_by_type
+                        ),
                         "proposed_type": parsed.transaction_type,
                         "proposed_category": parsed.category,
                     },
                     ensure_ascii=False,
                 ),
             )
-            raise RuntimeError("classification provider response outside allowed contract")
+            error_message = "classification provider response outside allowed contract"
+            raise RuntimeError(error_message)
 
         logger.info(
             "Classification provider parsed proposal: %s",
@@ -186,9 +256,8 @@ class OpenAICompatibleClassifierProvider(ClassifierProvider):
                 ensure_ascii=False,
             ),
         )
-        if (
-            (transaction.amount < 0 and parsed.transaction_type == "Income")
-            or (transaction.amount > 0 and parsed.transaction_type == "Expense")
+        if (transaction.amount < 0 and parsed.transaction_type == "Income") or (
+            transaction.amount > 0 and parsed.transaction_type == "Expense"
         ):
             logger.warning(
                 "Classification provider sign/type mismatch: %s",
