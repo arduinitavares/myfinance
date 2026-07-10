@@ -1,0 +1,3 @@
+# Separate source coverage from reconciliation
+
+MyFinance records whether expected Source Records are present separately from whether their extracted Financial Events reconcile to available balances and control totals. A Statement Slot can therefore be Source Complete but not reconciled, preventing file presence or successful parsing from being mistaken for trustworthy financial data while still exposing exactly what remains unresolved. Reports expose a provisional Working View over Reviewed Slots and a Verified View restricted to Reconciled Slots rather than silently mixing the two evidence levels.

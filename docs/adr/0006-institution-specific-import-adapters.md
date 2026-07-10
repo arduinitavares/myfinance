@@ -1,0 +1,3 @@
+# Institution-specific import adapters and learning profiles
+
+Each supported Financial Institution and source format has a versioned, deterministic import adapter and an Institution Profile, while the Consolidated Financial Record remains institution-independent. Adapters turn Source Records into reviewable Financial Event proposals, and confirmed Operator corrections improve only the relevant institution or account profile. Support for a new institution, account format, or changed format is added through a GitHub issue and reviewed code change rather than runtime guided onboarding; assisted extraction may propose interpretations but cannot bypass evidence and review.
