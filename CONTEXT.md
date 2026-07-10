@@ -93,7 +93,7 @@ A reporting view derived only from Financial Events in Reconciled Slots.
 _Avoid_: Working total, reviewed data
 
 **Expense**:
-A reviewed Financial Event counted as Household spending. Internal Transfers, Credit Card Settlements, borrowed funds, and exchanges of one Asset for another are not Expenses; cash withdrawals and loan payments may be Expenses under the Household's practical tracking policy.
+A reviewed Financial Event counted as Household spending. Internal Transfers, Credit Card Settlements, borrowed funds, and exchanges of one Asset for another are not Expenses; cash withdrawals and loan payments are Expenses under the Household's practical tracking policy.
 _Avoid_: Debit, card charge, money out
 
 **Expense Coverage**:
@@ -161,7 +161,7 @@ A financing event that increases an Asset Account and a Liability Account by equ
 _Avoid_: Income, deposit, transfer
 
 **Debt Repayment**:
-A payment toward a debt obligation. It may be an Expense when the liability is outside the Financial Perimeter; when the liability is tracked, principal reduces that liability while interest and fees remain Financial Costs.
+A payment toward a debt obligation. The first milestone treats it as an Expense unless it is a Credit Card Settlement; interest and fees remain Financial Costs.
 _Avoid_: Credit Card Settlement, interest charge
 
 **Credit Card Purchase**:

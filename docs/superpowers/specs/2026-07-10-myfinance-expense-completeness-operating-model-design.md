@@ -1,11 +1,11 @@
 # MyFinance Expense Completeness Operating Model
 
 Date: 2026-07-10
-Status: Approved design
+Status: Approved in interview; pending document review
 
 ## Goal
 
-MyFinance gives one Operator a trustworthy view of every Household Expense from January 2026 onward. The application must preserve source evidence, keep internal money movement out of Income and Expense totals, prevent credit-card double counting, expose missing monthly records, and show the evidence quality behind each report.
+MyFinance gives one Operator a trustworthy view of every Household Expense under the approved tracking policies from January 2026 onward. The application must preserve source evidence, keep internal money movement out of Income and Expense totals, prevent credit-card double counting, expose missing monthly records, and show the evidence quality behind each report.
 
 The first milestone is **2026 Expense Completeness**.
 
@@ -23,6 +23,7 @@ This design excludes:
 - transfer-route comparison or optimization
 - new financial advice and forecasting work
 - physical-cash tracking after withdrawal
+- loan-balance accounting
 - changes to the existing refund model
 
 ## Domain Language
@@ -95,6 +96,7 @@ streams:
     account_alias: checking-eur
     holder: operator
     product_type: bank_account
+    source_format: belfius_csv
     currency: EUR
     coverage_start: 2026-01
     closing_day: 4
@@ -116,6 +118,7 @@ Contract rules:
 - `status` is `supported` or `pending_support`.
 - `holder` is `operator`, `spouse`, or `joint`.
 - The first milestone supports `bank_account`, `credit_card`, and `wallet` product types.
+- Supported streams require a stable `source_format` that selects the expected institution format, such as `belfius_csv` or `beobank_mastercard_pdf`.
 - `currency` is `EUR`, `USD`, or `BRL` after alias normalization. Source evidence retains its raw currency code.
 - Supported streams require `coverage_start`, `closing_day`, and `grace_days`.
 - Existing supported streams use `coverage_start: 2026-01` unless the account opened later.
@@ -185,8 +188,9 @@ The Operator confirms type and category during review. The following rules gover
 
 - Internal movements inside the Financial Perimeter are Transfers.
 - Borrowed money is not Income.
-- Cash withdrawals may remain Expenses because this product does not track physical cash after withdrawal.
-- External loan payments may remain Expenses under the Household's practical tracking policy.
+- Current known Income originates in Belgium. This is a current Household fact, not a sign-based or institution-based classification rule.
+- Cash withdrawals are Expenses because this product does not track physical cash after withdrawal.
+- Debt Repayments are Expenses under the Household's practical tracking policy unless they are Credit Card Settlements.
 - Credit Card Purchases are itemized Expenses.
 - Credit Card Settlements are Transfers and never create a second Expense.
 - Fees, taxes, interest, penalties, overdraft charges, and exchange-rate loss are Expenses.
@@ -229,7 +233,7 @@ The application does not log raw descriptions, prompts, amounts, account identif
 
 The database preserves each Original Amount and currency. Reporting conversion never replaces source evidence.
 
-EUR is the default Reporting Currency. The Operator may select BRL or USD. Each conversion retains the Reference Rate source, rate date, rate, and date-selection basis.
+EUR is the default Reporting Currency because current Income originates in Belgium. The Operator may select BRL or USD. Each conversion retains the Reference Rate source, rate date, rate, and date-selection basis.
 
 The first milestone uses the existing ECB daily EUR-based rates. The service selects the rate date from:
 
