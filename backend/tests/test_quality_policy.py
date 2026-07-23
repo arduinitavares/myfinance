@@ -17,6 +17,7 @@ OWNED_PYTHON_ROOTS = (
     PROJECT_ROOT / "backup",
     PROJECT_ROOT / "scripts",
 )
+OWNED_PYTHON_SUFFIXES = (".py", ".pyi")
 EXPECTED_TY_INCLUDE = [
     "backend/app",
     "backend/scripts",
@@ -52,10 +53,10 @@ FORBIDDEN_SOURCE_MARKERS = (
     "ty:" + " ignore",
 )
 COMMENT_DIRECTIVE_PATTERNS = (
-    re.compile(r"^(?:(?:ruff|flake8)\s*:\s*)?no" r"qa\b", re.IGNORECASE),
-    re.compile(r"^no" r"sec\b", re.IGNORECASE),
-    re.compile(r"^type\s*:\s*ig" r"nore\b", re.IGNORECASE),
-    re.compile(r"^ty\s*:\s*ig" r"nore\b", re.IGNORECASE),
+    re.compile(r"#\s*(?:(?:ruff|flake8)\s*:\s*)?no" r"qa\b", re.IGNORECASE),
+    re.compile(r"#\s*no" r"sec\b", re.IGNORECASE),
+    re.compile(r"#\s*type\s*:\s*ig" r"nore\b", re.IGNORECASE),
+    re.compile(r"#\s*ty\s*:\s*ig" r"nore\b", re.IGNORECASE),
 )
 
 
@@ -70,18 +71,28 @@ def _table(container: dict[str, object], key: str) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
+def _owned_python_paths(
+    roots: tuple[Path, ...] = OWNED_PYTHON_ROOTS,
+) -> list[Path]:
+    return sorted(
+        path
+        for root in roots
+        for suffix in OWNED_PYTHON_SUFFIXES
+        for path in root.rglob(f"*{suffix}")
+    )
+
+
 def _quality_suppression_markers(text: str) -> list[str]:
     matches: set[str] = set()
     for token in tokenize.generate_tokens(io.StringIO(text).readline):
         if token.type != tokenize.COMMENT:
             continue
-        comment = token.string.removeprefix("#").lstrip()
         for marker, pattern in zip(
             FORBIDDEN_SOURCE_MARKERS,
             COMMENT_DIRECTIVE_PATTERNS,
             strict=True,
         ):
-            if pattern.match(comment):
+            if pattern.search(token.string):
                 matches.add(marker)
 
     return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in matches]
@@ -148,6 +159,27 @@ def test_quality_suppression_markers_are_case_insensitive() -> None:
     assert _quality_suppression_markers(source) == expected
 
 
+def test_quality_suppression_markers_find_hash_delimited_directives() -> None:
+    """Reject directives after repeated or later comment delimiters."""
+    source = "\n".join(
+        (
+            "## " + "no" + "qa" + ": F401",
+            "# fmt: skip  # ruff: " + "no" + "qa" + ": E402",
+            "## " + "no" + "sec" + " B101",
+            "# fmt: skip  # " + "type:" + " ignore" + "[assignment]",
+            "# fmt: skip  # " + "ty:" + " ignore" + "[invalid-assignment]",
+        )
+    )
+    expected = [
+        "no" + "qa",
+        "no" + "sec",
+        "type:" + " ignore",
+        "ty:" + " ignore",
+    ]
+
+    assert _quality_suppression_markers(source) == expected
+
+
 def test_quality_suppression_markers_ignore_non_directives() -> None:
     """Allow identifiers, strings, docstrings, and ordinary comment words."""
     source = "\n".join(
@@ -156,21 +188,35 @@ def test_quality_suppression_markers_ignore_non_directives() -> None:
             'unit_name = "NANOSECONDS"',
             '"""NANOSECONDS are duration units."""',
             "# Convert NANOSECONDS before arithmetic.",
+            "# This comment discusses " + "no" + "qa" + " as a word.",
             "# This comment discusses " + "no" + "sec" + " as a word.",
+            "# This comment discusses " + "type:" + " ignore" + " as words.",
+            "# This comment discusses " + "ty:" + " ignore" + " as words.",
         )
     )
 
     assert _quality_suppression_markers(source) == []
 
 
+def test_owned_python_paths_include_modules_and_stubs(tmp_path: Path) -> None:
+    """Select owned modules and stubs in deterministic path order."""
+    stub = tmp_path / "a.pyi"
+    module = tmp_path / "b.py"
+    ignored = tmp_path / "c.txt"
+    stub.write_text("value: int\n", encoding="utf-8")
+    module.write_text("value = 1\n", encoding="utf-8")
+    ignored.write_text("not Python\n", encoding="utf-8")
+
+    assert _owned_python_paths((tmp_path,)) == [stub, module]
+
+
 def test_owned_python_has_no_quality_suppression_markers() -> None:
     """Reject inline suppressions in application code, scripts, and tests."""
     violations: list[str] = []
-    for owned_root in OWNED_PYTHON_ROOTS:
-        for path in sorted(owned_root.rglob("*.py")):
-            text = path.read_text(encoding="utf-8")
-            for marker in _quality_suppression_markers(text):
-                violations.append(f"{path.relative_to(PROJECT_ROOT)}: {marker}")
+    for path in _owned_python_paths():
+        text = path.read_text(encoding="utf-8")
+        for marker in _quality_suppression_markers(text):
+            violations.append(f"{path.relative_to(PROJECT_ROOT)}: {marker}")
 
     assert violations == []
 
