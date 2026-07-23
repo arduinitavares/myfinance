@@ -106,7 +106,12 @@ EXPECTED_BANDIT_EXCLUDES = [
     "frontend",
 ]
 EXPECTED_PYTEST_ADDOPTS = "--ignore=backend/tests/live"
+FORBIDDEN_RUFF_ROOT_KEYS = (
+    "exclude",
+    "extend",
+)
 FORBIDDEN_RUFF_LINT_KEYS = (
+    "exclude",
     "select",
     "ignore",
     "extend-ignore",
@@ -143,7 +148,8 @@ def test_python_tool_scope_matches_owned_code() -> None:
     pytest_config = _table(pytest_tool, "ini_options")
 
     assert ruff["extend-exclude"] == EXPECTED_RUFF_EXTEND_EXCLUDE
-    assert "exclude" not in ruff
+    for key in FORBIDDEN_RUFF_ROOT_KEYS:
+        assert key not in ruff
     assert ty_src["include"] == EXPECTED_TY_INCLUDE
     assert "exclude" not in ty_src
     assert "rules" not in ty
