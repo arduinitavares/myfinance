@@ -52,18 +52,17 @@ class CategorySuggestionService:
         self.client = QdrantClient(":memory:")  # For production, use persistent storage
 
         # Create collections for expense and income categories
-        self.client.recreate_collection(
-            collection_name="expense_embeddings",
-            vectors_config=models.VectorParams(
-                size=384,  # Output dimension of the model
-                distance=models.Distance.COSINE,
-            ),
-        )
+        self.reset_collection(collection_name="expense_embeddings")
+        self.reset_collection(collection_name="income_embeddings")
 
-        self.client.recreate_collection(
-            collection_name="income_embeddings",
+    def reset_collection(self, *, collection_name: str) -> None:
+        """Delete and recreate one empty local embedding collection."""
+        self.client.delete_collection(collection_name=collection_name)
+        self.client.create_collection(
+            collection_name=collection_name,
             vectors_config=models.VectorParams(
-                size=384, distance=models.Distance.COSINE
+                size=384,
+                distance=models.Distance.COSINE,
             ),
         )
 

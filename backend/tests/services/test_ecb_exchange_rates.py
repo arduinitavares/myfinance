@@ -49,8 +49,12 @@ class FakeSentenceTransformer:
 class FakeQdrantClient:
     """Test double for the Qdrant client dependency."""
 
-    def recreate_collection(self, *_args: object, **_kwargs: object) -> None:
-        """Pretend to recreate a vector collection."""
+    def delete_collection(self, *_args: object, **_kwargs: object) -> None:
+        """Pretend to delete a vector collection."""
+        return
+
+    def create_collection(self, *_args: object, **_kwargs: object) -> None:
+        """Pretend to create a vector collection."""
         return
 
     def upsert(self, *_args: object, **_kwargs: object) -> None:
