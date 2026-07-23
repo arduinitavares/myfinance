@@ -16,6 +16,7 @@ class Settings:
     data_dir: Path
     database_path: Path
     backup_dir: Path
+    environment: str
     imports_dir: Path
     batch_import_dir: Path
     provider_config_path: Path
@@ -38,6 +39,12 @@ def load_settings() -> Settings:
 
     backup_dir = data_dir / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
+
+    environment = os.environ.get("MYFINANCE_ENV", "production").strip().lower()
+    if environment not in {"development", "test", "production"}:
+        raise ValueError(
+            "MYFINANCE_ENV must be development, test, or production"
+        )
 
     batch_import_dir = Path(
         os.environ.get("MYFINANCE_BATCH_IMPORT_DIR", "/bank_files")
@@ -70,6 +77,7 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         database_path=database_path,
         backup_dir=backup_dir,
+        environment=environment,
         imports_dir=imports_dir,
         batch_import_dir=batch_import_dir,
         provider_config_path=provider_config_path,

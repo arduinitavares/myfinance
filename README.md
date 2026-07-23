@@ -140,6 +140,33 @@ npm install
 npm run start
 ```
 
+## Database safety
+
+MyFinance creates and verifies a timestamped SQLite backup before applying any pending migration to an existing database. A failed migration restores that backup automatically.
+
+Apply pending migrations:
+
+```bash
+PYTHONPATH=backend uv run --frozen python -m app.cli.database migrate
+```
+
+Restore a selected verified backup:
+
+Stop the backend process before restoring so no other process holds or writes the live database.
+
+```bash
+PYTHONPATH=backend uv run --frozen python -m app.cli.database restore \
+  --backup /absolute/path/to/myfinance-YYYYMMDDTHHMMSSffffffZ.db \
+  --yes
+```
+
+Reset is unavailable in the production environment. For development or tests only:
+
+```bash
+MYFINANCE_ENV=development PYTHONPATH=backend uv run --frozen \
+  python -m app.cli.database reset --scope transactions --yes
+```
+
 ## Usage
 
 - Browse the API endpoints via Swagger UI at `/docs`
