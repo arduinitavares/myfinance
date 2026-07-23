@@ -28,7 +28,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 def _apply_existing_schema_baseline() -> None:
     """Run every existing schema initializer and idempotent value migration."""
-    init_database()
+    init_database(run_europe_iban_cleanup=False)
     migrate_classification_assistant()
     migrate_expense_type_values()
 

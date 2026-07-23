@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Never, cast
 
+import app.database_manager as database_manager_module
 import app.migrations.migrate_europe_iban_reclassification as migration_module
+import app.migrations.run_migrations as run_migrations_module
 import pytest
 from app.migrations.migrate_europe_iban_reclassification import (
     KNOWN_IBAN_ROLE_MAP,
@@ -467,6 +469,37 @@ def test_run_migrations_reclassifies_settlement_imported_after_baseline(
     assert refreshed.transaction_type == TransactionType.TRANSFER
     assert refreshed.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
     assert refreshed.expense_category is None
+
+
+def test_run_migrations_calls_europe_cleanup_once_per_startup(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify the baseline and recurring pass do not duplicate Europe cleanup."""
+    db_session.execute(text("DROP TABLE IF EXISTS schema_migrations"))
+    db_session.commit()
+    cleanup_calls: list[str] = []
+
+    def count_real_cleanup(db: Session) -> dict[str, int]:
+        cleanup_calls.append("called")
+        return migrate_europe_iban_reclassification(db)
+
+    monkeypatch.setattr(
+        database_manager_module,
+        "migrate_europe_iban_reclassification",
+        count_real_cleanup,
+    )
+    monkeypatch.setattr(
+        run_migrations_module,
+        "migrate_europe_iban_reclassification",
+        count_real_cleanup,
+    )
+
+    run_migrations()
+    assert cleanup_calls == ["called"]
+
+    run_migrations()
+    assert cleanup_calls == ["called", "called"]
 
 
 def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_changes(
