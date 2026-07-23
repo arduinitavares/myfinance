@@ -15,6 +15,7 @@ class Settings:
 
     data_dir: Path
     database_path: Path
+    backup_dir: Path
     imports_dir: Path
     batch_import_dir: Path
     provider_config_path: Path
@@ -34,6 +35,9 @@ def load_settings() -> Settings:
 
     imports_dir = data_dir / "imports"
     imports_dir.mkdir(parents=True, exist_ok=True)
+
+    backup_dir = data_dir / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
 
     batch_import_dir = Path(
         os.environ.get("MYFINANCE_BATCH_IMPORT_DIR", "/bank_files")
@@ -65,6 +69,7 @@ def load_settings() -> Settings:
     return Settings(
         data_dir=data_dir,
         database_path=database_path,
+        backup_dir=backup_dir,
         imports_dir=imports_dir,
         batch_import_dir=batch_import_dir,
         provider_config_path=provider_config_path,

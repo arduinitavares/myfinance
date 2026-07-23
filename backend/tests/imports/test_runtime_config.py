@@ -25,6 +25,7 @@ def test_settings_use_isolated_backend_test_paths() -> None:
     """Verify settings use isolated backend test paths."""
     assert settings.data_dir == TEST_ROOT / "data"
     assert settings.database_path == TEST_ROOT / "data" / "myfinance.db"
+    assert settings.backup_dir == TEST_ROOT / "data" / "backups"
     assert settings.imports_dir == TEST_ROOT / "data" / "imports"
     assert settings.provider_config_path == TEST_ROOT / "config.local.yaml"
 

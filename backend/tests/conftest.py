@@ -16,6 +16,7 @@ TEST_ROOT: Path = Path(__file__).resolve().parent / ".tmp"
 class _Settings(Protocol):
     """Settings attributes used by test fixtures."""
 
+    backup_dir: Path
     imports_dir: Path
 
 
