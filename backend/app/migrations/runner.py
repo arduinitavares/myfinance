@@ -36,10 +36,12 @@ class MigrationFailedError(RuntimeError):
         *,
         migration_error: BaseException,
         recovery_error: BaseException | None = None,
+        backup_path: Path | None,
     ) -> None:
         super().__init__(message)
         self.migration_error: BaseException = migration_error
         self.recovery_error: BaseException | None = recovery_error
+        self.backup_path: Path | None = backup_path
 
 
 @dataclass(frozen=True)
@@ -155,19 +157,36 @@ def run_pending_migrations(
                 backup_path=backup_path,
             )
         except BaseException as recovery_exc:
+            recovery_description = (
+                f"recovery from verified backup {backup_path}"
+                if backup_path is not None
+                else "removal of the newly created database"
+            )
             raise MigrationFailedError(
-                f"Migration {failure_target} failed and recovery failed; "
-                "database state is unknown",
+                f"Migration {failure_target} failed and {recovery_description} "
+                "failed; database state is unknown",
                 migration_error=exc,
                 recovery_error=recovery_exc,
+                backup_path=backup_path,
             ) from recovery_exc
 
         if not isinstance(exc, Exception):
+            if backup_path is not None:
+                exc.add_note(f"Database restored from verified backup: {backup_path}")
+            else:
+                exc.add_note(
+                    "The newly created database was removed; no backup was created"
+                )
             raise
+        recovery_message = (
+            f"database was restored from verified backup {backup_path}"
+            if backup_path is not None
+            else "the newly created database was removed"
+        )
         raise MigrationFailedError(
-            f"Migration {failure_target} failed; "
-            "database was returned to its pre-migration state",
+            f"Migration {failure_target} failed; {recovery_message}",
             migration_error=exc,
+            backup_path=backup_path,
         ) from exc
 
     return MigrationRunResult(

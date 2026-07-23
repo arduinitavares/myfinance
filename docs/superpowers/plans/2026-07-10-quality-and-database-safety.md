@@ -750,6 +750,11 @@ failure-path rules. These rules override narrower skeleton details below:
 - A recovery failure raises `MigrationFailedError` with a message that says the
   database state is unknown and preserves both the migration and recovery
   exceptions. It must never claim restoration succeeded.
+- `MigrationFailedError.backup_path` exposes the retained verified backup for
+  existing-database failures, and both normal and failed-recovery messages
+  report that exact path. Cancellation preserves the original exception object
+  and adds a readable note with the restored backup path. A failed new-database
+  migration reports removal and exposes `backup_path=None`.
 - An absent database with an empty migration sequence is a filesystem no-op:
   do not inspect through SQLAlchemy and do not create a database or backup
   directory.
@@ -758,7 +763,8 @@ failure-path rules. These rules override narrower skeleton details below:
 
 Add focused RED/GREEN tests for validator rollback, cancellation rollback,
 recovery failure context, read-only validation with no pending work, and the
-absent-database no-op.
+absent-database no-op. Also cover retained backup-path reporting for ordinary
+failure, recovery failure, and cancellation, plus truthful new-database removal.
 
 - [ ] **Step 1: Write failing migration-runner tests**
 

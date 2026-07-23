@@ -291,6 +291,13 @@ The current hardcoded PIN provides no security boundary. The first milestone rel
 - Approval failure: roll back the whole statement commit.
 - Migration failure: preserve the pre-migration database and report the restore path.
 
+For an existing database, migration errors expose the retained verified backup
+as `backup_path` and include that exact path in the operator-facing message.
+Recovery failure reports the same retained path while stating that database
+state is unknown. Cancellation keeps its original exception identity and adds a
+note with the restored backup path. Failure while creating a new database
+reports that the new file was removed and exposes `backup_path=None`.
+
 Errors use stable codes and concise messages. Logs exclude private financial content.
 
 ## Repository Workflow

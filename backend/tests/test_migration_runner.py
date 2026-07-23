@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine, create_engine, inspect, text
 
+from app.database_backups import verify_sqlite_database
 from app.migrations import runner as runner_module
 from app.migrations.runner import (
     MigrationFailedError,
@@ -95,7 +96,10 @@ def test_failed_migration_restores_the_pre_migration_database(
 
     migration = MigrationSpec(name="20260710_failing_change", apply=damage_then_fail)
 
-    with pytest.raises(MigrationFailedError, match="20260710_failing_change"):
+    with pytest.raises(
+        MigrationFailedError,
+        match="20260710_failing_change",
+    ) as exc_info:
         run_pending_migrations(
             engine=engine,
             database_path=database_path,
@@ -103,6 +107,11 @@ def test_failed_migration_restores_the_pre_migration_database(
             migrations=(migration,),
         )
 
+    backup_path = exc_info.value.backup_path
+    assert backup_path is not None
+    assert str(backup_path) in str(exc_info.value)
+    assert backup_path.is_file()
+    verify_sqlite_database(backup_path)
     restored_engine = _engine_for(database_path, request)
     assert _wallet_balance(restored_engine) == 10
     assert "schema_migrations" not in inspect(restored_engine).get_table_names()
@@ -160,6 +169,13 @@ def test_cancellation_restores_then_preserves_cancellation_semantics(
         )
 
     assert exc_info.value is cancellation
+    backup_paths = list((tmp_path / "backups").glob("*.db"))
+    assert len(backup_paths) == 1
+    backup_path = backup_paths[0]
+    assert exc_info.value.__notes__ == [
+        f"Database restored from verified backup: {backup_path}"
+    ]
+    verify_sqlite_database(backup_path)
     restored_engine = _engine_for(database_path, request)
     assert _wallet_balance(restored_engine) == 10
     assert "schema_migrations" not in inspect(restored_engine).get_table_names()
@@ -186,10 +202,7 @@ def test_recovery_failure_reports_unknown_state_and_preserves_both_errors(
 
     monkeypatch.setattr(runner_module, "restore_verified_backup", fail_restore)
 
-    with pytest.raises(
-        MigrationFailedError,
-        match="recovery failed; database state is unknown",
-    ) as exc_info:
+    with pytest.raises(MigrationFailedError) as exc_info:
         run_pending_migrations(
             engine=engine,
             database_path=database_path,
@@ -200,6 +213,43 @@ def test_recovery_failure_reports_unknown_state_and_preserves_both_errors(
     assert exc_info.value.migration_error is migration_error
     assert exc_info.value.recovery_error is recovery_error
     assert exc_info.value.__cause__ is recovery_error
+    backup_path = exc_info.value.backup_path
+    assert backup_path is not None
+    assert str(exc_info.value) == (
+        f"Migration broken failed and recovery from verified backup "
+        f"{backup_path} failed; database state is unknown"
+    )
+    assert backup_path.is_file()
+    verify_sqlite_database(backup_path)
+
+
+def test_failed_new_database_migration_reports_removal_without_backup(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    database_path = tmp_path / "new.db"
+    backup_dir = tmp_path / "backups"
+    engine = _engine_for(database_path, request)
+
+    def create_then_fail() -> None:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE wallet (balance INTEGER)"))
+        raise RuntimeError("synthetic new database migration failure")
+
+    with pytest.raises(MigrationFailedError) as exc_info:
+        run_pending_migrations(
+            engine=engine,
+            database_path=database_path,
+            backup_dir=backup_dir,
+            migrations=(MigrationSpec(name="new_database", apply=create_then_fail),),
+        )
+
+    assert exc_info.value.backup_path is None
+    assert str(exc_info.value) == (
+        "Migration new_database failed; the newly created database was removed"
+    )
+    assert not database_path.exists()
+    assert not backup_dir.exists()
 
 
 def test_absent_database_with_no_migrations_is_a_filesystem_no_op(
