@@ -63,9 +63,8 @@ def create_verified_backup(
             source.backup(destination)
         verify_sqlite_database(temporary_path)
         os.replace(temporary_path, backup_path)
-    except Exception:
+    finally:
         temporary_path.unlink(missing_ok=True)
-        raise
 
     return backup_path
 
@@ -87,6 +86,5 @@ def restore_verified_backup(backup_path: Path, destination_path: Path) -> None:
             source.backup(destination)
         verify_sqlite_database(temporary_path)
         os.replace(temporary_path, destination_path)
-    except Exception:
+    finally:
         temporary_path.unlink(missing_ok=True)
-        raise

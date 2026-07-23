@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import app.database_backups as database_backups
 from app.database_backups import (
     DatabaseIntegrityError,
     create_verified_backup,
@@ -75,3 +76,70 @@ def test_corrupt_backup_never_replaces_live_database(tmp_path: Path) -> None:
         restore_verified_backup(corrupt, live)
 
     assert _read_value(live) == "keep"
+
+
+def test_create_backup_removes_temporary_file_when_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "live.db"
+    backup_dir = tmp_path / "backups"
+    backup_path = backup_dir / "myfinance-20260710T123000000000Z.db"
+    temporary_path = backup_path.with_suffix(".tmp")
+    _create_database(source, "before")
+    original_verify = database_backups.verify_sqlite_database
+
+    def interrupt_temporary_verification(path: Path) -> None:
+        if path == temporary_path:
+            raise KeyboardInterrupt
+        original_verify(path)
+
+    monkeypatch.setattr(
+        database_backups,
+        "verify_sqlite_database",
+        interrupt_temporary_verification,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        create_verified_backup(
+            source,
+            backup_dir,
+            now=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
+        )
+
+    assert not temporary_path.exists()
+    assert not backup_path.exists()
+
+
+def test_restore_removes_temporary_file_when_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live = tmp_path / "live.db"
+    backup_dir = tmp_path / "backups"
+    temporary_path = tmp_path / ".live.db.restore"
+    _create_database(live, "before")
+    backup = create_verified_backup(live, backup_dir)
+
+    with closing(sqlite3.connect(live)) as connection:
+        with connection:
+            connection.execute("UPDATE entries SET value = 'after'")
+
+    original_verify = database_backups.verify_sqlite_database
+
+    def interrupt_temporary_verification(path: Path) -> None:
+        if path == temporary_path:
+            raise KeyboardInterrupt
+        original_verify(path)
+
+    monkeypatch.setattr(
+        database_backups,
+        "verify_sqlite_database",
+        interrupt_temporary_verification,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        restore_verified_backup(backup, live)
+
+    assert not temporary_path.exists()
+    assert _read_value(live) == "after"

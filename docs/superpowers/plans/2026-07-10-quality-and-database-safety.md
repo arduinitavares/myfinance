@@ -361,6 +361,7 @@ git commit -m "build: enforce the repository Python gate"
 
 - Consumes: `Settings.database_path` and `Settings.data_dir`.
 - Produces: `verify_sqlite_database(path: Path) -> None`, `create_verified_backup(source_path: Path, backup_dir: Path, *, now: datetime | None = None) -> Path`, `restore_verified_backup(backup_path: Path, destination_path: Path) -> None`, and `Settings.backup_dir`.
+- Guarantees: published backups are never overwritten, final replacement is atomic, and temporary backup/restore files are removed even when `KeyboardInterrupt`, `SystemExit`, or another `BaseException` interrupts the operation. Cancellation is not swallowed.
 
 - [ ] **Step 1: Write failing backup and restore tests**
 
@@ -372,11 +373,13 @@ Create `backend/tests/test_database_backups.py`:
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+import app.database_backups as database_backups
 from app.database_backups import (
     DatabaseIntegrityError,
     create_verified_backup,
@@ -386,13 +389,14 @@ from app.database_backups import (
 
 
 def _create_database(path: Path, value: str) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.execute("CREATE TABLE entries (value TEXT NOT NULL)")
-        connection.execute("INSERT INTO entries (value) VALUES (?)", (value,))
+    with closing(sqlite3.connect(path)) as connection:
+        with connection:
+            connection.execute("CREATE TABLE entries (value TEXT NOT NULL)")
+            connection.execute("INSERT INTO entries (value) VALUES (?)", (value,))
 
 
 def _read_value(path: Path) -> str:
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         row = connection.execute("SELECT value FROM entries").fetchone()
     assert row is not None
     return str(row[0])
@@ -422,8 +426,9 @@ def test_restore_verified_backup_replaces_destination_atomically(
     _create_database(live, "before")
     backup = create_verified_backup(live, backup_dir)
 
-    with sqlite3.connect(live) as connection:
-        connection.execute("UPDATE entries SET value = 'after'")
+    with closing(sqlite3.connect(live)) as connection:
+        with connection:
+            connection.execute("UPDATE entries SET value = 'after'")
 
     restore_verified_backup(backup, live)
 
@@ -441,6 +446,73 @@ def test_corrupt_backup_never_replaces_live_database(tmp_path: Path) -> None:
         restore_verified_backup(corrupt, live)
 
     assert _read_value(live) == "keep"
+
+
+def test_create_backup_removes_temporary_file_when_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "live.db"
+    backup_dir = tmp_path / "backups"
+    backup_path = backup_dir / "myfinance-20260710T123000000000Z.db"
+    temporary_path = backup_path.with_suffix(".tmp")
+    _create_database(source, "before")
+    original_verify = database_backups.verify_sqlite_database
+
+    def interrupt_temporary_verification(path: Path) -> None:
+        if path == temporary_path:
+            raise KeyboardInterrupt
+        original_verify(path)
+
+    monkeypatch.setattr(
+        database_backups,
+        "verify_sqlite_database",
+        interrupt_temporary_verification,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        create_verified_backup(
+            source,
+            backup_dir,
+            now=datetime(2026, 7, 10, 12, 30, tzinfo=UTC),
+        )
+
+    assert not temporary_path.exists()
+    assert not backup_path.exists()
+
+
+def test_restore_removes_temporary_file_when_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live = tmp_path / "live.db"
+    backup_dir = tmp_path / "backups"
+    temporary_path = tmp_path / ".live.db.restore"
+    _create_database(live, "before")
+    backup = create_verified_backup(live, backup_dir)
+
+    with closing(sqlite3.connect(live)) as connection:
+        with connection:
+            connection.execute("UPDATE entries SET value = 'after'")
+
+    original_verify = database_backups.verify_sqlite_database
+
+    def interrupt_temporary_verification(path: Path) -> None:
+        if path == temporary_path:
+            raise KeyboardInterrupt
+        original_verify(path)
+
+    monkeypatch.setattr(
+        database_backups,
+        "verify_sqlite_database",
+        interrupt_temporary_verification,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        restore_verified_backup(backup, live)
+
+    assert not temporary_path.exists()
+    assert _read_value(live) == "after"
 ```
 
 Add this assertion to `test_settings_use_isolated_backend_test_paths` in `backend/tests/imports/test_runtime_config.py`:
@@ -483,6 +555,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -501,7 +574,7 @@ def verify_sqlite_database(path: Path) -> None:
         raise FileNotFoundError(path)
 
     try:
-        with sqlite3.connect(_read_only_uri(path), uri=True) as connection:
+        with closing(sqlite3.connect(_read_only_uri(path), uri=True)) as connection:
             rows = connection.execute("PRAGMA integrity_check").fetchall()
     except sqlite3.DatabaseError as exc:
         raise DatabaseIntegrityError(f"SQLite integrity check failed for {path}") from exc
@@ -531,15 +604,16 @@ def create_verified_backup(
 
     try:
         with (
-            sqlite3.connect(_read_only_uri(source_path), uri=True) as source,
-            sqlite3.connect(temporary_path) as destination,
+            closing(
+                sqlite3.connect(_read_only_uri(source_path), uri=True)
+            ) as source,
+            closing(sqlite3.connect(temporary_path)) as destination,
         ):
             source.backup(destination)
         verify_sqlite_database(temporary_path)
         os.replace(temporary_path, backup_path)
-    except Exception:
+    finally:
         temporary_path.unlink(missing_ok=True)
-        raise
 
     return backup_path
 
@@ -553,15 +627,16 @@ def restore_verified_backup(backup_path: Path, destination_path: Path) -> None:
 
     try:
         with (
-            sqlite3.connect(_read_only_uri(backup_path), uri=True) as source,
-            sqlite3.connect(temporary_path) as destination,
+            closing(
+                sqlite3.connect(_read_only_uri(backup_path), uri=True)
+            ) as source,
+            closing(sqlite3.connect(temporary_path)) as destination,
         ):
             source.backup(destination)
         verify_sqlite_database(temporary_path)
         os.replace(temporary_path, destination_path)
-    except Exception:
+    finally:
         temporary_path.unlink(missing_ok=True)
-        raise
 ```
 
 Extend `Settings` in `backend/app/config.py`:
