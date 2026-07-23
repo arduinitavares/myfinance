@@ -4,7 +4,13 @@
 
 **Goal:** Establish a reproducible quality gate and make every SQLite schema change recoverable before adding expense-completeness tables.
 
-**Architecture:** Keep the existing FastAPI, SQLAlchemy, and SQLite structure. Configure each quality tool to inspect only repository-owned code while retaining every rule, then add stdlib SQLite backup primitives and a small migration ledger that backs up, verifies, applies, and restores. Destructive reset moves out of the HTTP API into an explicitly confirmed development/test CLI.
+**Architecture:** First execute the warning-clean prerequisite plan linked
+below. Then keep the existing FastAPI, SQLAlchemy, and SQLite structure.
+Configure each quality tool to inspect only repository-owned code while
+retaining every rule, then add stdlib SQLite backup primitives and a small
+migration ledger that backs up, verifies, applies, and restores. Destructive
+reset moves out of the HTTP API into an explicitly confirmed development/test
+CLI.
 
 **Tech Stack:** Python 3.13.12, uv, pyrepo-check 0.1.0, Ruff, ty, Bandit, pytest 8.3.5, FastAPI, SQLAlchemy 2.0.36, SQLite, GitHub Actions
 
@@ -23,6 +29,16 @@
 - Never read, copy, log, commit, or attach files under `bank_files/`, the live database, or backups during tests. Tests create temporary synthetic SQLite databases.
 - Do not stage or commit `.codegraph/`.
 - Every task ends with its focused tests passing and a small commit.
+
+---
+
+## Prerequisite
+
+Execute
+[Application Warning Cleanup](2026-07-23-application-warning-cleanup.md)
+before Task 1. Its application/test/build output must be clean. `npm ci`
+install-time third-party deprecation and audit notices remain separate
+dependency-modernization work and must not be auto-fixed.
 
 ---
 
@@ -115,6 +131,7 @@ def test_python_tool_scope_matches_owned_code() -> None:
     assert "skips" not in bandit
     assert pytest_config["testpaths"] == ["backend/tests"]
     assert pytest_config["pythonpath"] == ["backend"]
+    assert pytest_config["filterwarnings"] == ["error"]
 
 
 def test_owned_python_has_no_quality_suppression_markers() -> None:
@@ -148,7 +165,7 @@ def test_quality_configuration_has_no_rule_suppression_tables() -> None:
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --with pytest==8.3.5 python -m pytest backend/tests/test_quality_policy.py -q
 ```
 
@@ -233,6 +250,7 @@ exclude_dirs = [
 
 [tool.pytest.ini_options]
 addopts = "--ignore=backend/tests/live"
+filterwarnings = ["error"]
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
 ```
@@ -240,7 +258,7 @@ testpaths = ["backend/tests"]
 Remove the narrower duplicate pytest configuration and regenerate the lock:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 git rm backend/pytest.ini
 uv lock
 ```
@@ -287,7 +305,7 @@ jobs:
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv sync --frozen
 uv run --frozen python -m pytest backend/tests/test_quality_policy.py -q
 pyrepo-check --all
@@ -420,7 +438,7 @@ class _Settings(Protocol):
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest \
   backend/tests/test_database_backups.py \
   backend/tests/imports/test_runtime_config.py -q
@@ -574,7 +592,7 @@ return Settings(
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest \
   backend/tests/test_database_backups.py \
   backend/tests/imports/test_runtime_config.py -q
@@ -749,7 +767,7 @@ def test_duplicate_migration_names_are_rejected_before_database_changes(
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest backend/tests/test_migration_runner.py -q
 ```
 
@@ -981,7 +999,7 @@ suggestions.initialize_category_suggestion_model()
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest \
   backend/tests/test_migration_runner.py \
   backend/tests/test_europe_transfer_cleanup_migration.py \
@@ -1137,7 +1155,7 @@ def test_load_settings_rejects_unknown_environment(
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest \
   backend/tests/test_database_cli.py \
   backend/tests/imports/test_runtime_config.py -q
@@ -1293,7 +1311,7 @@ MYFINANCE_ENV=development PYTHONPATH=backend uv run --frozen \
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest \
   backend/tests/test_database_cli.py \
   backend/tests/test_database_backups.py \
@@ -1422,7 +1440,7 @@ def test_compose_binds_backend_and_frontend_to_loopback() -> None:
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest backend/tests/test_app_security.py -q
 ```
 
@@ -1508,7 +1526,7 @@ The backend is for a single trusted device and is not a public internet service.
 Run:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv run --frozen python -m pytest \
   backend/tests/test_app_security.py \
   backend/tests/test_database_cli.py \
@@ -1545,7 +1563,7 @@ git commit -m "fix: enforce the local application boundary"
 Run the complete repository gates from a fresh locked environment:
 
 ```bash
-cd /Users/aaat/myfinance
+cd /Users/aaat/myfinance/.worktrees/quality-database-safety
 uv sync --frozen
 pyrepo-check --all
 cd frontend
@@ -1562,7 +1580,9 @@ Expected:
 
 - `pyrepo-check --all` exits 0 after Ruff, annotation checks, ty, scoped Bandit, and all backend tests.
 - Bandit reports zero findings in owned runtime code, and the suppression-policy test reports no forbidden markers in owned Python.
-- All four frontend commands exit 0 without ignored failures or build warnings.
+- All four frontend commands exit 0. Frontend test and build output contains no
+  application/test/build warnings. Install-time third-party deprecation and
+  audit notices from `npm ci` are recorded separately and are not auto-fixed.
 - `git diff --check` exits 0.
 - `git status --short` contains no implementation files. The user-created `.codegraph/` may remain untracked and must not be staged.
 - No real statement, database, backup, account identifier, or private transaction text appears in the diff or test output.

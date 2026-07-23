@@ -2,6 +2,7 @@
 
 Date: 2026-07-10
 Status: Approved design, implementation not started
+Amended: 2026-07-23 (application/test/build warning prerequisite)
 Design: [MyFinance Expense Completeness Operating Model](../specs/2026-07-10-myfinance-expense-completeness-operating-model-design.md)
 
 ## Delivery Strategy
@@ -20,8 +21,15 @@ The approved design crosses database safety, file intake, expense semantics, cla
 
 Detailed plan: [Quality and Database Safety Implementation Plan](2026-07-10-quality-and-database-safety.md)
 
+Prerequisite:
+[Application Warning Cleanup](2026-07-23-application-warning-cleanup.md)
+
 Deliverables:
 
+- Existing backend, frontend-test, and frontend-build warnings are removed
+  before the quality and database-safety changes begin. Install-time
+  third-party npm deprecation and audit notices remain separate
+  dependency-modernization work and are never auto-fixed.
 - `pyrepo-check --all` audits repository-owned Python and runs from the repository root.
 - CI runs the same Python gate used locally.
 - Owned Python contains no `noqa`, `type: ignore`, `nosec`, disabled-rule, or configuration-rule suppressions.
@@ -32,7 +40,8 @@ Deliverables:
 - `/debug/reset-database` no longer exists.
 - CORS accepts only the configured local frontend origin.
 
-This slice satisfies acceptance criteria 11 and 12 and establishes the Python half of criterion 13.
+This slice satisfies acceptance criteria 11, 12, and 13 at the approved
+application/test/build warning boundary.
 
 ## Slice 2: Statement Streams and Coverage
 

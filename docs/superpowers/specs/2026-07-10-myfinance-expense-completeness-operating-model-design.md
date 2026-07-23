@@ -2,6 +2,7 @@
 
 Date: 2026-07-10
 Status: Approved
+Amended: 2026-07-23 (application/test/build warning boundary)
 
 ## Goal
 
@@ -336,7 +337,13 @@ npm run build
 npm run check:bundle
 ```
 
-The merge gate accepts no ignored failures or build warnings. The project adds no frontend quality tool until the current gate fails to cover a demonstrated risk.
+The merge gate accepts no ignored failures, application/test warnings, or build
+warnings. `npm ci` must exit successfully. Third-party deprecation and audit
+notices printed while npm installs the locked dependency tree are recorded as
+separate dependency-modernization work; they do not fail this slice and must
+not be rewritten automatically with `npm audit fix`. The project adds no
+frontend quality tool until the current gate fails to cover a demonstrated
+risk.
 
 ## Current-Code Gaps
 
@@ -384,5 +391,8 @@ The 2026 Expense Completeness milestone is complete when:
 10. External classification follows the consent and sanitization policy.
 11. Migration backup and restore pass an end-to-end verification.
 12. The normal API exposes no destructive database reset.
-13. `pyrepo-check --all` and all frontend gate commands pass without suppressions or warnings.
+13. `pyrepo-check --all` and all frontend gate commands pass without
+    suppressions, application/test warnings, or build warnings. Install-time
+    third-party deprecation and audit notices from `npm ci` are recorded
+    separately as dependency-modernization work.
 14. The implementation adds no Health, Projection, Anomaly, advisory, or route-optimization scope.
