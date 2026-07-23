@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import cast
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OWNED_PYTHON_ROOTS = (
@@ -84,6 +85,13 @@ EXPECTED_TY_INCLUDE = [
     "backup",
     "scripts",
 ]
+EXPECTED_RUFF_EXTEND_EXCLUDE = [
+    ".codegraph",
+    ".worktrees",
+    "bank_files",
+    "docs",
+    "frontend",
+]
 EXPECTED_BANDIT_EXCLUDES = [
     ".codegraph",
     ".git",
@@ -97,6 +105,14 @@ EXPECTED_BANDIT_EXCLUDES = [
     "docs",
     "frontend",
 ]
+EXPECTED_PYTEST_ADDOPTS = "--ignore=backend/tests/live"
+FORBIDDEN_RUFF_LINT_KEYS = (
+    "select",
+    "ignore",
+    "extend-ignore",
+    "per-file-ignores",
+    "extend-per-file-ignores",
+)
 FORBIDDEN_SOURCE_MARKERS = (
     "no" + "qa",
     "no" + "sec",
@@ -112,26 +128,31 @@ def _pyproject() -> dict[str, object]:
 def _table(container: dict[str, object], key: str) -> dict[str, object]:
     value = container[key]
     assert isinstance(value, dict)
-    return value
+    return cast("dict[str, object]", value)
 
 
 def test_python_tool_scope_matches_owned_code() -> None:
     """Require explicit owned-code scope without disabling rules."""
     config = _pyproject()
     tool = _table(config, "tool")
+    ruff = _table(tool, "ruff")
     ty = _table(tool, "ty")
     ty_src = _table(ty, "src")
     bandit = _table(tool, "bandit")
     pytest_tool = _table(tool, "pytest")
     pytest_config = _table(pytest_tool, "ini_options")
 
+    assert ruff["extend-exclude"] == EXPECTED_RUFF_EXTEND_EXCLUDE
+    assert "exclude" not in ruff
     assert ty_src["include"] == EXPECTED_TY_INCLUDE
+    assert "exclude" not in ty_src
     assert "rules" not in ty
     assert bandit["exclude_dirs"] == EXPECTED_BANDIT_EXCLUDES
     assert "skips" not in bandit
     assert pytest_config["testpaths"] == ["backend/tests"]
     assert pytest_config["pythonpath"] == ["backend"]
     assert pytest_config["filterwarnings"] == ["error"]
+    assert pytest_config["addopts"] == EXPECTED_PYTEST_ADDOPTS
 
 
 def test_owned_python_has_no_quality_suppression_markers() -> None:
@@ -151,13 +172,15 @@ def test_quality_configuration_has_no_rule_suppression_tables() -> None:
     """Reject rule-ignore configuration while allowing path exclusions."""
     config = _pyproject()
     tool = _table(config, "tool")
-    ruff = tool.get("ruff", {})
-    assert isinstance(ruff, dict)
-    lint = ruff.get("lint", {})
-    assert isinstance(lint, dict)
+    ruff_value = tool.get("ruff", {})
+    assert isinstance(ruff_value, dict)
+    ruff = cast("dict[str, object]", ruff_value)
+    lint_value = ruff.get("lint", {})
+    assert isinstance(lint_value, dict)
+    lint = cast("dict[str, object]", lint_value)
 
-    assert "ignore" not in lint
-    assert "per-file-ignores" not in lint
+    for key in FORBIDDEN_RUFF_LINT_KEYS:
+        assert key not in lint
 ```
 
 - [ ] **Step 2: Run the policy test and verify the scope assertion fails**
