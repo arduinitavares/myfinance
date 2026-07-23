@@ -1536,10 +1536,20 @@ def test_frontend_origin_can_be_configured(
     assert loaded.frontend_origin == "https://finance.local"
 
 
-def test_wildcard_frontend_origin_is_rejected(
+@pytest.mark.parametrize(
+    "unsafe_origin",
+    [
+        "*",
+        " https://finance.local",
+        "https://finance.local ",
+        "\thttps://finance.local\n",
+    ],
+)
+def test_unsafe_frontend_origin_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
+    unsafe_origin: str,
 ) -> None:
-    monkeypatch.setenv("MYFINANCE_FRONTEND_ORIGIN", "*")
+    monkeypatch.setenv("MYFINANCE_FRONTEND_ORIGIN", unsafe_origin)
 
     with pytest.raises(ValueError, match="must be one exact origin"):
         load_settings()
@@ -1583,10 +1593,20 @@ In `load_settings`, validate the exact origin after validating `environment`:
 frontend_origin = os.environ.get(
     "MYFINANCE_FRONTEND_ORIGIN",
     "http://localhost:3000",
-).strip().rstrip("/")
-if not frontend_origin or frontend_origin == "*":
+)
+if (
+    not frontend_origin
+    or frontend_origin == "*"
+    or any(character.isspace() for character in frontend_origin)
+):
     raise ValueError("MYFINANCE_FRONTEND_ORIGIN must be one exact origin")
 ```
+
+Do not call `strip()` on the configured value. Validate the raw string with
+stdlib URL and IP parsing as one HTTP(S) origin with no credentials, path,
+query, fragment, wildcard, malformed host, multiple value, or whitespace.
+Only after validation, normalize one optional trailing slash with
+`removesuffix("/")`.
 
 Pass it to `Settings` between `environment` and `imports_dir`:
 
@@ -1641,7 +1661,7 @@ Add this paragraph after the database-safety section in `README.md`:
 ```markdown
 ## Local network boundary
 
-The backend is for a single trusted device and is not a public internet service. It accepts browser requests only from `MYFINANCE_FRONTEND_ORIGIN`. Docker Compose sets that origin to `http://localhost:8080`. Remote access must use a trusted tunnel or VPN; the current PIN is not an authentication boundary.
+The backend is for a single trusted device and is not a public internet service. CORS lets browser scripts read backend responses only when their origin exactly matches `MYFINANCE_FRONTEND_ORIGIN`; it does not authenticate callers or block direct HTTP requests. Docker Compose binds both published ports to `127.0.0.1` and sets the browser origin to `http://localhost:8080`. That loopback binding, or a trusted tunnel or VPN for remote access, is the network boundary. The current PIN is not an authentication boundary.
 ```
 
 - [ ] **Step 6: Run the application-boundary and regression tests**

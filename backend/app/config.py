@@ -52,7 +52,7 @@ def load_settings() -> Settings:
     frontend_origin = os.environ.get(
         "MYFINANCE_FRONTEND_ORIGIN",
         "http://localhost:3000",
-    ).strip()
+    )
     try:
         parsed_origin = urlsplit(frontend_origin)
         parsed_origin.port

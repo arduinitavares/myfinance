@@ -169,7 +169,7 @@ MYFINANCE_ENV=development PYTHONPATH=backend uv run --frozen \
 
 ## Local network boundary
 
-The backend is for a single trusted device and is not a public internet service. It accepts browser requests only from `MYFINANCE_FRONTEND_ORIGIN`. Docker Compose sets that origin to `http://localhost:8080`. Remote access must use a trusted tunnel or VPN; the current PIN is not an authentication boundary.
+The backend is for a single trusted device and is not a public internet service. CORS lets browser scripts read backend responses only when their origin exactly matches `MYFINANCE_FRONTEND_ORIGIN`; it does not authenticate callers or block direct HTTP requests. Docker Compose binds both published ports to `127.0.0.1` and sets the browser origin to `http://localhost:8080`. That loopback binding, or a trusted tunnel or VPN for remote access, is the network boundary. The current PIN is not an authentication boundary.
 
 ## Usage
 

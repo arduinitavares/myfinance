@@ -62,6 +62,9 @@ def test_frontend_origin_trailing_slash_is_normalized(
     [
         "",
         "*",
+        " https://finance.local",
+        "https://finance.local ",
+        "\thttps://finance.local\n",
         "https://*.finance.local",
         "finance.local",
         "ftp://finance.local",
