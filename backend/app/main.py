@@ -13,10 +13,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .config import settings
 from .database import SessionLocal
-from .database_manager import (
-    init_database,
-    reset_database,
-)
+from .database_manager import reset_database
+from .migrations.run_migrations import run_migrations
 from .routers import (
     anomalies,
     financial_health,
@@ -139,8 +137,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         fx_scheduler_state.scheduler = None
 
 
-# Initialize the database before startup-only data loading.
-init_database()
+# Apply recoverable schema migrations before startup-only data loading.
+run_migrations()
 suggestions.initialize_category_suggestion_model()
 
 app: FastAPI = FastAPI(title="MyFinance API", lifespan=lifespan)

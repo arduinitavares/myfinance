@@ -738,6 +738,28 @@ git commit -m "feat: add verified SQLite backup restore"
 - Consumes: the verified backup functions from Task 2, the existing `init_database()`, SQLAlchemy `engine`, and `Settings.backup_dir`.
 - Produces: `MigrationSpec`, `MigrationRunResult`, `MigrationFailedError`, `run_pending_migrations(...)`, a recorded baseline migration, and `assert_required_schema() -> None`.
 
+**Safety amendment (2026-07-23):** The implementation must also satisfy these
+failure-path rules. These rules override narrower skeleton details below:
+
+- `run_pending_migrations(...)` accepts a read-only validator callback. It runs
+  after pending migrations inside the backup/recovery boundary, and also runs
+  without creating a backup when an existing database has no pending migration.
+- A `BaseException` raised after migration work begins triggers recovery.
+  Successful recovery preserves cancellation semantics by re-raising the
+  original non-`Exception` object.
+- A recovery failure raises `MigrationFailedError` with a message that says the
+  database state is unknown and preserves both the migration and recovery
+  exceptions. It must never claim restoration succeeded.
+- An absent database with an empty migration sequence is a filesystem no-op:
+  do not inspect through SQLAlchemy and do not create a database or backup
+  directory.
+- Use fixed SQL statements for the fixed migration table name so the canonical
+  Bandit gate remains clean without suppressions.
+
+Add focused RED/GREEN tests for validator rollback, cancellation rollback,
+recovery failure context, read-only validation with no pending work, and the
+absent-database no-op.
+
 - [ ] **Step 1: Write failing migration-runner tests**
 
 Create `backend/tests/test_migration_runner.py`:

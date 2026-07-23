@@ -311,6 +311,15 @@ def init_database() -> None:
         _run_startup_migrations()
 
 
+def assert_required_schema() -> None:
+    """Fail startup when a recorded database is missing required tables."""
+    existing_tables = set(inspect(engine).get_table_names())
+    missing_tables = sorted(set(REQUIRED_TABLE_NAMES) - existing_tables)
+    if missing_tables:
+        missing = ", ".join(missing_tables)
+        raise RuntimeError(f"Database schema is missing required tables: {missing}")
+
+
 def _recreate_tables(*, tables: Sequence[object] | None = None) -> None:
     metadata_tables = cast("Sequence[Table] | None", tables)
     with engine.connect() as connection:
