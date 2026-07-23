@@ -53,6 +53,14 @@ class MigrationSpec:
 
 
 @dataclass(frozen=True)
+class RecurringMaintenanceSpec:
+    """One named maintenance callback that runs on every startup."""
+
+    name: str
+    apply: Callable[[], None]
+
+
+@dataclass(frozen=True)
 class MigrationRunResult:
     """Describe the changes and backup produced by one migration run."""
 
@@ -66,6 +74,16 @@ def _validate_migrations(migrations: Sequence[MigrationSpec]) -> None:
         raise ValueError("Migration names must not be empty")
     if len(names) != len(set(names)):
         raise ValueError("Migration names must be unique")
+
+
+def _validate_recurring_maintenance(
+    recurring_maintenance: Sequence[RecurringMaintenanceSpec],
+) -> None:
+    names = [maintenance.name for maintenance in recurring_maintenance]
+    if any(not name.strip() for name in names):
+        raise ValueError("Recurring maintenance names must not be empty")
+    if len(names) != len(set(names)):
+        raise ValueError("Recurring maintenance names must be unique")
 
 
 def _applied_names(engine: Engine) -> set[str]:
@@ -109,10 +127,12 @@ def run_pending_migrations(
     database_path: Path,
     backup_dir: Path,
     migrations: Sequence[MigrationSpec],
+    recurring_maintenance: Sequence[RecurringMaintenanceSpec] = (),
     validator: Callable[[], None] | None = None,
 ) -> MigrationRunResult:
     """Apply each pending migration once and restore the database on failure."""
     _validate_migrations(migrations)
+    _validate_recurring_maintenance(recurring_maintenance)
     database_existed = database_path.is_file()
     if not database_existed and not migrations:
         return MigrationRunResult(applied_names=(), backup_path=None)
@@ -122,7 +142,7 @@ def run_pending_migrations(
         migration for migration in migrations if migration.name not in applied
     )
 
-    if not pending:
+    if not pending and not recurring_maintenance:
         if database_path.is_file():
             verify_sqlite_database(database_path)
             if validator is not None:
@@ -135,19 +155,31 @@ def run_pending_migrations(
         else None
     )
     applied_this_run: list[str] = []
-    failure_target = pending[0].name
+    failure_target = (
+        pending[0].name
+        if pending
+        else f"recurring maintenance {recurring_maintenance[0].name}"
+    )
 
     try:
-        _ensure_migration_table(engine)
+        if pending:
+            _ensure_migration_table(engine)
         for migration in pending:
             failure_target = migration.name
             migration.apply()
             _record_migration(engine, migration.name)
             applied_this_run.append(migration.name)
+        for maintenance in recurring_maintenance:
+            failure_target = f"recurring maintenance {maintenance.name}"
+            maintenance.apply()
         failure_target = "post_migration_validation"
         verify_sqlite_database(database_path)
         if validator is not None:
             validator()
+        if not pending and backup_path is not None:
+            failure_target = "recurring maintenance backup cleanup"
+            backup_path.unlink()
+            backup_path = None
     except BaseException as exc:
         try:
             _recover_pre_migration_state(

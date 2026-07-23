@@ -12,6 +12,7 @@ from app.migrations import runner as runner_module
 from app.migrations.runner import (
     MigrationFailedError,
     MigrationSpec,
+    RecurringMaintenanceSpec,
     run_pending_migrations,
 )
 
@@ -41,7 +42,7 @@ class SyntheticCancellation(BaseException):
     """Represent cancellation after a migration has committed a change."""
 
 
-def test_successful_migration_is_backed_up_recorded_and_not_repeated(
+def test_migration_runs_once_while_recurring_maintenance_runs_each_time(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
@@ -49,35 +50,98 @@ def test_successful_migration_is_backed_up_recorded_and_not_repeated(
     backup_dir = tmp_path / "backups"
     engine = _engine_for(database_path, request)
     _seed_wallet(engine, 10)
-    calls: list[str] = []
+    migration_calls: list[str] = []
+    maintenance_calls: list[str] = []
 
     def add_bonus() -> None:
-        calls.append("called")
+        migration_calls.append("called")
         with engine.begin() as connection:
             connection.execute(text("UPDATE wallet SET balance = balance + 5"))
 
+    def add_recurring_credit() -> None:
+        maintenance_calls.append("called")
+        with engine.begin() as connection:
+            connection.execute(text("UPDATE wallet SET balance = balance + 1"))
+
     migration = MigrationSpec(name="20260710_add_bonus", apply=add_bonus)
+    maintenance = RecurringMaintenanceSpec(
+        name="recurring_credit",
+        apply=add_recurring_credit,
+    )
 
     first = run_pending_migrations(
         engine=engine,
         database_path=database_path,
         backup_dir=backup_dir,
         migrations=(migration,),
+        recurring_maintenance=(maintenance,),
     )
+    assert first.backup_path is not None
+    assert first.backup_path.is_file()
+    first.backup_path.unlink()
+
     second = run_pending_migrations(
         engine=engine,
         database_path=database_path,
         backup_dir=backup_dir,
         migrations=(migration,),
+        recurring_maintenance=(maintenance,),
     )
 
-    assert calls == ["called"]
-    assert _wallet_balance(engine) == 15
+    assert migration_calls == ["called"]
+    assert maintenance_calls == ["called", "called"]
+    assert _wallet_balance(engine) == 17
     assert first.applied_names == ("20260710_add_bonus",)
-    assert first.backup_path is not None
-    assert first.backup_path.is_file()
     assert second.applied_names == ()
     assert second.backup_path is None
+    assert list(backup_dir.glob("*.db")) == []
+
+
+def test_failed_recurring_maintenance_restores_and_reports_retained_backup(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    database_path = tmp_path / "live.db"
+    backup_dir = tmp_path / "backups"
+    engine = _engine_for(database_path, request)
+    _seed_wallet(engine, 10)
+    migration = MigrationSpec(name="baseline", apply=lambda: None)
+    first = run_pending_migrations(
+        engine=engine,
+        database_path=database_path,
+        backup_dir=backup_dir,
+        migrations=(migration,),
+    )
+    assert first.backup_path is not None
+    first.backup_path.unlink()
+
+    def damage_then_fail() -> None:
+        with engine.begin() as connection:
+            connection.execute(text("UPDATE wallet SET balance = 0"))
+        raise RuntimeError("synthetic recurring maintenance failure")
+
+    with pytest.raises(MigrationFailedError) as exc_info:
+        run_pending_migrations(
+            engine=engine,
+            database_path=database_path,
+            backup_dir=backup_dir,
+            migrations=(migration,),
+            recurring_maintenance=(
+                RecurringMaintenanceSpec(
+                    name="recurring_cleanup",
+                    apply=damage_then_fail,
+                ),
+            ),
+        )
+
+    backup_path = exc_info.value.backup_path
+    assert backup_path is not None
+    assert backup_path.is_file()
+    assert str(backup_path) in str(exc_info.value)
+    assert "recurring_cleanup" in str(exc_info.value)
+    verify_sqlite_database(backup_path)
+    restored_engine = _engine_for(database_path, request)
+    assert _wallet_balance(restored_engine) == 10
 
 
 def test_failed_migration_restores_the_pre_migration_database(

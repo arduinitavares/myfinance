@@ -803,7 +803,10 @@ git commit -m "feat: add verified SQLite backup restore"
 **Interfaces:**
 
 - Consumes: the verified backup functions from Task 2, the existing `init_database()`, SQLAlchemy `engine`, and `Settings.backup_dir`.
-- Produces: `MigrationSpec`, `MigrationRunResult`, `MigrationFailedError`, `run_pending_migrations(...)`, a recorded baseline migration, and `assert_required_schema() -> None`.
+- Produces: `MigrationSpec`, `RecurringMaintenanceSpec`,
+  `MigrationRunResult`, `MigrationFailedError`, `run_pending_migrations(...)`,
+  a recorded baseline migration, named Europe/IBAN recurring maintenance, and
+  `assert_required_schema() -> None`.
 
 **Safety amendment (2026-07-23):** The implementation must also satisfy these
 failure-path rules. These rules override narrower skeleton details below:
@@ -827,11 +830,21 @@ failure-path rules. These rules override narrower skeleton details below:
   directory.
 - Use fixed SQL statements for the fixed migration table name so the canonical
   Bandit gate remains clean without suppressions.
+- Keep versioned migration names one-time, but run the named Europe/IBAN cleanup
+  after them on every startup inside the same protected boundary. When only
+  recurring maintenance runs successfully, delete that run's verified backup
+  so normal startup does not accumulate backup files. On maintenance failure
+  or cancellation, restore and retain/report the backup exactly like migration
+  failure. Do not create missing schema from recurring maintenance.
 
 Add focused RED/GREEN tests for validator rollback, cancellation rollback,
 recovery failure context, read-only validation with no pending work, and the
 absent-database no-op. Also cover retained backup-path reporting for ordinary
 failure, recovery failure, and cancellation, plus truthful new-database removal.
+Prove the versioned callback runs once while recurring maintenance runs on both
+calls, successful maintenance-only work retains no new backup, committed
+maintenance damage restores from a valid retained backup, and a synthetic
+post-baseline Europe settlement is corrected by a later `run_migrations()`.
 
 - [ ] **Step 1: Write failing migration-runner tests**
 

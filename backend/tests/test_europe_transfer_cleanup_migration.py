@@ -7,9 +7,12 @@ from typing import Never, cast
 import app.migrations.migrate_europe_iban_reclassification as migration_module
 import pytest
 from app.migrations.migrate_europe_iban_reclassification import (
+    KNOWN_IBAN_ROLE_MAP,
+    KNOWN_LOCAL_ACCOUNT_ROLE_MAP,
     _contains_known_iban,
     migrate_europe_iban_reclassification,
 )
+from app.migrations.run_migrations import MIGRATIONS, run_migrations
 from app.models.classification import (
     ClassificationSession,
     ClassificationSessionStatus,
@@ -23,6 +26,7 @@ from app.models.transaction import (
     TransactionType,
     TransferCategory,
 )
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 EXPECTED_RECOMPUTED_EXPENSES: float = 150.0
@@ -419,6 +423,51 @@ def test_migrate_europe_iban_reclassification_rewrites_only_deterministic_rows(
         "detached_transactions": 1,
         "recomputed_aggregates": 1,
     }
+
+
+def test_run_migrations_reclassifies_settlement_imported_after_baseline(
+    db_session: Session,
+) -> None:
+    """Verify recurring startup cleanup handles a post-baseline settlement."""
+    run_migrations()
+    recorded_names = set(
+        db_session.execute(text("SELECT name FROM schema_migrations")).scalars()
+    )
+    assert MIGRATIONS[0].name in recorded_names
+
+    local_identifier = next(
+        identifier
+        for identifier, role in KNOWN_LOCAL_ACCOUNT_ROLE_MAP.items()
+        if role == "cash_account"
+    )
+    reimbursement_identifier = next(
+        identifier
+        for identifier, role in KNOWN_IBAN_ROLE_MAP.items()
+        if role == "credit_reimbursement_account"
+    )
+    settlement = _create_transaction(
+        db_session,
+        account_number=local_identifier,
+        description="Synthetic post-baseline card settlement",
+        amount=-1.0,
+        transaction_type=TransactionType.EXPENSE,
+        expense_category=ExpenseCategory.CREDIT_PAYMENT,
+        counterparty_account=reimbursement_identifier,
+        source_bank="Beobank",
+    )
+    settlement_id = _require_id(settlement.id)
+    db_session.commit()
+
+    result = run_migrations()
+    db_session.expire_all()
+
+    refreshed = db_session.get(Transaction, settlement_id)
+    assert result.applied_names == ()
+    assert refreshed is not None
+    assert refreshed.transaction_type == TransactionType.TRANSFER
+    assert refreshed.transfer_category == TransferCategory.CREDIT_CARD_SETTLEMENT
+    assert refreshed.expense_category is None
+
 
 def test_migrate_europe_iban_reclassification_skips_recompute_when_nothing_changes(
     db_session: Session,

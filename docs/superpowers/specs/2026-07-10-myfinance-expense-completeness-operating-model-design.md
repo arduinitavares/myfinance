@@ -298,6 +298,14 @@ state is unknown. Cancellation keeps its original exception identity and adds a
 note with the restored backup path. Failure while creating a new database
 reports that the new file was removed and exposes `backup_path=None`.
 
+The Europe/IBAN transfer cleanup is named recurring startup maintenance, not a
+one-time schema migration. It runs after versioned migrations inside the same
+verified-backup, recovery, validation, cancellation, and restore-path reporting
+boundary. A successful maintenance-only startup deletes its newly created
+safety backup so daily startup does not accumulate backup files. A failed or
+cancelled maintenance run restores from that backup and retains its path for
+the operator. Recurring maintenance never creates missing schema.
+
 Errors use stable codes and concise messages. Logs exclude private financial content.
 
 ## Repository Workflow
