@@ -31,12 +31,14 @@ def test_settings_exposes_batch_import_dir(
 def test_import_tables_exist_after_init_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Verify import tables exist after init database."""
     db_path = tmp_path / "bootstrap.sqlite"
     temp_engine = create_engine(
         f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
     )
+    request.addfinalizer(temp_engine.dispose)
 
     monkeypatch.setattr(database_manager, "engine", temp_engine)
     database_manager.init_database()
@@ -199,12 +201,14 @@ def test_transactions_include_import_traceability_columns() -> None:
 def test_init_database_backfills_missing_transaction_traceability_columns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Verify init database backfills missing transaction traceability columns."""
     db_path = tmp_path / "legacy_imports.sqlite"
     temp_engine = create_engine(
         f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
     )
+    request.addfinalizer(temp_engine.dispose)
 
     Base.metadata.create_all(
         bind=temp_engine,
@@ -262,12 +266,14 @@ def test_init_database_backfills_missing_transaction_traceability_columns(
 def test_init_database_backfills_missing_import_draft_proposal_columns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Verify init database backfills missing proposal columns."""
     db_path = tmp_path / "legacy_import_drafts.sqlite"
     temp_engine = create_engine(
         f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
     )
+    request.addfinalizer(temp_engine.dispose)
 
     Base.metadata.create_all(
         bind=temp_engine,
