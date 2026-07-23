@@ -21,6 +21,13 @@ EXPECTED_TY_INCLUDE = [
     "backup",
     "scripts",
 ]
+EXPECTED_RUFF_EXTEND_EXCLUDE = [
+    ".codegraph",
+    ".worktrees",
+    "bank_files",
+    "docs",
+    "frontend",
+]
 EXPECTED_BANDIT_EXCLUDES = [
     ".codegraph",
     ".git",
@@ -34,6 +41,14 @@ EXPECTED_BANDIT_EXCLUDES = [
     "docs",
     "frontend",
 ]
+EXPECTED_PYTEST_ADDOPTS = "--ignore=backend/tests/live"
+FORBIDDEN_RUFF_LINT_KEYS = (
+    "select",
+    "ignore",
+    "extend-ignore",
+    "per-file-ignores",
+    "extend-per-file-ignores",
+)
 FORBIDDEN_SOURCE_MARKERS = (
     "no" + "qa",
     "no" + "sec",
@@ -56,19 +71,24 @@ def test_python_tool_scope_matches_owned_code() -> None:
     """Require explicit owned-code scope without disabling rules."""
     config = _pyproject()
     tool = _table(config, "tool")
+    ruff = _table(tool, "ruff")
     ty = _table(tool, "ty")
     ty_src = _table(ty, "src")
     bandit = _table(tool, "bandit")
     pytest_tool = _table(tool, "pytest")
     pytest_config = _table(pytest_tool, "ini_options")
 
+    assert ruff["extend-exclude"] == EXPECTED_RUFF_EXTEND_EXCLUDE
+    assert "exclude" not in ruff
     assert ty_src["include"] == EXPECTED_TY_INCLUDE
+    assert "exclude" not in ty_src
     assert "rules" not in ty
     assert bandit["exclude_dirs"] == EXPECTED_BANDIT_EXCLUDES
     assert "skips" not in bandit
     assert pytest_config["testpaths"] == ["backend/tests"]
     assert pytest_config["pythonpath"] == ["backend"]
     assert pytest_config["filterwarnings"] == ["error"]
+    assert pytest_config["addopts"] == EXPECTED_PYTEST_ADDOPTS
 
 
 def test_owned_python_has_no_quality_suppression_markers() -> None:
@@ -95,5 +115,5 @@ def test_quality_configuration_has_no_rule_suppression_tables() -> None:
     assert isinstance(lint_value, dict)
     lint = cast("dict[str, object]", lint_value)
 
-    assert "ignore" not in lint
-    assert "per-file-ignores" not in lint
+    for key in FORBIDDEN_RUFF_LINT_KEYS:
+        assert key not in lint
