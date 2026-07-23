@@ -13,6 +13,25 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
+jest.mock('recharts', () => {
+  const recharts = jest.requireActual('recharts');
+  const react = require('react') as typeof import('react');
+
+  return {
+    ...recharts,
+    ResponsiveContainer: ({
+      children,
+    }: {
+      children: import('react').ReactNode;
+    }) =>
+      react.createElement(
+        'div',
+        { style: { width: 800, height: 400 } },
+        children
+      ),
+  };
+});
+
 jest.mock('../../hooks/useCategoryStatistics', () => ({
   useCategoryStatistics: () => ({
     setPeriod: mockSetCategoryPeriod,

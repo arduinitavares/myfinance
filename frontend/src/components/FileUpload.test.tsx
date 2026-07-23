@@ -61,10 +61,17 @@ jest.mock('@radix-ui/react-toast', () => ({
 
 const mockedImportService = importService as jest.Mocked<typeof importService>;
 
+const captureExpectedConsoleError = () =>
+  jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
 describe('FileUpload', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     mockIsAxiosError = false;
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   test('uploads pdf statements through import service and navigates to review page', async () => {
@@ -88,6 +95,9 @@ describe('FileUpload', () => {
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/imports/12/review');
     });
+    await waitFor(() => {
+      expect(screen.queryByText(/selected file:/i)).not.toBeInTheDocument();
+    });
   });
 
   test('allows pdf uploads with application/octet-stream when the filename is .pdf', async () => {
@@ -108,6 +118,9 @@ describe('FileUpload', () => {
       expect(mockedImportService.uploadFile).toHaveBeenCalledTimes(1);
     });
     expect(screen.queryByText(/unsupported file type/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText(/selected file:/i)).not.toBeInTheDocument();
+    });
   });
 
   test('routes csv uploads into import review', async () => {
@@ -132,18 +145,23 @@ describe('FileUpload', () => {
       expect(onUploadSuccess).toHaveBeenCalledTimes(1);
       expect(mockNavigate).toHaveBeenCalledWith('/imports/31/review');
     });
+    await waitFor(() => {
+      expect(screen.queryByText(/selected file:/i)).not.toBeInTheDocument();
+    });
   });
 
   test('shows pdf-specific upload errors for pdf failures', async () => {
-    mockIsAxiosError = true;
-    mockedImportService.uploadFile.mockRejectedValue({
+    const consoleError = captureExpectedConsoleError();
+    const uploadError = {
       response: {
         status: 415,
         data: {
           detail: 'Unsupported media type.',
         },
       },
-    } as never);
+    };
+    mockIsAxiosError = true;
+    mockedImportService.uploadFile.mockRejectedValue(uploadError as never);
 
     render(<FileUpload onUploadSuccess={jest.fn()} />);
 
@@ -155,10 +173,13 @@ describe('FileUpload', () => {
 
     expect(await screen.findByText(/please upload a pdf statement/i)).toBeInTheDocument();
     expect(screen.queryByText(/please upload a csv file/i)).not.toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(uploadError);
   });
 
   test('keeps selected filename visible after a pdf upload error', async () => {
-    mockedImportService.uploadFile.mockRejectedValue(new Error('network down') as never);
+    const consoleError = captureExpectedConsoleError();
+    const uploadError = new Error('network down');
+    mockedImportService.uploadFile.mockRejectedValue(uploadError as never);
 
     render(<FileUpload onUploadSuccess={jest.fn()} />);
 
@@ -170,6 +191,7 @@ describe('FileUpload', () => {
 
     expect(await screen.findByText(/network down/i)).toBeInTheDocument();
     expect(screen.getByText(/selected file: beobank-statement\.pdf/i)).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(uploadError);
   });
 
   test('starts bank_files import and navigates to batch results', async () => {
@@ -191,8 +213,8 @@ describe('FileUpload', () => {
   });
 
   test('offers open existing when pdf upload returns a duplicate session conflict', async () => {
-    mockIsAxiosError = true;
-    mockedImportService.uploadFile.mockRejectedValue({
+    const consoleError = captureExpectedConsoleError();
+    const uploadError = {
       response: {
         status: 409,
         data: {
@@ -203,7 +225,9 @@ describe('FileUpload', () => {
           },
         },
       },
-    } as never);
+    };
+    mockIsAxiosError = true;
+    mockedImportService.uploadFile.mockRejectedValue(uploadError as never);
 
     render(<FileUpload onUploadSuccess={jest.fn()} />);
 
@@ -216,5 +240,6 @@ describe('FileUpload', () => {
     expect(await screen.findByRole('button', { name: /open existing/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /open existing/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/imports/14/review');
+    expect(consoleError).toHaveBeenCalledWith(uploadError);
   });
 });
