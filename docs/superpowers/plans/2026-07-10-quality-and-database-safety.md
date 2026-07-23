@@ -22,7 +22,7 @@ CLI.
 - Use the Python 3.13.12 environment declared by `.python-version` and `pyproject.toml`.
 - The canonical Python gate is exactly `pyrepo-check --all` from the repository root.
 - Ruff, annotations, ty, and pytest cover owned application code and tests. Bandit covers runtime application code and operational scripts, not test code.
-- Owned code may not use `noqa`, `type: ignore`, `nosec`, disabled rules, per-file rule ignores, or configuration rule skips.
+- Owned-code suppression-marker checks are case-insensitive and reject `noqa`, `nosec`, `type: ignore`, and `ty: ignore`. Owned code may not use disabled rules, per-file rule ignores, or configuration rule skips.
 - Tool path exclusions may remove only environments, dependencies, generated files, worktrees, private financial files, documentation, frontend files from Python tools, and tests from Bandit.
 - Use the smallest focused failing test before each behavior change.
 - Add no dependency that is not already present in `backend/requirements.txt`; this slice only makes the existing backend environment reproducible from the root lock.
@@ -110,6 +110,7 @@ FORBIDDEN_SOURCE_MARKERS = (
     "no" + "qa",
     "no" + "sec",
     "type:" + " ignore",
+    "ty:" + " ignore",
 )
 
 
@@ -122,6 +123,11 @@ def _table(container: dict[str, object], key: str) -> dict[str, object]:
     value = container[key]
     assert isinstance(value, dict)
     return cast("dict[str, object]", value)
+
+
+def _quality_suppression_markers(text: str) -> list[str]:
+    folded_text = text.casefold()
+    return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in folded_text]
 
 
 def test_python_tool_scope_matches_owned_code() -> None:
@@ -159,15 +165,34 @@ def test_python_tool_scope_matches_owned_code() -> None:
     assert pytest_config["addopts"] == EXPECTED_PYTEST_ADDOPTS
 
 
+def test_quality_suppression_markers_are_case_insensitive() -> None:
+    """Reject every supported marker regardless of letter case."""
+    source = "\n".join(
+        (
+            "# " + "NO" + "QA",
+            "# " + "No" + "SeC",
+            "# " + "TyPe:" + " IgNoRe",
+            "# " + "Ty:" + " IgNoRe",
+        )
+    )
+    expected = [
+        "no" + "qa",
+        "no" + "sec",
+        "type:" + " ignore",
+        "ty:" + " ignore",
+    ]
+
+    assert _quality_suppression_markers(source) == expected
+
+
 def test_owned_python_has_no_quality_suppression_markers() -> None:
     """Reject inline suppressions in application code, scripts, and tests."""
     violations: list[str] = []
     for owned_root in OWNED_PYTHON_ROOTS:
         for path in sorted(owned_root.rglob("*.py")):
             text = path.read_text(encoding="utf-8")
-            for marker in FORBIDDEN_SOURCE_MARKERS:
-                if marker in text:
-                    violations.append(f"{path.relative_to(PROJECT_ROOT)}: {marker}")
+            for marker in _quality_suppression_markers(text):
+                violations.append(f"{path.relative_to(PROJECT_ROOT)}: {marker}")
 
     assert violations == []
 
@@ -1728,7 +1753,7 @@ git status --short
 Expected:
 
 - `pyrepo-check --all` exits 0 after Ruff, annotation checks, ty, scoped Bandit, and all backend tests.
-- Bandit reports zero findings in owned runtime code, and the suppression-policy test reports no forbidden markers in owned Python.
+- Bandit reports zero findings in owned runtime code, and the suppression-policy test reports no case-insensitive matches for `noqa`, `nosec`, `type: ignore`, or `ty: ignore` in owned Python.
 - All four frontend commands exit 0. Frontend test and build output contains no
   application/test/build warnings. Install-time third-party deprecation and
   audit notices from `npm ci` are recorded separately and are not auto-fixed.

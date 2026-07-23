@@ -46,6 +46,7 @@ FORBIDDEN_SOURCE_MARKERS = (
     "no" + "qa",
     "no" + "sec",
     "type:" + " ignore",
+    "ty:" + " ignore",
 )
 
 
@@ -58,6 +59,11 @@ def _table(container: dict[str, object], key: str) -> dict[str, object]:
     value = container[key]
     assert isinstance(value, dict)
     return cast("dict[str, object]", value)
+
+
+def _quality_suppression_markers(text: str) -> list[str]:
+    folded_text = text.casefold()
+    return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in folded_text]
 
 
 def test_python_tool_scope_matches_owned_code() -> None:
@@ -95,15 +101,34 @@ def test_python_tool_scope_matches_owned_code() -> None:
     assert pytest_config["addopts"] == EXPECTED_PYTEST_ADDOPTS
 
 
+def test_quality_suppression_markers_are_case_insensitive() -> None:
+    """Reject every supported marker regardless of letter case."""
+    source = "\n".join(
+        (
+            "# " + "NO" + "QA",
+            "# " + "No" + "SeC",
+            "# " + "TyPe:" + " IgNoRe",
+            "# " + "Ty:" + " IgNoRe",
+        )
+    )
+    expected = [
+        "no" + "qa",
+        "no" + "sec",
+        "type:" + " ignore",
+        "ty:" + " ignore",
+    ]
+
+    assert _quality_suppression_markers(source) == expected
+
+
 def test_owned_python_has_no_quality_suppression_markers() -> None:
     """Reject inline suppressions in application code, scripts, and tests."""
     violations: list[str] = []
     for owned_root in OWNED_PYTHON_ROOTS:
         for path in sorted(owned_root.rglob("*.py")):
             text = path.read_text(encoding="utf-8")
-            for marker in FORBIDDEN_SOURCE_MARKERS:
-                if marker in text:
-                    violations.append(f"{path.relative_to(PROJECT_ROOT)}: {marker}")
+            for marker in _quality_suppression_markers(text):
+                violations.append(f"{path.relative_to(PROJECT_ROOT)}: {marker}")
 
     assert violations == []
 
