@@ -4,9 +4,9 @@
 
 **Goal:** Remove the existing backend, frontend-test, and frontend-build warnings before the quality and database-safety implementation begins.
 
-**Architecture:** Replace the one deprecated Qdrant collection-reset API with a small service-owned helper that preserves current in-memory behavior. Then update only the React test adapter and browser-capability data, settle the asynchronous tests that currently finish early, and give the chart test a deterministic JSDOM container. Production finance behavior remains unchanged.
+**Architecture:** Replace the one deprecated Qdrant collection-reset API with a small service-owned helper that preserves current in-memory behavior. Then update the React test adapter and browser-capability data, explicitly declare the Babel compatibility plugin that Create React App imports without declaring, settle the asynchronous tests that currently finish early, and give the chart test a deterministic JSDOM container. Production finance behavior remains unchanged.
 
-**Tech Stack:** Python 3.13.12, qdrant-client 1.7-compatible API, pytest 8.3.5, React 18.3.1, Create React App 5.0.1, Jest 27, React Testing Library 14.3.1, Recharts 2.13
+**Tech Stack:** Python 3.13.12, qdrant-client 1.7-compatible API, pytest 8.3.5, React 18.3.1, Create React App 5.0.1, Jest 27, React Testing Library 14.3.1, Recharts 2.13, `@babel/plugin-proposal-private-property-in-object` 7.21.11
 
 ## Global Constraints
 
@@ -18,6 +18,9 @@
 - Do not add or change production frontend behavior for test-environment limitations.
 - Do not raise the `qdrant-client>=1.7.0` dependency floor.
 - Do not upgrade React, React DOM, Create React App, Recharts, Jest, or unrelated frontend dependencies.
+- The only new frontend package allowed is the exact
+  `@babel/plugin-proposal-private-property-in-object@7.21.11` development
+  dependency that Create React App 5 explicitly asks consumers to declare.
 - `npm ci` must exit successfully. Its third-party deprecation and audit notices are separate dependency-modernization work; do not run `npm audit fix`.
 - Do not hide warnings with global console suppression, warning filters, `noqa`, `type: ignore`, `nosec`, disabled rules, or configuration rule skips.
 - A test may capture an expected `console.error` only inside the error-path test that asserts the exact logged error, and it must restore the console afterward.
@@ -249,7 +252,8 @@ git commit -m "fix: replace deprecated qdrant collection reset"
   `npm run test:ci` and `npm run build` commands, and existing component
   behavior.
 - Produces: React Testing Library 14.3.1 compatibility, current locked
-  Browserslist capability data, fully settled async component tests, locally
+  Browserslist capability data, the explicitly declared Create React App Babel
+  compatibility plugin, fully settled async component tests, locally
   deterministic Recharts test dimensions, and quiet test/build logs.
 
 - [ ] **Step 1: Capture the failing warning baseline**
@@ -286,25 +290,35 @@ if [ "$build_exit" -ne 0 ]; then
   sed -n '1,160p' "$build_log"
   exit "$build_exit"
 fi
-if rg -n "Browserslist:|Compiled with warnings" "$build_log"; then
+if rg -n \
+  "Browserslist:|Compiled with warnings|babel-preset-react-app|plugin-proposal-private-property-in-object" \
+  "$build_log"; then
   exit 1
 fi
 ```
 
-Expected: FAIL because the locked `caniuse-lite` data is stale.
+Expected: FAIL because the locked `caniuse-lite` data is stale. In a freshly
+installed dependency tree, the cold build may also report that
+`babel-preset-react-app` imports
+`@babel/plugin-proposal-private-property-in-object` without declaring it.
 
-- [ ] **Step 2: Update only the test adapter and browser data**
+- [ ] **Step 2: Update the test adapter, CRA compatibility declaration, and browser data**
 
 From `frontend/`, run:
 
 ```bash
 npm install --save @testing-library/react@14.3.1
+npm install --save-dev @babel/plugin-proposal-private-property-in-object@7.21.11
 npx update-browserslist-db@latest
 ```
 
 This must update `frontend/package.json` to
-`"@testing-library/react": "^14.3.1"` and refresh only the necessary lockfile
-entries. Do not run `npm audit fix` and do not upgrade unrelated packages.
+`"@testing-library/react": "^14.3.1"`, add
+`"@babel/plugin-proposal-private-property-in-object": "^7.21.11"` under
+`devDependencies`, and refresh only the necessary lockfile entries. The Babel
+proposal package is deprecated upstream, but Create React App 5 imports that
+exact package name; migrating CRA/Babel is separate modernization work. Do not
+run `npm audit fix` and do not upgrade unrelated packages.
 
 - [ ] **Step 3: Make successful FileUpload tests await the terminal UI**
 
@@ -448,7 +462,12 @@ session/proposal effect is still updating four state values.
 Run:
 
 ```bash
-npm ls @testing-library/react react react-dom --depth=0
+npm ls \
+  @testing-library/react \
+  @babel/plugin-proposal-private-property-in-object \
+  react \
+  react-dom \
+  --depth=0
 npm run test:ci -- --runInBand \
   src/components/FileUpload.test.tsx \
   src/components/dashboard/CategoryTrends.test.tsx \
@@ -458,6 +477,7 @@ npm run test:ci -- --runInBand \
 Expected:
 
 - React Testing Library resolves to `14.3.1`.
+- The CRA compatibility plugin resolves to `7.21.11`.
 - React and React DOM remain `18.3.1`.
 - All focused tests PASS without warning or console noise.
 
@@ -471,7 +491,8 @@ Expected:
 - no deprecated act, unwrapped update, zero-dimension chart, uncaptured console,
   or forced-worker-exit output appears;
 - the production build exits 0 with `Compiled successfully`;
-- no Browserslist or build warning appears.
+- no Browserslist, CRA/Babel undeclared-dependency, or build warning appears,
+  including on the first build after `npm ci`.
 
 Then run:
 
