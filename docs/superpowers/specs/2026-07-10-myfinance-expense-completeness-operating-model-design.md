@@ -333,7 +333,7 @@ The repository must configure this command to audit owned Python:
 - pytest runs `backend/tests` with the correct import path.
 - Environments, dependencies, generated files, and worktrees stay outside the owned-code target set.
 
-Owned-code suppression-marker checks are case-insensitive and reject `noqa`, `nosec`, `type: ignore`, and `ty: ignore`. Owned code may not use disabled rules or configuration suppressions in place of a fix.
+Owned-code suppression checks tokenize Python comments and case-insensitively reject `noqa`, `nosec`, `type: ignore`, and `ty: ignore` directives at directive boundaries. Identifiers, strings, docstrings, and ordinary comment words such as “nanoseconds” are not directives. Owned code may not use disabled rules or configuration suppressions in place of a fix.
 
 The frontend gate is:
 

@@ -22,7 +22,7 @@ CLI.
 - Use the Python 3.13.12 environment declared by `.python-version` and `pyproject.toml`.
 - The canonical Python gate is exactly `pyrepo-check --all` from the repository root.
 - Ruff, annotations, ty, and pytest cover owned application code and tests. Bandit covers runtime application code and operational scripts, not test code.
-- Owned-code suppression-marker checks are case-insensitive and reject `noqa`, `nosec`, `type: ignore`, and `ty: ignore`. Owned code may not use disabled rules, per-file rule ignores, or configuration rule skips.
+- Owned-code suppression checks tokenize Python comments and case-insensitively reject `noqa`, `nosec`, `type: ignore`, and `ty: ignore` directives at directive boundaries. Identifiers, strings, docstrings, and ordinary comment words such as “nanoseconds” are not directives. Owned code may not use disabled rules, per-file rule ignores, or configuration rule skips.
 - Tool path exclusions may remove only environments, dependencies, generated files, worktrees, private financial files, documentation, frontend files from Python tools, and tests from Bandit.
 - Use the smallest focused failing test before each behavior change.
 - Add no dependency that is not already present in `backend/requirements.txt`; this slice only makes the existing backend environment reproducible from the root lock.
@@ -66,6 +66,9 @@ Create `backend/tests/test_quality_policy.py`:
 
 from __future__ import annotations
 
+import io
+import re
+import tokenize
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -112,6 +115,12 @@ FORBIDDEN_SOURCE_MARKERS = (
     "type:" + " ignore",
     "ty:" + " ignore",
 )
+COMMENT_DIRECTIVE_PATTERNS = (
+    re.compile(r"^(?:(?:ruff|flake8)\s*:\s*)?no" r"qa\b", re.IGNORECASE),
+    re.compile(r"^no" r"sec\b", re.IGNORECASE),
+    re.compile(r"^type\s*:\s*ig" r"nore\b", re.IGNORECASE),
+    re.compile(r"^ty\s*:\s*ig" r"nore\b", re.IGNORECASE),
+)
 
 
 def _pyproject() -> dict[str, object]:
@@ -126,8 +135,20 @@ def _table(container: dict[str, object], key: str) -> dict[str, object]:
 
 
 def _quality_suppression_markers(text: str) -> list[str]:
-    folded_text = text.casefold()
-    return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in folded_text]
+    matches: set[str] = set()
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type != tokenize.COMMENT:
+            continue
+        comment = token.string.removeprefix("#").lstrip()
+        for marker, pattern in zip(
+            FORBIDDEN_SOURCE_MARKERS,
+            COMMENT_DIRECTIVE_PATTERNS,
+            strict=True,
+        ):
+            if pattern.match(comment):
+                matches.add(marker)
+
+    return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in matches]
 
 
 def test_python_tool_scope_matches_owned_code() -> None:
@@ -169,10 +190,16 @@ def test_quality_suppression_markers_are_case_insensitive() -> None:
     """Reject every supported marker regardless of letter case."""
     source = "\n".join(
         (
-            "# " + "NO" + "QA",
-            "# " + "No" + "SeC",
-            "# " + "TyPe:" + " IgNoRe",
-            "# " + "Ty:" + " IgNoRe",
+            "# " + "NO" + "QA" + ": F401",
+            "# ruff: " + "No" + "Qa" + ": E402",
+            "# flake8: " + "no" + "qa",
+            "# " + "No" + "SeC" + " B101",
+            "# " + "TyPe:" + " IgNoRe" + "[assignment]",
+            "# " + "type" + ":ignore" + "[assignment]",
+            "# " + "type " + ":\tignore" + "[assignment]",
+            "# " + "Ty:" + " IgNoRe" + "[invalid-assignment]",
+            "# " + "ty" + ":ignore" + "[invalid-assignment]",
+            "# " + "ty " + ":\tignore" + "[invalid-assignment]",
         )
     )
     expected = [
@@ -183,6 +210,21 @@ def test_quality_suppression_markers_are_case_insensitive() -> None:
     ]
 
     assert _quality_suppression_markers(source) == expected
+
+
+def test_quality_suppression_markers_ignore_non_directives() -> None:
+    """Allow identifiers, strings, docstrings, and ordinary comment words."""
+    source = "\n".join(
+        (
+            "NANOSECONDS_PER_SECOND = 1_000_000_000",
+            'unit_name = "NANOSECONDS"',
+            '"""NANOSECONDS are duration units."""',
+            "# Convert NANOSECONDS before arithmetic.",
+            "# This comment discusses " + "no" + "sec" + " as a word.",
+        )
+    )
+
+    assert _quality_suppression_markers(source) == []
 
 
 def test_owned_python_has_no_quality_suppression_markers() -> None:
@@ -1753,7 +1795,7 @@ git status --short
 Expected:
 
 - `pyrepo-check --all` exits 0 after Ruff, annotation checks, ty, scoped Bandit, and all backend tests.
-- Bandit reports zero findings in owned runtime code, and the suppression-policy test reports no case-insensitive matches for `noqa`, `nosec`, `type: ignore`, or `ty: ignore` in owned Python.
+- Bandit reports zero findings in owned runtime code, and the suppression-policy test reports no case-insensitive Python comment directives for `noqa`, `nosec`, `type: ignore`, or `ty: ignore` in owned Python. Identifiers, strings, docstrings, and ordinary words do not produce false positives.
 - All four frontend commands exit 0. Frontend test and build output contains no
   application/test/build warnings. Install-time third-party deprecation and
   audit notices from `npm ci` are recorded separately and are not auto-fixed.

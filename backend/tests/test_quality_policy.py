@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import re
+import tokenize
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -48,6 +51,12 @@ FORBIDDEN_SOURCE_MARKERS = (
     "type:" + " ignore",
     "ty:" + " ignore",
 )
+COMMENT_DIRECTIVE_PATTERNS = (
+    re.compile(r"^(?:(?:ruff|flake8)\s*:\s*)?no" r"qa\b", re.IGNORECASE),
+    re.compile(r"^no" r"sec\b", re.IGNORECASE),
+    re.compile(r"^type\s*:\s*ig" r"nore\b", re.IGNORECASE),
+    re.compile(r"^ty\s*:\s*ig" r"nore\b", re.IGNORECASE),
+)
 
 
 def _pyproject() -> dict[str, object]:
@@ -62,8 +71,20 @@ def _table(container: dict[str, object], key: str) -> dict[str, object]:
 
 
 def _quality_suppression_markers(text: str) -> list[str]:
-    folded_text = text.casefold()
-    return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in folded_text]
+    matches: set[str] = set()
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type != tokenize.COMMENT:
+            continue
+        comment = token.string.removeprefix("#").lstrip()
+        for marker, pattern in zip(
+            FORBIDDEN_SOURCE_MARKERS,
+            COMMENT_DIRECTIVE_PATTERNS,
+            strict=True,
+        ):
+            if pattern.match(comment):
+                matches.add(marker)
+
+    return [marker for marker in FORBIDDEN_SOURCE_MARKERS if marker in matches]
 
 
 def test_python_tool_scope_matches_owned_code() -> None:
@@ -105,10 +126,16 @@ def test_quality_suppression_markers_are_case_insensitive() -> None:
     """Reject every supported marker regardless of letter case."""
     source = "\n".join(
         (
-            "# " + "NO" + "QA",
-            "# " + "No" + "SeC",
-            "# " + "TyPe:" + " IgNoRe",
-            "# " + "Ty:" + " IgNoRe",
+            "# " + "NO" + "QA" + ": F401",
+            "# ruff: " + "No" + "Qa" + ": E402",
+            "# flake8: " + "no" + "qa",
+            "# " + "No" + "SeC" + " B101",
+            "# " + "TyPe:" + " IgNoRe" + "[assignment]",
+            "# " + "type" + ":ignore" + "[assignment]",
+            "# " + "type " + ":\tignore" + "[assignment]",
+            "# " + "Ty:" + " IgNoRe" + "[invalid-assignment]",
+            "# " + "ty" + ":ignore" + "[invalid-assignment]",
+            "# " + "ty " + ":\tignore" + "[invalid-assignment]",
         )
     )
     expected = [
@@ -119,6 +146,21 @@ def test_quality_suppression_markers_are_case_insensitive() -> None:
     ]
 
     assert _quality_suppression_markers(source) == expected
+
+
+def test_quality_suppression_markers_ignore_non_directives() -> None:
+    """Allow identifiers, strings, docstrings, and ordinary comment words."""
+    source = "\n".join(
+        (
+            "NANOSECONDS_PER_SECOND = 1_000_000_000",
+            'unit_name = "NANOSECONDS"',
+            '"""NANOSECONDS are duration units."""',
+            "# Convert NANOSECONDS before arithmetic.",
+            "# This comment discusses " + "no" + "sec" + " as a word.",
+        )
+    )
+
+    assert _quality_suppression_markers(source) == []
 
 
 def test_owned_python_has_no_quality_suppression_markers() -> None:
