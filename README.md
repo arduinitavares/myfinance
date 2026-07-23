@@ -167,6 +167,10 @@ MYFINANCE_ENV=development PYTHONPATH=backend uv run --frozen \
   python -m app.cli.database reset --scope transactions --yes
 ```
 
+## Local network boundary
+
+The backend is for a single trusted device and is not a public internet service. It accepts browser requests only from `MYFINANCE_FRONTEND_ORIGIN`. Docker Compose sets that origin to `http://localhost:8080`. Remote access must use a trusted tunnel or VPN; the current PIN is not an authentication boundary.
+
 ## Usage
 
 - Browse the API endpoints via Swagger UI at `/docs`

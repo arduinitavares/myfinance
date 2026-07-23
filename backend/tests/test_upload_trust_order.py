@@ -8,6 +8,7 @@ from typing import Any, Never
 import pytest
 from app.config import settings as app_settings
 from app.database import SessionLocal
+from app.database_manager import reset_database
 from app.imports import enrichment as import_enrichment
 from app.imports import workflow as import_workflow
 from app.main import app
@@ -41,8 +42,7 @@ def _reset_rate_limiter() -> None:
 
 
 def _reset_database() -> None:
-    response = client.post("/debug/reset-database")
-    assert response.status_code == HTTP_OK
+    reset_database()
 
 
 def _clear_vector_collections() -> None:

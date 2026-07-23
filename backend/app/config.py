@@ -2,8 +2,10 @@
 
 import os
 from dataclasses import dataclass
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 APP_DIR: Any = Path(__file__).resolve().parent
 BACKEND_DIR: Any = APP_DIR.parent
@@ -17,6 +19,7 @@ class Settings:
     database_path: Path
     backup_dir: Path
     environment: str
+    frontend_origin: str
     imports_dir: Path
     batch_import_dir: Path
     provider_config_path: Path
@@ -45,6 +48,62 @@ def load_settings() -> Settings:
         raise ValueError(
             "MYFINANCE_ENV must be development, test, or production"
         )
+
+    frontend_origin = os.environ.get(
+        "MYFINANCE_FRONTEND_ORIGIN",
+        "http://localhost:3000",
+    ).strip()
+    try:
+        parsed_origin = urlsplit(frontend_origin)
+        parsed_origin.port
+    except ValueError as exc:
+        raise ValueError(
+            "MYFINANCE_FRONTEND_ORIGIN must be one exact origin"
+        ) from exc
+    hostname = parsed_origin.hostname
+    valid_hostname = False
+    if hostname is not None:
+        try:
+            ip_address(hostname)
+        except ValueError:
+            labels = hostname.split(".")
+            valid_hostname = (
+                hostname.isascii()
+                and len(hostname) <= 253
+                and not all(label.isdigit() for label in labels)
+                and all(
+                    label
+                    and len(label) <= 63
+                    and label[0].isalnum()
+                    and label[-1].isalnum()
+                    and all(
+                        character.isalnum() or character == "-"
+                        for character in label
+                    )
+                    for label in labels
+                )
+            )
+        else:
+            valid_hostname = True
+    if (
+        not frontend_origin
+        or frontend_origin == "*"
+        or parsed_origin.scheme not in {"http", "https"}
+        or not valid_hostname
+        or parsed_origin.username is not None
+        or parsed_origin.password is not None
+        or parsed_origin.path not in {"", "/"}
+        or parsed_origin.query
+        or parsed_origin.fragment
+        or parsed_origin.netloc.endswith(":")
+        or "," in frontend_origin
+        or "\\" in frontend_origin
+        or any(character.isspace() for character in frontend_origin)
+    ):
+        raise ValueError(
+            "MYFINANCE_FRONTEND_ORIGIN must be one exact origin"
+        )
+    frontend_origin = frontend_origin.removesuffix("/")
 
     batch_import_dir = Path(
         os.environ.get("MYFINANCE_BATCH_IMPORT_DIR", "/bank_files")
@@ -78,6 +137,7 @@ def load_settings() -> Settings:
         database_path=database_path,
         backup_dir=backup_dir,
         environment=environment,
+        frontend_origin=frontend_origin,
         imports_dir=imports_dir,
         batch_import_dir=batch_import_dir,
         provider_config_path=provider_config_path,

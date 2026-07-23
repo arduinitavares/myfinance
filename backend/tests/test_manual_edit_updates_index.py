@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from app.database_manager import reset_database
 from app.main import app
 from app.routers.suggestions import category_suggestion_service
 from fastapi.testclient import TestClient
@@ -11,9 +12,7 @@ HTTP_OK: int = 200
 
 
 def _reset_database() -> None:
-    # Use the debug endpoint to reset the DB between tests
-    resp = client.post("/debug/reset-database")
-    assert resp.status_code == HTTP_OK
+    reset_database()
 
 
 def _clear_vector_collections() -> None:

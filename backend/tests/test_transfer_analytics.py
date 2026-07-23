@@ -9,6 +9,7 @@ from typing import Any, Never, cast
 import numpy as np
 import pytest
 from app.database import SessionLocal
+from app.database_manager import reset_database
 from app.main import app
 from app.models.fx import FXDailyReferenceRate
 from app.models.statistics import (
@@ -64,9 +65,8 @@ LOAN_REPAYMENT_INCOMING_USD: float = 68.75
 FX_TIMESTAMP: datetime = datetime(2026, 4, 17, 8, 30, 0, tzinfo=UTC)
 
 
-def _reset_database(client: TestClient) -> None:
-    response = client.post("/debug/reset-database")
-    assert response.status_code == HTTP_OK
+def _reset_database(_client: TestClient) -> None:
+    reset_database()
 
 
 def _restore_transaction(client: TestClient, *, description: str) -> dict[str, Any]:

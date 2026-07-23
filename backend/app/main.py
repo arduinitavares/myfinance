@@ -7,13 +7,11 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import SQLAlchemyError
 
 from .config import settings
 from .database import SessionLocal
-from .database_manager import reset_database
 from .migrations.run_migrations import run_migrations
 from .routers import (
     anomalies,
@@ -146,7 +144,7 @@ app: FastAPI = FastAPI(title="MyFinance API", lifespan=lifespan)
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[settings.frontend_origin],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -162,16 +160,3 @@ app.include_router(projections.router)
 app.include_router(anomalies.router)
 app.include_router(imports.router)
 app.include_router(classification_router)
-
-
-# Add a debug endpoint to reset the database
-# pass statistics or transactions to reset only statistics or transactions
-@app.post("/debug/reset-database")
-def debug_reset_database(reset_type: str = "all") -> dict[str, str]:
-    """Handle debug reset database."""
-    try:
-        reset_database(reset_type)
-    except (RuntimeError, SQLAlchemyError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    else:
-        return {"message": "Database reset successfully"}

@@ -9,6 +9,7 @@ from typing import Any, Never, cast
 import pytest
 from app.config import settings as app_settings
 from app.database import SessionLocal
+from app.database_manager import reset_database
 from app.main import app
 from app.models.classification import (
     ClassificationSession,
@@ -62,8 +63,7 @@ def _enable_runtime_stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _reset_database() -> None:
-    response = client.post("/debug/reset-database")
-    assert response.status_code == HTTP_OK
+    reset_database()
     _clear_vector_collections()
 
 
