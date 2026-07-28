@@ -135,12 +135,14 @@ def test_canonical_selection_prefers_committed_over_awaiting_review(
 def test_uniqueness_backfill_rewrites_non_canonical_duplicate_hashes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Verify duplicate hashes are rewritten except for canonical owner."""
     db_path = tmp_path / "dedupe.sqlite"
     temp_engine = create_engine(
         f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
     )
+    request.addfinalizer(temp_engine.dispose)
     artifact_root = tmp_path / "imports"
     artifact_root.mkdir(parents=True, exist_ok=True)
 
@@ -225,12 +227,14 @@ def test_uniqueness_backfill_rewrites_non_canonical_duplicate_hashes(
 def test_unique_index_exists_after_init_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Verify unique index exists after init database."""
     db_path = tmp_path / "unique.sqlite"
     temp_engine = create_engine(
         f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
     )
+    request.addfinalizer(temp_engine.dispose)
 
     monkeypatch.setattr(database_manager, "engine", temp_engine)
     database_manager.init_database()

@@ -8,6 +8,7 @@ from typing import Any, Never
 import pytest
 from app.config import settings as app_settings
 from app.database import SessionLocal
+from app.database_manager import reset_database
 from app.imports import enrichment as import_enrichment
 from app.imports import workflow as import_workflow
 from app.main import app
@@ -17,7 +18,6 @@ from app.routers import imports as imports_router
 from app.routers.suggestions import category_suggestion_service
 from app.services import classification_session_service
 from fastapi.testclient import TestClient
-from qdrant_client.http import models
 
 client: Any = TestClient(app)
 HTTP_OK: int = 200
@@ -42,18 +42,15 @@ def _reset_rate_limiter() -> None:
 
 
 def _reset_database() -> None:
-    response = client.post("/debug/reset-database")
-    assert response.status_code == HTTP_OK
+    reset_database()
 
 
 def _clear_vector_collections() -> None:
-    category_suggestion_service.client.recreate_collection(
-        collection_name="expense_embeddings",
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    category_suggestion_service.reset_collection(
+        collection_name="expense_embeddings"
     )
-    category_suggestion_service.client.recreate_collection(
-        collection_name="income_embeddings",
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    category_suggestion_service.reset_collection(
+        collection_name="income_embeddings"
     )
 
 

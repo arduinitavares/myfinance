@@ -7,15 +7,22 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Install uv and Python 3.13.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version-file: ".python-version"
-      - name: Install backend dependencies
-        run: pip install -r requirements.txt
-      - name: Run backend tests
-        run: python -m pytest tests -q
+          enable-cache: true
+          python-version: "3.13.12"
+
+      - name: Install the pinned repository gate
+        run: |
+          uv tool install git+https://github.com/arduinitavares/pyrepo-check.git@8f88465e1ca88bf29b508f3c0f4eb96f4de31623
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+      - name: Sync the locked environment
+        run: uv sync --frozen
+
+      - name: Run the Python quality gate
+        run: pyrepo-check --all

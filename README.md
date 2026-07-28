@@ -140,6 +140,37 @@ npm install
 npm run start
 ```
 
+## Database safety
+
+MyFinance creates and verifies a timestamped SQLite backup before applying any pending migration to an existing database. A failed migration restores that backup automatically.
+
+Apply pending migrations:
+
+```bash
+PYTHONPATH=backend uv run --frozen python -m app.cli.database migrate
+```
+
+Restore a selected verified backup:
+
+Stop the backend process before restoring so no other process holds or writes the live database.
+
+```bash
+PYTHONPATH=backend uv run --frozen python -m app.cli.database restore \
+  --backup /absolute/path/to/myfinance-YYYYMMDDTHHMMSSffffffZ.db \
+  --yes
+```
+
+Reset is unavailable in the production environment. For development or tests only:
+
+```bash
+MYFINANCE_ENV=development PYTHONPATH=backend uv run --frozen \
+  python -m app.cli.database reset --scope transactions --yes
+```
+
+## Local network boundary
+
+The backend is for a single trusted device and is not a public internet service. CORS lets browser scripts read backend responses only when their origin exactly matches `MYFINANCE_FRONTEND_ORIGIN`; it does not authenticate callers or block direct HTTP requests. Docker Compose binds both published ports to `127.0.0.1` and sets the browser origin to `http://localhost:8080`. That loopback binding, or a trusted tunnel or VPN for remote access, is the network boundary. The current PIN is not an authentication boundary.
+
 ## Usage
 
 - Browse the API endpoints via Swagger UI at `/docs`

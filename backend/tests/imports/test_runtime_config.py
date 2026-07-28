@@ -25,6 +25,7 @@ def test_settings_use_isolated_backend_test_paths() -> None:
     """Verify settings use isolated backend test paths."""
     assert settings.data_dir == TEST_ROOT / "data"
     assert settings.database_path == TEST_ROOT / "data" / "myfinance.db"
+    assert settings.backup_dir == TEST_ROOT / "data" / "backups"
     assert settings.imports_dir == TEST_ROOT / "data" / "imports"
     assert settings.provider_config_path == TEST_ROOT / "config.local.yaml"
 
@@ -73,3 +74,22 @@ def test_load_settings_creates_parent_for_custom_database_path(
 
     assert loaded.database_path == custom_db_path.resolve()
     assert loaded.database_path.parent.exists()
+
+
+def test_load_settings_defaults_to_production_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MYFINANCE_ENV", raising=False)
+
+    loaded = load_settings()
+
+    assert loaded.environment == "production"
+
+
+def test_load_settings_rejects_unknown_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MYFINANCE_ENV", "shared-host")
+
+    with pytest.raises(ValueError, match="MYFINANCE_ENV"):
+        load_settings()

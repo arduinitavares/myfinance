@@ -262,8 +262,11 @@ def _initialize_derived_data(
     logger.info("Derived data initialization completed successfully!")
 
 
-def _run_startup_migrations() -> dict[str, int]:
+def _run_startup_migrations(*, run_europe_iban_cleanup: bool) -> dict[str, int]:
     ensure_import_session_file_hash_uniqueness(engine, _import_artifact_root())
+    if not run_europe_iban_cleanup:
+        return {}
+
     with Session(engine) as db:
         migration_summary = migrate_europe_iban_reclassification(db)
         logger.info("Europe IBAN cleanup migration summary: %s", migration_summary)
@@ -273,18 +276,22 @@ def _run_startup_migrations() -> dict[str, int]:
 def _create_missing_tables(
     existing_tables: set[str],
     missing_tables: list[str],
+    *,
+    run_europe_iban_cleanup: bool,
 ) -> None:
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created successfully!")
     _log_current_schema()
 
-    migration_summary = _run_startup_migrations()
+    migration_summary = _run_startup_migrations(
+        run_europe_iban_cleanup=run_europe_iban_cleanup
+    )
     table_needs = _created_derived_table_needs(existing_tables, set(missing_tables))
     with Session(engine) as db:
         _initialize_derived_data(db, table_needs, migration_summary)
 
 
-def init_database() -> None:
+def init_database(*, run_europe_iban_cleanup: bool = True) -> None:
     """Initialize the database and create all tables."""
     logger.info("Initializing database...")
 
@@ -302,13 +309,28 @@ def init_database() -> None:
     if missing_tables:
         logger.info("Creating missing tables: %s", missing_tables)
         try:
-            _create_missing_tables(existing_tables, missing_tables)
+            _create_missing_tables(
+                existing_tables,
+                missing_tables,
+                run_europe_iban_cleanup=run_europe_iban_cleanup,
+            )
         except Exception:
             logger.exception("Error creating database tables")
             raise
     else:
         logger.info("All required database tables already exist")
-        _run_startup_migrations()
+        _run_startup_migrations(
+            run_europe_iban_cleanup=run_europe_iban_cleanup
+        )
+
+
+def assert_required_schema() -> None:
+    """Fail startup when a recorded database is missing required tables."""
+    existing_tables = set(inspect(engine).get_table_names())
+    missing_tables = sorted(set(REQUIRED_TABLE_NAMES) - existing_tables)
+    if missing_tables:
+        missing = ", ".join(missing_tables)
+        raise RuntimeError(f"Database schema is missing required tables: {missing}")
 
 
 def _recreate_tables(*, tables: Sequence[object] | None = None) -> None:

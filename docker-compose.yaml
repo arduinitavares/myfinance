@@ -3,7 +3,7 @@ services:
     build: ./backend
     container_name: myfinance-backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
       - ./bank_files:/bank_files:ro
@@ -16,6 +16,8 @@ services:
       - MYFINANCE_DATA_DIR=/app/app/data
       - MYFINANCE_PROVIDER_CONFIG=/app/config.local.yaml
       - MYFINANCE_BATCH_IMPORT_DIR=/bank_files
+      - MYFINANCE_ENV=production
+      - MYFINANCE_FRONTEND_ORIGIN=http://localhost:8080
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs')"]
       interval: 30s
@@ -27,7 +29,7 @@ services:
     build: ./frontend
     container_name: myfinance-frontend
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped
     depends_on:
       - backend

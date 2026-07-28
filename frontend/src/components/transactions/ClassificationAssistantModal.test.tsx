@@ -137,6 +137,7 @@ describe('ClassificationAssistantModal', () => {
     expect(
       screen.getByText(/related merchant · ebn\*adobe curitiba br/i)
     ).toBeInTheDocument();
+    expect(await screen.findByText(/ai proposal/i)).toBeInTheDocument();
   });
 
   test('shows unavailable FX context for unsupported currencies', async () => {
@@ -162,6 +163,7 @@ describe('ClassificationAssistantModal', () => {
 
     expect(await screen.findByText('FX unavailable')).toBeInTheDocument();
     expect(screen.getByText(/Raw -NEXO\s42\.00/)).toBeInTheDocument();
+    expect(await screen.findByText(/ai proposal/i)).toBeInTheDocument();
   });
 
   test('save and next closes the modal when there is no next row', async () => {

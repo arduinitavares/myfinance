@@ -9,6 +9,7 @@ from typing import Any, Never, cast
 import pytest
 from app.config import settings as app_settings
 from app.database import SessionLocal
+from app.database_manager import reset_database
 from app.main import app
 from app.models.classification import (
     ClassificationSession,
@@ -26,7 +27,6 @@ from app.routers.suggestions import category_suggestion_service
 from app.services import classification_session_service
 from app.services.classifier_providers import ClassificationProposal
 from fastapi.testclient import TestClient
-from qdrant_client.http import models
 
 client: Any = TestClient(app)
 
@@ -45,13 +45,11 @@ FX_TIMESTAMP: datetime = datetime(2026, 4, 17, 8, 30, 0, tzinfo=UTC)
 
 
 def _clear_vector_collections() -> None:
-    category_suggestion_service.client.recreate_collection(
-        collection_name="expense_embeddings",
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    category_suggestion_service.reset_collection(
+        collection_name="expense_embeddings"
     )
-    category_suggestion_service.client.recreate_collection(
-        collection_name="income_embeddings",
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    category_suggestion_service.reset_collection(
+        collection_name="income_embeddings"
     )
 
 
@@ -65,8 +63,7 @@ def _enable_runtime_stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _reset_database() -> None:
-    response = client.post("/debug/reset-database")
-    assert response.status_code == HTTP_OK
+    reset_database()
     _clear_vector_collections()
 
 

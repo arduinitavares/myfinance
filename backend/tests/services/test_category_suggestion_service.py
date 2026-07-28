@@ -2,10 +2,54 @@
 
 from collections.abc import Sequence
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
 from app.services.category_suggestion_service import CategorySuggestionService
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+
+
+class RecordingQdrantClient:
+    """Record collection lifecycle calls without creating a vector store."""
+
+    def __init__(self) -> None:
+        """Initialize an empty call list."""
+        self.calls: list[tuple[str, str, object | None]] = []
+
+    def delete_collection(self, *, collection_name: str) -> bool:
+        """Record collection deletion."""
+        self.calls.append(("delete", collection_name, None))
+        return True
+
+    def create_collection(
+        self,
+        *,
+        collection_name: str,
+        vectors_config: object,
+    ) -> bool:
+        """Record collection creation."""
+        self.calls.append(("create", collection_name, vectors_config))
+        return True
+
+
+def test_reset_collection_deletes_before_recreating_with_cosine_vectors() -> None:
+    """Reset one collection with the service's canonical vector shape."""
+    service = CategorySuggestionService.__new__(CategorySuggestionService)
+    client = RecordingQdrantClient()
+    service.client = cast(QdrantClient, client)
+
+    service.reset_collection(collection_name="test_embeddings")
+
+    assert len(client.calls) == 2
+    assert client.calls[0] == ("delete", "test_embeddings", None)
+    operation, collection_name, vectors_config = client.calls[1]
+    assert operation == "create"
+    assert collection_name == "test_embeddings"
+    assert isinstance(vectors_config, models.VectorParams)
+    assert vectors_config.size == 384
+    assert vectors_config.distance == models.Distance.COSINE
 
 
 def test_similarity_scores_returns_empty_list_for_no_candidates() -> None:

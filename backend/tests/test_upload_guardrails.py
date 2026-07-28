@@ -4,6 +4,7 @@ import csv
 import io
 from typing import Any
 
+from app.database_manager import reset_database
 from app.main import app
 from app.routers import imports as imports_router
 from fastapi.testclient import TestClient
@@ -24,8 +25,7 @@ def _reset_rate_limiter() -> None:
 
 
 def _reset_database() -> None:
-    resp = client.post("/debug/reset-database")
-    assert resp.status_code == HTTP_OK
+    reset_database()
 
 
 def _make_minimal_beobank_compact_csv(rows: int = 1) -> bytes:
